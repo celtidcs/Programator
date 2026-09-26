@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.md text eol=lf working-tree-encoding=UTF-8
+*.rs text eol=lf working-tree-encoding=UTF-8
+*.toml text eol=lf
+*.gguf binary
+*.exe binary

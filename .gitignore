@@ -1,0 +1,38 @@
+# Compilación de Rust
+/target/
+**/*.rs.bk
+
+# Artefactos portables: pesan cientos de megas y no se versionan. El motor y el modelo se
+# descargan aparte y se colocan en estas dos carpetas, como explica el LEEME del portable.
+/modelos/
+/herramientas/
+*.gguf
+*.exe
+
+# La configuración de cada cual, con las rutas de su máquina. El fichero de ejemplo,
+# «programator.ejemplo.toml», sí se versiona; la copia de trabajo no.
+/programator.toml
+
+# Carpeta portable de distribución: se monta desde target/release y no se versiona.
+portable/
+
+# El espacio de trabajo del arnés dentro de un proyecto: el canal, los buzones, las propuestas
+# del modelo y los históricos. Es estado de trabajo, no producto.
+/.gestor/
+
+# Ficheros de instrucciones que cada herramienta de agente deja en la raíz. Son de quien trabaja,
+# no del proyecto.
+/GEMINI.md
+/AGENTS.md
+
+# Espacios de trabajo de las herramientas de agente: ramas aisladas y material de una sola sesión.
+.claude/
+.superpowers/
+
+# Temporales
+*.tmp
+
+# Restos de los comprobadores de la puerta de verificación: «py_compile» escribe el bytecode
+# junto al fichero fuente, no en el directorio de trabajo.
+__pycache__/
+*.pyc

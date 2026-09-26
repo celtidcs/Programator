@@ -1,0 +1,264 @@
+# Configuración de ejemplo de Programator.
+#
+# Cópialo a «programator.toml» en la misma carpeta que el ejecutable (no en el repositorio: ese
+# fichero es tuyo, con tus rutas locales) y edítalo. Las rutas relativas de este fichero (la
+# plantilla de normas, el binario y el modelo) se resuelven contra la carpeta donde está este
+# «programator.toml», nunca contra el directorio desde el que lances el programa.
+#
+# Todas las secciones son opcionales salvo [motor], que hace falta declarar aunque solo sea para
+# fijar «modelo»: sin un fichero GGUF no hay nada que arrancar y el programa se niega a arrancar
+# sin él. El resto de campos, si se omiten, toman el valor por defecto que se indica en cada
+# comentario.
+
+[carpeta]
+# Carpeta de trabajo: la raíz del proyecto que contiene ".gestor/canal/".
+#
+# Cuatro fuentes, de más fuerte a más débil:
+#   1. programator.exe --ruta "C:/ruta/a/tu/proyecto"
+#   2. esta clave
+#   3. la última carpeta en la que se trabajó (se recuerda sola en "ultima-carpeta.txt", junto a
+#      este fichero, y se ignora si esa carpeta ya no existe), salvo que "preguntar_siempre" esté
+#      puesto, que es como viene de fábrica
+#   4. un diálogo nativo para elegirla a mano
+#
+# Si la dejas comentada, Programator se podrá reiniciar solo a partir del segundo arranque, que es
+# lo que necesita quien lo dirija desde otro agente.
+ruta = "C:/ruta/a/tu/proyecto"
+# Si es "true", Programator abre el diálogo de selección de carpeta en cada arranque en vez de irse
+# solo a la última en la que se trabajó. Es lo cómodo cuando vas cambiando de proyecto y no quieres
+# tener que borrar "ultima-carpeta.txt" para que deje de insistir con el anterior.
+#
+# No afecta a las dos fuentes explícitas: si arrancas con "--ruta" o si dejas esta clave "ruta"
+# escrita aquí arriba, se va a esa carpeta sin preguntar nada, porque ya se lo has dicho. Así quien
+# dirige Programator desde otro agente puede seguir reiniciándolo sin nadie delante.
+#
+# Por defecto: true.
+preguntar_siempre = true
+
+[agente]
+# Nombre con el que Programator se identifica ante el equipo. Por defecto: "Programator".
+nombre = "Programator"
+# Bandeja de escritura exclusiva de Programator dentro del canal. Nunca debe apuntar a la bandeja
+# de otro agente. Por defecto: ".gestor/canal/programator.md".
+buzon = ".gestor/canal/programator.md"
+# Plantilla de las instrucciones que se instalan en el proyecto si este aún no tiene las suyas
+# (nunca se sobrescribe unas que ya existan). Su sección de verificación no viene escrita: la
+# compone el arnés con los comprobadores de [verificacion.comprobadores], para que lo que el modelo
+# lee y lo que el arnés ejecuta no puedan divergir.
+# Por defecto: "plantillas/instrucciones-del-proyecto.md".
+plantilla_normas = "plantillas/instrucciones-del-proyecto.md"
+# Las instrucciones de sistema que ve el modelo en cada encargo. Por defecto:
+# "plantillas/preambulo-del-modelo.md".
+#
+# NO son las normas completas del equipo. El protocolo entero ocupa unos 8.000 tokens de los 16.384
+# del contexto —la mitad de la ventana para un texto que el modelo relee cada vez, y del que la
+# mayor parte no le aplica— mientras que el preámbulo trae lo que necesita para actuar en unos
+# 1.000. Las normas completas siguen en PROGRAMATOR.md y puede leerlas con «leer_fichero».
+preambulo = "plantillas/preambulo-del-modelo.md"
+# Lo que se le recuerda PEGADO AL ENCARGO, no en las instrucciones de sistema. Por defecto:
+# "plantillas/recordatorio-de-encargo.md".
+#
+# La diferencia no es de estilo, está medida: con las normas de código en el mensaje de sistema, el
+# modelo las lee y escribe igual que si no las tuviera (1 de 6 comprobaciones mecánicas); con el
+# mismo texto pegado al encargo, 5 de 6; y pidiéndole además que declare cómo cumplió cada punto,
+# 6 de 6.
+recordatorio = "plantillas/recordatorio-de-encargo.md"
+# La guía que el arnés deja en el canal para que los demás agentes sepan qué encargarle y qué no.
+# Se reescribe en cada arranque. Por defecto: "plantillas/como-encargar-a-programator.md".
+guia = "plantillas/como-encargar-a-programator.md"
+# Las cifras de desempeño medido del modelo, que se interpola en la guía de los agentes.
+# Por defecto: "plantillas/desempeno-medido.md".
+desempeno = "plantillas/desempeno-medido.md"
+# Prefijos de ficheros del canal que NO son buzones de nadie: los históricos que genera este
+# proyecto al archivar un encargo. Por defecto: ["historico-", "histórico-"].
+#
+# Por qué existe: el 23/09/2026 el encargo 009 se archivó a las 20:44 y el modelo lo entregó a las
+# 20:47, porque el histórico se queda dentro de la carpeta que el arnés sondea y conserva el
+# encabezado "## Para Programator" del encargo ya cerrado. El nombre del histórico lo elige tu
+# proyecto, no el arnés, así que si tu convención de archivado usa otro prefijo, decláralo aquí; una
+# lista vacía o sin declarar deja los de por defecto.
+# prefijos_ignorados = ["historico-", "archivado-"]
+
+[motor]
+# Ruta al ejecutable de llama-server. Si se omite, Programator asume que ya hay un servidor
+# escuchando en el puerto configurado (por ejemplo, uno que hayas arrancado tú mismo) y no lanza
+# ninguno propio.
+binario = "herramientas/llama-server.exe"
+# Ruta al fichero GGUF del modelo. **Obligatorio**: sin esta clave, Programator no arranca.
+# El modelo que fija la especificación del proyecto es devstral-small-2-24b-Q4_K_M.gguf.
+modelo = "modelos/devstral-small-2-24b-Q4_K_M.gguf"
+# Puerto donde escucha (o debe escuchar) llama-server. Por defecto: 8080.
+puerto = 8080
+# Tamaño del contexto en tokens que se pide al servidor. Por defecto: 16384.
+#
+# 16384 y no más: medido el 22/09/2026 sobre el Devstral en una RTX 4070 Ti SUPER, con 16k caben
+# casi todas las capas del modelo en la tarjeta y la generación va a 23 tokens por segundo; con
+# 32768 bajaba a 15,4 porque cinco capas se iban a la CPU. Las normas de la casa ocupan unos ocho
+# mil tokens, así que sigue sobrando sitio para un encargo y su respuesta. Súbelo si lo necesitas,
+# sabiendo lo que cuesta.
+contexto = 16384
+# Cuántas conversaciones simultáneas reserva el motor. Por defecto: 1.
+#
+# Programator atiende los encargos de uno en uno, así que 1 es lo correcto. Subirlo multiplica la
+# caché que reserva llama-server y esa VRAM sale de las capas del modelo: con el valor por defecto
+# del motor, que son 4, el mismo modelo pasaba de 23 a 9,8 tokens por segundo.
+paralelo = 1
+# Capas del modelo que se cargan en GPU.
+#   "auto"  → Programator mide la VRAM libre, pesa el modelo y decide. Es lo recomendado.
+#   99      → todas, pase lo que pase. Lo que hacía la 0.3.0.
+#   40      → exactamente 40. Lo que escribas aquí se transcribe sin discutir.
+capas_gpu = "auto"
+
+# VRAM que no se reparte en capas: contexto de CUDA, búferes de cómputo y el margen de seguridad
+# entre lo que mide Programator y lo que reserva llama-server. Solo se usa con "auto".
+margen_vram_mib = 1024
+# Formato de la caché de claves/valores del modelo. Por defecto: "q8_0".
+cache_kv = "q8_0"
+
+# A partir de qué porcentaje de la ventana se avisa de que la conversación va justa. Por defecto: 70.
+#
+# Cuando la conversación crece demasiado, el motor la rechaza con un código 400 y no hay aviso
+# claro de por qué. Este umbral avisa ANTES de que llegue a eso, estimando cuántos tokens ocupa.
+# La estimación cuenta bytes, no tokens reales: el arnés no tiene tokenizador. Por defecto es 70 %,
+# así que con una ventana de 16384 tokens se avisa al llegar a unos 11468.
+umbral_aviso_contexto = 70
+# Cuántos bytes se cuentan por token al estimar la ocupación. Por defecto: 4.
+#
+# Esto depende del modelo y del idioma. 4 es lo habitual en texto latino con el tokenizador de
+# Devstral. Si tu conversación ocupa menos espacio del predicho, bájalo; si ocupa más, súbelo.
+# La estimación es aproximada: el arnés lo dice cuando avisa.
+bytes_por_token = 4
+
+# Plazos máximos de espera HTTP con llama-server (en segundos).
+# tiempo_lectura_segundos fija el tiempo de espera por los primeros bytes de la respuesta.
+# Por defecto: 600 (10 minutos), holgado para respuestas extensas en hardware más modesto.
+# tiempo_escritura_segundos fija el tiempo para escribir la petición en el socket. Por defecto: 60.
+# tiempo_lectura_segundos = 600
+# tiempo_escritura_segundos = 60
+
+
+# Con qué se comprueba cada propuesta que escribe el modelo, antes de que nadie se fíe de ella.
+#
+# Por qué existe: en la evaluación del 22/09/2026, dos de las siete entregas del modelo no
+# ejecutaban —un Lua con una «ñ» en un identificador, un SQL con un alias de ventana mal usado— y
+# en los dos casos el modelo publicó que había entregado la solución. Nadie se enteró hasta que una
+# persona los compiló a mano.
+#
+# Quién elige los comandos: tú. Ni el arnés los incrusta ni el modelo los elige; él solo pone el
+# nombre del fichero, que ya está confinado bajo «.gestor/candidatos/programator/». Cada máquina
+# tiene los compiladores que tiene, así que esta lista es tuya.
+#
+# Sin esta sección no se verifica nada y todo funciona como antes. Lo que NO se hace: ejecutar lo
+# que el modelo escribe. Se comprueba que el lenguaje lo acepte, que es otra cosa —«py_compile» no
+# corre el fichero—.
+[verificacion]
+# Cuánto se espera a un comprobador antes de cortarlo. Por defecto: 30.
+tiempo_maximo_segundos = 30
+
+[verificacion.comprobadores]
+# Extensión (sin punto) -> la orden que la comprueba. «{fichero}» se sustituye por la ruta absoluta
+# de la propuesta.
+#
+# Lo que pongas aquí es también lo que el modelo leerá en sus instrucciones: el arnés compone esa
+# sección con esta tabla, para que lo que él lee y lo que se ejecuta no puedan divergir.
+#
+# Dos cosas que conviene saber antes de configurar una:
+#   - «{fichero}» es OPCIONAL: una orden sin el marcador se ejecuta igual.
+#   - La orden corre en un DIRECTORIO TEMPORAL, no en tu proyecto. Por eso no sirve poner aquí la
+#     compilación del proyecto entero: la propuesta vive en «.gestor/candidatos/programator/», así
+#     que esa compilación daría verde sobre un proyecto que no contiene el fichero entregado. Lo
+#     que va aquí es la comprobación de UN fichero suelto.
+#
+# Descomenta las que tengas instaladas y adáptalas a tu máquina; una orden que no exista no rompe
+# nada, se dice que no se pudo verificar. Estos son ejemplos, no configuraciones probadas aquí.
+#
+# Ojo con los comprobadores que dejan restos: «py_compile» escribe el bytecode en un «__pycache__»
+# JUNTO AL FICHERO, no en el directorio temporal donde se ejecuta. Esta variante solo analiza la
+# sintaxis y no escribe nada:
+# py  = ["python", "-c", "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())", "{fichero}"]
+# py  = ["python", "-m", "py_compile", "{fichero}"]   # equivalente, pero deja __pycache__
+# lua = ["luac", "-p", "{fichero}"]
+# rs  = ["rustc", "--edition", "2021", "--crate-type", "lib", "--emit=metadata", "{fichero}"]
+# ts  = ["npx", "tsc", "--noEmit", "{fichero}"]
+# cs   = ["csc", "-nologo", "-t:library", "-out:comprobacion.dll", "{fichero}"]
+# java = ["javac", "-d", ".", "{fichero}"]
+# go   = ["gofmt", "-e", "{fichero}"]
+
+[muestreo]
+# Todo lo que hay en esta sección se manda al modelo tal cual en cada petición: es exactamente lo
+# que el modelo recibe, sin ningún valor oculto decidido por el servidor.
+#
+# Temperatura del muestreo: cuanto más alta, respuestas más variadas; cuanto más baja, más
+# deterministas. Por defecto: 0.2.
+temperatura = 0.2
+# Top-k: el modelo solo considera los k tokens más probables en cada paso. Por defecto: 40.
+top_k = 40
+# Top-p (muestreo por núcleo): el modelo considera el conjunto más pequeño de tokens cuya
+# probabilidad acumulada supera p. Por defecto: 0.95.
+top_p = 0.95
+# Min-p: descarta tokens cuya probabilidad sea inferior a esta fracción de la probabilidad del
+# token más probable. Por defecto: 0.05.
+min_p = 0.05
+# Penalización de repetición: valores por encima de 1.0 desalientan repetir texto ya generado.
+# Por defecto: 1.0 (sin penalización).
+penalizacion_repeticion = 1.0
+# Semilla del generador aleatorio: con una semilla fija, la misma entrada produce siempre la misma
+# respuesta (útil para depurar o comparar). Si se omite esta clave, la elige el propio servidor y
+# las respuestas no son reproducibles entre ejecuciones.
+# semilla = 42
+
+[ciclo]
+# Segundos entre cada sondeo del canal. Por defecto: 180.
+intervalo_segundos = 180
+# Número máximo de llamadas a herramientas que se permiten dentro de un mismo encargo, para cortar
+# un bucle improductivo del modelo. Por defecto: 12.
+max_herramientas_por_encargo = 12
+# Tope de bytes de fichero que se le entregan al modelo en una sola lectura. Por defecto: 16384.
+#
+# Un buzón real puede pasar de 260 KB: devolver el fichero entero desborda la ventana y mata el
+# encargo de golpe. 16 KiB dejan sitio a las normas, a la conversación y a las demás solicitudes
+# del encargo. Si cambias el tamaño del contexto en [motor], probablemente quieras cambiar
+# también este tope para que el modelo tenga sitio a la conversación.
+tope_lectura_bytes = 16384
+# Nombre del fichero donde el arnés escribe su estado en cada sondeo. Se guarda en la carpeta
+# del agente junto a lectura.json (.gestor/<agente>/). Por defecto: "latido.json".
+#
+# Por qué existe: el 23/09/2026 quien dirigía creyó que el arnés estaba parado porque lectura.json
+# no cambiaba, cuando en realidad estaba atendiendo. Escribir este fichero en cada sondeo permite
+# saber si está en reposo, atendiendo o en error, y cuándo será el próximo sondeo.
+fichero_latido = "latido.json"
+# Cuántas solicitudes anteriores se recuerdan para detectar repeticiones exactas y no volver a
+# ejecutarlas. Por defecto: 12.
+#
+# Por qué existe: en la jornada del 23/09/2026 (incidencia B3 de NatureLand), el modelo repitió cinco
+# veces la misma llamada a «escribir_propuesta» con el mismo contenido, consumiendo el cupo de
+# herramientas y abortando el encargo. Recordar las llamadas anteriores permite devolver el
+# resultado previo sin gastar cupo ni reescribir disco, advirtiendo al modelo para que rectifique.
+max_repeticiones_recordadas = 12
+# Cuántas veces se reintenta una llamada al motor cuando falla pero la comprobación de salud indica
+# que el servidor sigue vivo. Por defecto: 2.
+#
+# Por qué existe: en la jornada del 23/09/2026 (incidencia D de NatureLand), un encargo se abortó
+# con «el motor local no respondió» debido a contención transitoria de GPU con un renderizado de
+# Godot, a pesar de que llama-server seguía vivo y minutos después /health devolvía 200 {"status":"ok"}.
+# Permitir reintentos evita perder encargos cuando la GPU compite con otras tareas de la máquina.
+max_reintentos_motor = 2
+# Segundos de espera entre cada reintento tras un fallo transitorio del motor. Por defecto: 5.
+#
+# Da margen a que la contención de GPU disminuya antes de volver a solicitar inferencia.
+espera_reintento_motor_segundos = 5
+# Número máximo de veces seguidas que el modelo puede insistir en una misma herramienta denegada
+# antes de abortar el encargo. Por defecto: 2 (Regla de los Dos Intentos del §2.1).
+#
+# Si el modelo insiste en una herramienta que el arnés acaba de denegarle con el mismo nombre,
+# se le devuelve aviso para que rectifique. Si alcanza este tope consecutivo, el encargo se aborta
+# para evitar bucles improductivos. Un modelo más modesto puede necesitar más margen, o uno que se
+# atasca puede requerir cortar antes.
+max_denegaciones_seguidas = 2
+
+[poda]
+# A partir de cuántas líneas activas se considera que un buzón necesita poda. Por defecto: 80.
+# Se cuenta en líneas, y no en bytes, porque es la unidad que usa el propio protocolo del equipo
+# (§3.2: «un tope orientativo de 80 líneas activas»). Es orientativo: la poda la propone el arnés
+# y la revisa una persona o un agente de pago antes de que se aplique nada.
+umbral_lineas = 80

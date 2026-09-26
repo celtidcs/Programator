@@ -1,0 +1,42 @@
+# Configuración usada para la EVALUACIÓN del modelo local (22/09/2026).
+#
+# Se copia a «portable/programator.toml» para ejecutar el banco. El original del Director queda
+# respaldado en «portable/programator.toml.bak» y se restaura al terminar.
+#
+# La ruta de [carpeta] es absoluta y de esta máquina a propósito: este fichero no es configuración
+# del producto, es el montaje de un banco de pruebas concreto.
+
+[carpeta]
+ruta = "O:/Mi unidad/proyecto/Programator/.claude/worktrees/evaluacion-del-modelo/evaluacion/banco"
+
+[agente]
+nombre = "Programator"
+buzon = ".gestor/canal/programator.md"
+plantilla_normas = "plantillas/instrucciones-del-proyecto.md"
+
+[motor]
+binario = "herramientas/llama-server.exe"
+modelo = "modelos/devstral-small-2-24b-Q4_K_M.gguf"
+puerto = 8080
+contexto = 32768
+capas_gpu = "auto"
+margen_vram_mib = 1024
+cache_kv = "q8_0"
+
+[muestreo]
+# Temperatura baja y semilla fija: la evaluación tiene que ser reproducible. Si el candidato
+# acierta o falla, que no sea por el azar del muestreo.
+temperatura = 0.2
+top_k = 40
+top_p = 0.95
+min_p = 0.05
+penalizacion_repeticion = 1.0
+semilla = 42
+
+[ciclo]
+# 20 segundos en vez de 180: esto es una sesión de evaluación, no una guardia de días.
+intervalo_segundos = 20
+max_herramientas_por_encargo = 12
+
+[poda]
+umbral_lineas = 80
