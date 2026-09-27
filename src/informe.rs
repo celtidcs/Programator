@@ -63,8 +63,9 @@ const ANCHO_ETIQUETA: usize = 20;
 pub fn componer_informe(datos: &DatosDeArranque) -> String {
     let mut lineas = Vec::new();
     lineas.push(format!(
-        "Programator {} — «programator.exe --ayuda» para ver qué se le puede pedir\n",
-        datos.version
+        "Programator {} — «{} --ayuda» para ver qué se le puede pedir\n",
+        datos.version,
+        crate::plataforma::NOMBRE_DEL_EJECUTABLE
     ));
     lineas.push(fila(
         "Carpeta de trabajo:",
@@ -137,9 +138,11 @@ fn describir_gpu(gpu: Option<&Gpu>) -> String {
 
 fn describir_motor(motor: &MotorInstalado, ruta_motor: Option<&str>) -> String {
     match motor {
-        MotorInstalado::ListoConCuda => con_ruta("llama-server.exe con CUDA", ruta_motor),
+        // Sin la extension a proposito: el nombre real del fichero ya va detrás, en la ruta que
+        // añade «con_ruta», y escribirlo aquí con «.exe» era dar por hecho el sistema.
+        MotorInstalado::ListoConCuda => con_ruta("llama-server con CUDA", ruta_motor),
         MotorInstalado::SoloCpu => con_ruta(
-            "llama-server.exe SIN CUDA (solo CPU) — las capas en GPU no tendrán efecto",
+            "llama-server SIN CUDA (solo CPU) — las capas en GPU no tendrán efecto",
             ruta_motor,
         ),
         MotorInstalado::Falta { ruta } => format!("FALTA «{}»", ruta.display()),

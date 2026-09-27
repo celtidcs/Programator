@@ -47,7 +47,11 @@ mod pruebas {
 
     #[test]
     fn nombra_la_ruta_solicitada_en_fuera_de_ambito() {
-        let error = Error::FueraDeAmbito(PathBuf::from("C:\\Users\\celti\\AppData\\secreto"));
+        // La ruta representa algo de fuera del ámbito que el modelo no debe llegar a ver, así
+        // que se escribe con un nombre genérico: la ruta de la máquina de alguien no pinta nada
+        // en una prueba, y menos en un repositorio público.
+        let error =
+            Error::FueraDeAmbito(PathBuf::from("C:\\Users\\otra-persona\\AppData\\secreto"));
         let motivo = motivo_para_el_modelo("../fuera.txt", &error);
         assert_eq!(motivo, "«../fuera.txt» queda fuera del ámbito permitido");
         assert!(!motivo.contains("secreto"));

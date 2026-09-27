@@ -3,7 +3,7 @@
 Qué falta, en qué orden y por qué ese orden. Cada versión se hace **paso a paso**: primero su
 especificación, luego su plan, y el plan se ejecuta tarea a tarea con revisión entre cada una.
 
-Estado al escribir esto: la versión 0.10.0 está integrada en `main` desde el 26/09/2026, con 446 pruebas pasando limpiamente (434 de librería y 12 en los binarios de integración y consola). El ciclo completo se ejecuta contra el modelo local a 18,4 tokens por segundo, y ya se ha empleado durante una jornada completa en un proyecto real (NatureLand, Godot/.NET/C#, 23/09/2026), logrando cuatro entregas aceptadas tras verificación independiente. La 0.10.0 resuelve las carencias del repertorio y las propuestas del informe sobre observabilidad y recuperación ante fallos del motor.
+Estado al escribir esto: la versión 0.10.1 está integrada en `main` desde el 27/09/2026, con 457 pruebas pasando limpiamente en Windows y en Linux. El ciclo completo se ejecuta contra el modelo local a 18,4 tokens por segundo, y ya se ha empleado durante una jornada completa en un proyecto real (NatureLand, Godot/.NET/C#, 23/09/2026), logrando cuatro entregas aceptadas tras verificación independiente. La 0.10.0 resuelve las carencias del repertorio y las propuestas del informe sobre observabilidad y recuperación ante fallos del motor.
 
 ---
 
@@ -101,6 +101,16 @@ plantilla y elegir la carpeta a mano se hacía en cada proyecto y en cada reinic
 - Parámetros avanzados en el archivo de configuración para estimación de tokens, umbral de advertencia, prefijos ignorados, registro de desempeño y reintentos del motor.
 - Nuclearización del código fuente en módulos cohesivos (`herramientas/`, `sesion/` y `arranque/`).
 - Ampliación de la suite de pruebas automatizadas hasta 435 comprobaciones mecánicas independientes.
+
+## 0.10.1 — Programator también en Linux (publicada el 27/09/2026)
+
+**Qué resolvió.** Que no hubiera versión de Linux no era una decisión de diseño, sino trabajo sin hacer: lo único atado a Windows era medir la tarjeta gráfica y unos cuantos textos de la terminal. La medición en Linux se hace ahora preguntando al programa que acompaña al controlador de NVIDIA, y los textos que dependen del sistema viven en un módulo propio.
+
+De paso se resolvió otra cosa que estorbaba a cualquiera que llegara nuevo: las dos piezas pesadas, motor y modelo, había que ir a buscarlas a mano. Ahora las trae un script, con las versiones fijadas y verificando cada descarga, y un documento explica qué hacer cuando alguna de esas direcciones deje de existir.
+
+**Lo que queda pendiente de ahí.** Nadie ha arrancado todavía Programator en un Linux con una tarjeta gráfica delante, así que la medición real y la carga del modelo siguen sin verificar en ese sistema.
+
+---
 
 ## 0.11.0 — El motor bajo control
 

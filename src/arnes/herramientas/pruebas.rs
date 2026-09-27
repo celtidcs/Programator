@@ -304,15 +304,11 @@ fn el_repertorio_es_exactamente_el_que_fija_la_especificacion() {
 /// Un repertorio con la puerta puesta, y un comprobador que acepta o rechaza a voluntad.
 fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio) {
     let (dir, repertorio) = repertorio_de_prueba();
-    let codigo = if acepta { "0" } else { "1" };
+    let codigo = if acepta { 0 } else { 1 };
     let mut comprobadores = Comprobadores::new();
     comprobadores.insert(
         "rs".to_string(),
-        vec![
-            "cmd".into(),
-            "/C".into(),
-            format!("echo el compilador dijo que no & exit {codigo}"),
-        ],
+        crate::plataforma::ordenes_de_prueba::eco_y_codigo("el compilador dijo que no", codigo),
     );
     (
         dir,

@@ -40,6 +40,35 @@ No esperes que apruebe, firme ni acepte nada. No es una limitación temporal, es
 
 Y verifica siempre lo que entregue. No por desconfianza, sino porque verificarlo es barato y equivocarse no lo es.
 
+## Cómo se ve
+
+Programator no tiene ventanas: es una terminal que cuenta lo que está haciendo. Estas dos capturas
+son de una sesión de trabajo de verdad. Lo único que se ha tocado en ellas es el nombre de usuario,
+tapado en la barra de título y en una ruta del registro del motor; todo lo demás es lo que salió.
+
+![El arranque y la carga del motor](recursos/capturas/arranque-y-carga-del-motor.png)
+
+Arriba del todo está el informe de arranque, que es lo que escribe antes de hacer nada: qué carpeta
+de trabajo va a usar y de dónde ha salido esa decisión, qué tarjeta gráfica ha encontrado con
+cuánta memoria libre, qué motor y qué modelo tiene configurados, y cuántas capas del modelo caben
+en la tarjeta. Esa última línea es la que evita la mitad de los disgustos: si dice que caben 35 de
+40, ya sabes antes de empezar que cinco van a ir por el procesador y que el ciclo será más lento.
+
+Debajo avisa de que ha publicado la guía para el resto del equipo en el canal y de cada cuánto va a
+mirar si hay encargos nuevos. A partir de ahí lo que se ve es el motor cargando el modelo, con su
+propio registro intercalado. Fíjate en la línea que dice que el motor todavía está cargando y que
+se reintentará en el ciclo siguiente: el arnés no se queda colgado esperando ni da el encargo por
+perdido.
+
+![El ciclo atendiendo un encargo](recursos/capturas/ciclo-atendiendo-un-encargo.png)
+
+Aquí el modelo ya está cargado y se ve el ciclo trabajando. Cada bloque es una llamada a una
+herramienta: el modelo pide leer un fichero o buscar algo, el arnés se lo concede o se lo deniega,
+y vuelve a preguntar. Al final de todo, la línea que cuenta cuántos encargos se han atendido y
+cuántos fallaron al publicarse, y luego la vuelta a la espera. La última línea dice que había
+novedades en el canal pero que ninguna era un encargo para él, que es exactamente el tipo de cosa
+que un arnés callado te haría diagnosticar mal.
+
 ## Sobre el equipo en el que se ha probado
 
 Conviene que sepas en qué máquina se ha desarrollado y medido todo esto, porque las cifras de arriba salen de ahí y en otro equipo pueden ser distintas.
@@ -47,6 +76,8 @@ Conviene que sepas en qué máquina se ha desarrollado y medido todo esto, porqu
 La tarjeta gráfica es una NVIDIA GeForce RTX 4070 Ti SUPER con 16 GiB de memoria, de los que el sistema ve 16.376 MiB. El modelo local es `devstral-small-2-24b-Q4_K_M.gguf`, de 40 capas y 13,3 GiB. El motor de inferencia es `llama-server`, compilación b10993 con CUDA 12.4. La ventana de contexto por defecto son 16.384 tokens.
 
 Con esa configuración, Programator coloca 39 de las 40 capas del modelo en la tarjeta y deja un margen de seguridad de 1 GiB, lo que da unos 18,4 tokens por segundo. Forzando las 40 capas la generación sube a 23,0 tokens por segundo, pero entonces el proceso ocupa 15.851 de los 16.376 MiB disponibles y el margen se vuelve muy estrecho. Por eso el valor por defecto es el conservador.
+
+**Sobre Linux.** Programator nació en Windows y ahí es donde está probado contra hardware real. Desde la versión 0.10.0 también funciona en Linux: la suite entera se ha ejecutado dentro de un Linux de verdad, con formato verificado, clippy sin avisos y todas las pruebas en verde, y la integración continua lo repite en los dos sistemas en cada cambio. Lo que todavía no ha hecho nadie es arrancarlo en un Linux con una tarjeta gráfica delante, así que la medición de la tarjeta y la carga del modelo están sin verificar ahí. Lo que puede fallar, y cómo sortearlo, está contado en `docs/defectos-conocidos.md`.
 
 Nada de esto significa que la aplicación solo funcione ahí. Programator mide la tarjeta que encuentre, pesa el modelo que le indiques y calcula cuántas capas caben, así que se adapta a otro equipo sin que tengas que tocar nada. Lo que sí cambia con el hardware es el rendimiento, y si tu tarjeta tiene menos memoria es posible que tengas que usar un modelo más pequeño. Las cifras de esta sección son un punto de referencia de un equipo concreto, no una promesa sobre el tuyo.
 
@@ -82,6 +113,7 @@ El código fuente se organiza en módulos con responsabilidades aisladas:
 
 El directorio `docs/` contiene lo que hace falta saber para usar el programa y para seguir trabajando en él:
 
+- `docs/instalacion-paso-a-paso.md`: Qué descarga el script de instalación, de dónde lo saca, cómo comprueba que es lo que debía ser, y qué hacer a mano si alguna de esas descargas falla o deja de estar disponible.
 - `docs/defectos-conocidos.md`: Documento de obligada consulta que detalla las limitaciones vigentes, las pruebas que requieren hardware real y los aspectos estructurales pospuestos.
 - `docs/pruebas-manuales.md`: Procedimientos de verificación sobre tarjeta gráfica y modelo real. Ninguna prueba automática enciende la tarjeta, así que esta es la única comprobación de la junta entre el arnés y el motor.
 - `docs/hoja-de-ruta.md`: Qué trae cada versión y qué está previsto a continuación, con el criterio que ordena las prioridades.

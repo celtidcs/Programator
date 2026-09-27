@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::error::Error;
+use crate::plataforma::{EJEMPLO_DE_RUTA, NOMBRE_DEL_EJECUTABLE};
 
 /// El fragmento de desempeño no es lo que estas pruebas examinan, así que se escribe una vez,
 /// vacío de marcadores, y se reutiliza.
@@ -541,11 +542,15 @@ fn mensaje_version_compone_nombre_y_version() {
 fn mensaje_argumentos_orientan_al_usuario() {
     let err_arg = mensaje_argumento_no_entendido("--invento");
     assert!(err_arg.contains("No entiendo «--invento»"));
-    assert!(err_arg.contains("programator.exe --ayuda"));
+    // El nombre se compone según la plataforma, así que la prueba lo compone igual en vez de
+    // fijar el de Windows: lo que se afirma es que el mensaje enseña a pedir ayuda, y eso vale
+    // en los dos sistemas.
+    assert!(err_arg.contains(&format!("{NOMBRE_DEL_EJECUTABLE} --ayuda")));
 
     let err_falta = mensaje_argumento_falta_valor("--ruta");
     assert!(err_falta.contains("«--ruta» necesita un valor detrás"));
-    assert!(err_falta.contains("Ejemplo: programator.exe --ruta"));
+    assert!(err_falta.contains(&format!("Ejemplo: {NOMBRE_DEL_EJECUTABLE} --ruta")));
+    assert!(err_falta.contains(EJEMPLO_DE_RUTA));
 }
 
 #[test]

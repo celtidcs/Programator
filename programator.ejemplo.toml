@@ -21,9 +21,11 @@
 #      puesto, que es como viene de fábrica
 #   4. un diálogo nativo para elegirla a mano
 #
-# Si la dejas comentada, Programator se podrá reiniciar solo a partir del segundo arranque, que es
-# lo que necesita quien lo dirija desde otro agente.
-ruta = "C:/ruta/a/tu/proyecto"
+# Viene comentada a propósito: con una ruta de mentira activa, el programa se niega a arrancar
+# diciendo que ese directorio no existe, y eso es un mal primer encuentro. Tal como está, al
+# arrancar se abre el diálogo y eliges la carpeta a mano. Descoméntala y pon la tuya cuando
+# quieras que vaya sola, que es lo que necesita quien lo dirija desde otro agente.
+# ruta = "C:/ruta/a/tu/proyecto"
 # Si es "true", Programator abre el diálogo de selección de carpeta en cada arranque en vez de irse
 # solo a la última en la que se trabajó. Es lo cómodo cuando vas cambiando de proyecto y no quieres
 # tener que borrar "ultima-carpeta.txt" para que deje de insistir con el anterior.

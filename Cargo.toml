@@ -1,6 +1,6 @@
 [package]
 name = "programator"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 description = "Arnés que convierte un modelo local en un agente del canal .gestor"
 license = "GPL-3.0-or-later"

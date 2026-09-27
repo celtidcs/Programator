@@ -4,6 +4,7 @@
 //! para el ciclo y qué acción llevar a cabo (o si no se requiere ninguna).
 
 use crate::error::Error;
+use crate::plataforma::{EJEMPLO_DE_RUTA, NOMBRE_DEL_EJECUTABLE};
 use std::path::Path;
 
 /// Redacta el mensaje de error fatal cuando Programator no puede ponerse en marcha.
@@ -18,44 +19,62 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
             if ruta.ends_with("programator.toml") {
                 "Comprueba que «programator.toml» existe junto al ejecutable (puedes copiar y \
                  adaptar «programator.ejemplo.toml») y que tienes permisos de lectura."
+                    .to_string()
             } else if ruta.extension().is_some_and(|ext| ext == "md") {
                 "Comprueba que el archivo de plantilla configurado existe y es legible, o revisa \
-                 la sección [agente] en «programator.toml»."
+                 la ruta indicada en «programator.toml»."
+                    .to_string()
             } else {
-                "Comprueba que el archivo indicado existe y que el usuario actual tiene permisos de lectura."
+                "Comprueba que el archivo indicado existe y que el usuario actual tiene permisos \
+                 de lectura."
+                    .to_string()
             }
         }
         Error::Configuracion(msg) => {
             let minusculas = msg.to_lowercase();
             if minusculas.contains("carpeta") {
-                "Revisa la clave «ruta» en la sección [carpeta] de «programator.toml», o arranca \
-                 indicando una carpeta válida con «programator.exe --ruta <DIRECTORIO>»."
+                format!(
+                    "Revisa la clave «ruta» en la sección [carpeta] de «programator.toml», o \
+                     arranca indicando una carpeta válida con «{NOMBRE_DEL_EJECUTABLE} --ruta \
+                     <DIRECTORIO>»."
+                )
             } else if minusculas.contains("motor")
                 || minusculas.contains("puerto")
                 || minusculas.contains("modelo")
             {
-                "Revisa la sección [motor] de «programator.toml» (puerto, binario y modelo) o ejecuta \
-                 «programator.exe --diagnostico» para comprobar el encaje de hardware."
+                format!(
+                    "Revisa la sección [motor] de «programator.toml» (puerto, binario y modelo) o \
+                     ejecuta «{NOMBRE_DEL_EJECUTABLE} --diagnostico» para comprobar el encaje de \
+                     hardware."
+                )
             } else {
-                "Revisa los valores y la sintaxis de «programator.toml», o ejecuta \
-                 «programator.exe --diagnostico» para verificar la configuración."
+                format!(
+                    "Revisa los valores y la sintaxis de «programator.toml», o ejecuta \
+                     «{NOMBRE_DEL_EJECUTABLE} --diagnostico» para verificar la configuración."
+                )
             }
         }
         Error::Escritura { .. } => {
-            "Comprueba los permisos de escritura en la ruta indicada y que la unidad de disco no esté llena."
+            "Comprueba los permisos de escritura en la ruta indicada y que la unidad de disco no \
+             esté llena."
+                .to_string()
         }
-        Error::MotorSinRespuesta(_) => {
+        Error::MotorSinRespuesta(_) => format!(
             "Comprueba que llama-server esté en ejecución en el puerto configurado o ejecuta \
-             «programator.exe --diagnostico» para revisar la GPU y el motor."
-        }
+             «{NOMBRE_DEL_EJECUTABLE} --diagnostico» para revisar la GPU y el motor."
+        ),
         Error::GgufInvalido { .. } => {
-            "Comprueba que el fichero del modelo configurado no esté dañado o incompleto y sea compatible."
+            "Comprueba que el fichero del modelo configurado no esté dañado o incompleto y sea \
+             compatible."
+                .to_string()
         }
         Error::FueraDeAmbito(_) => {
-            "Asegúrate de que la ruta solicitada se encuentra confinada dentro de la carpeta de trabajo del proyecto."
+            "Asegúrate de que la ruta solicitada se encuentra confinada dentro de la carpeta de \
+             trabajo del proyecto."
+                .to_string()
         }
         Error::PodaInvalida(_) => {
-            "Revisa el formato del buzón o documento que se intentaba podar."
+            "Revisa el formato del buzón o documento que se intentaba podar.".to_string()
         }
     };
 
@@ -91,19 +110,20 @@ pub fn mensaje_canal_parcialmente_ilegible() -> String {
 /// Redacta el aviso emitido cuando la ejecución de una pasada de atención falla.
 pub fn mensaje_fallo_pasada_ciclo(fallo: &Error) -> String {
     let accion = match fallo {
-        Error::MotorSinRespuesta(_) => {
+        Error::MotorSinRespuesta(_) => format!(
             "Si se debe a contención temporal de GPU o carga del modelo, el arnés reintentará \
-             automáticamente en la siguiente vuelta. Si persiste tras varios ciclos, comprueba con \
-             «programator.exe --diagnostico» si el servidor de inferencia sigue activo."
-        }
+             automáticamente en la siguiente vuelta. Si persiste tras varios ciclos, comprueba \
+             con «{NOMBRE_DEL_EJECUTABLE} --diagnostico» si el servidor de inferencia sigue \
+             activo."
+        ),
         Error::Lectura { .. } | Error::Escritura { .. } => {
-            "Comprueba que los ficheros del proyecto y del canal sigan siendo accesibles y dispongan \
-              de permisos de lectura y escritura."
+            "Comprueba que los ficheros del proyecto y del canal sigan siendo accesibles y \
+             dispongan de permisos de lectura y escritura."
+                .to_string()
         }
-        _ => {
-            "El arnés reintentará en el próximo ciclo; no es necesario intervenir a menos que el fallo \
-              se repita de forma continuada."
-        }
+        _ => "El arnés reintentará en el próximo ciclo; no es necesario intervenir a menos que el \
+             fallo se repita de forma continuada."
+            .to_string(),
     };
 
     format!(
@@ -205,14 +225,16 @@ pub fn mensaje_version(version: &str) -> String {
 /// Redacta el mensaje emitido cuando se pasa un argumento no reconocido por la línea de comandos.
 pub fn mensaje_argumento_no_entendido(cual: &str) -> String {
     format!(
-        "No entiendo «{cual}». Prueba «programator.exe --ayuda» para ver qué se le puede pedir a Programator."
+        "No entiendo «{cual}». Prueba «{NOMBRE_DEL_EJECUTABLE} --ayuda» para ver qué se le puede \
+         pedir a Programator."
     )
 }
 
 /// Redacta el mensaje emitido cuando una opción requiere un valor y no se le proporcionó.
 pub fn mensaje_argumento_falta_valor(cual: &str) -> String {
     format!(
-        "«{cual}» necesita un valor detrás. Ejemplo: programator.exe --ruta \"C:/ruta/a/tu/proyecto\"."
+        "«{cual}» necesita un valor detrás. Ejemplo: {NOMBRE_DEL_EJECUTABLE} --ruta \
+         \"{EJEMPLO_DE_RUTA}\"."
     )
 }
 

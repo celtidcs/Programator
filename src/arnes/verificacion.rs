@@ -241,12 +241,8 @@ mod pruebas {
 
     /// Una orden que existe en cualquier Windows y termina bien o mal según convenga.
     fn orden_que(pasa: bool) -> Vec<String> {
-        let codigo = if pasa { "0" } else { "1" };
-        vec![
-            "cmd".into(),
-            "/C".into(),
-            format!("echo lo que dijo el comprobador & exit {codigo}"),
-        ]
+        let codigo = if pasa { 0 } else { 1 };
+        crate::plataforma::ordenes_de_prueba::eco_y_codigo("lo que dijo el comprobador", codigo)
     }
 
     fn comprobadores(extension: &str, orden: Vec<String>) -> Comprobadores {
@@ -375,14 +371,7 @@ mod pruebas {
         let inicio = Instant::now();
         let veredicto = verificar(
             &fichero,
-            &comprobadores(
-                "py",
-                vec![
-                    "cmd".into(),
-                    "/C".into(),
-                    "ping -n 30 127.0.0.1 > NUL".into(),
-                ],
-            ),
+            &comprobadores("py", crate::plataforma::ordenes_de_prueba::tardar_mucho()),
             Duration::from_millis(400),
             dir.path(),
         );
@@ -403,14 +392,11 @@ mod pruebas {
         let dir = tempfile::tempdir().unwrap();
         let fichero = fichero_de_prueba(&dir, "propuesta.py");
 
-        // `type` falla si el fichero no existe: si la sustitución no ocurriera, buscaría uno
+        // La orden falla si el fichero no existe: si la sustitución no ocurriera, buscaría uno
         // llamado literalmente «{fichero}» y esta prueba lo cazaría.
         let veredicto = verificar(
             &fichero,
-            &comprobadores(
-                "py",
-                vec!["cmd".into(), "/C".into(), "type".into(), "{fichero}".into()],
-            ),
+            &comprobadores("py", crate::plataforma::ordenes_de_prueba::volcar_fichero()),
             Duration::from_secs(10),
             dir.path(),
         );
@@ -432,10 +418,7 @@ mod pruebas {
 
         let veredicto = verificar(
             &relativa,
-            &comprobadores(
-                "py",
-                vec!["cmd".into(), "/C".into(), "type".into(), "{fichero}".into()],
-            ),
+            &comprobadores("py", crate::plataforma::ordenes_de_prueba::volcar_fichero()),
             Duration::from_secs(10),
             otro_directorio.path(),
         );

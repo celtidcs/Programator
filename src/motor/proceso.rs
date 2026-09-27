@@ -322,7 +322,11 @@ pub fn revisar_motor(binario: &Path) -> MotorInstalado {
     for entrada in entradas.flatten() {
         let nombre = entrada.file_name();
         let nombre = nombre.to_string_lossy().to_ascii_lowercase();
-        if nombre.starts_with("ggml-cuda") {
+        // Se busca el nombre dentro y no al principio porque no se escribe igual en todas partes:
+        // en Windows el fichero es «ggml-cuda.dll» y en Linux «libggml-cuda.so», con el prefijo
+        // que esa plataforma le pone a sus bibliotecas. Buscando solo por el principio, una
+        // instalacion de Linux perfectamente valida se anunciaba como «SIN CUDA (solo CPU)».
+        if nombre.contains("ggml-cuda") {
             return MotorInstalado::ListoConCuda;
         }
     }
@@ -410,6 +414,20 @@ mod pruebas {
         let binario = dir.path().join("llama-server.exe");
         std::fs::write(&binario, b"x").unwrap();
         std::fs::write(dir.path().join("ggml-cuda.dll"), b"x").unwrap();
+
+        assert_eq!(revisar_motor(&binario), MotorInstalado::ListoConCuda);
+    }
+
+    #[test]
+    fn la_biblioteca_de_cuda_de_linux_tambien_cuenta() {
+        // En Linux el fichero es «libggml-cuda.so», con el prefijo que esa plataforma pone a sus
+        // bibliotecas. Buscando solo por el principio del nombre, una instalación de Linux
+        // perfectamente válida se anunciaba como «SIN CUDA (solo CPU)»: se vio al instalar el
+        // motor de verdad dentro de un Linux, y esta prueba existe para que no vuelva a pasar.
+        let dir = tempfile::tempdir().unwrap();
+        let binario = dir.path().join("llama-server");
+        std::fs::write(&binario, b"x").unwrap();
+        std::fs::write(dir.path().join("libggml-cuda.so"), b"x").unwrap();
 
         assert_eq!(revisar_motor(&binario), MotorInstalado::ListoConCuda);
     }
@@ -793,31 +811,14 @@ mod pruebas {
         );
     }
 
-    /// Best-effort: mata el proceso de prueba por PID aunque la prueba entre en pánico antes de
-    /// llegar al final. Sin esto, un `assert!` fallido a mitad de la prueba dejaría un `ping.exe`
-    /// de sobra colgado en la máquina.
+    /// Best-effort: mata el proceso de prueba por identificador aunque la prueba entre en pánico
+    /// antes de llegar al final. Sin esto, un `assert!` fallido a mitad dejaría un proceso de
+    /// sobra colgado en la máquina de quien ejecutó la suite.
     struct MataAlSoltar(u32);
 
     impl Drop for MataAlSoltar {
         fn drop(&mut self) {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/PID", &self.0.to_string()])
-                .output();
-        }
-    }
-
-    /// ¿Sigue vivo el proceso con este PID? Se apoya en `tasklist` (siempre presente en Windows)
-    /// en vez de en una API insegura, para no tener que escribir FFI a mano.
-    #[cfg(windows)]
-    fn proceso_vive(pid: u32) -> bool {
-        let filtro = format!("PID eq {pid}");
-        let salida = std::process::Command::new("tasklist")
-            .args(["/FI", &filtro, "/NH"])
-            .output();
-
-        match salida {
-            Ok(salida) => String::from_utf8_lossy(&salida.stdout).contains(&pid.to_string()),
-            Err(_) => false,
+            crate::plataforma::ordenes_de_prueba::matar_proceso(self.0);
         }
     }
 
@@ -829,7 +830,6 @@ mod pruebas {
     // sino de qué hilo gane la carrera. Con todo secuencial en una única prueba, esa carrera no
     // puede darse.
     #[test]
-    #[cfg(windows)]
     fn el_cierre_ordenado_distingue_nada_registrado_servidor_ya_suelto_y_servidor_vivo() {
         // Caso 1: nada registrado todavía. No debe entrar en pánico ni fallar.
         manejar_cierre_ordenado();
@@ -844,10 +844,11 @@ mod pruebas {
             manejar_cierre_ordenado();
         }
 
-        // Caso 3: un servidor de verdad, todavía vivo. `ping` a sí mismo 30 veces vive de sobra
-        // para dar tiempo a que el cierre ordenado actúe antes de que termine solo.
-        let hijo = std::process::Command::new("ping")
-            .args(["-n", "30", "127.0.0.1"])
+        // Caso 3: un servidor de verdad, todavía vivo. Un proceso que tarda treinta segundos vive
+        // de sobra para dar tiempo a que el cierre ordenado actúe antes de que termine solo.
+        let orden = crate::plataforma::ordenes_de_prueba::tardar_mucho();
+        let hijo = std::process::Command::new(&orden[0])
+            .args(&orden[1..])
             .spawn()
             .unwrap();
         let pid = hijo.id();
@@ -863,7 +864,7 @@ mod pruebas {
             "el hueco compartido debía quedar vacío tras el cierre ordenado"
         );
         assert!(
-            !proceso_vive(pid),
+            !crate::plataforma::ordenes_de_prueba::proceso_vive(pid),
             "el proceso registrado debía estar muerto tras el cierre ordenado"
         );
     }

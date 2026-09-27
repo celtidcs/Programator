@@ -54,21 +54,73 @@ pub fn interpretar(argumentos: &[String]) -> Orden {
     }
 }
 
+/// Columna en la que empieza la descripción de cada forma de uso.
+///
+/// Se compone, no se escribe a mano con espacios, porque el nombre del ejecutable cambia de
+/// longitud entre Windows y el resto de sistemas y la tabla quedaría desalineada en uno de los
+/// dos.
+const COLUMNA_DE_LA_DESCRIPCION: usize = 31;
+
+/// Una línea de la sección USO: la invocación a la izquierda y qué hace a la derecha.
+///
+/// Si la invocación no cabe en su columna, la descripción baja a la línea siguiente en vez de
+/// empujar la tabla hacia la derecha. Así el texto sigue leyéndose en una terminal estrecha.
+fn linea_de_uso(invocacion: &str, descripcion: &str) -> String {
+    let sangrado = "  ";
+    let escrito = sangrado.len() + invocacion.len();
+    if escrito < COLUMNA_DE_LA_DESCRIPCION {
+        let relleno = COLUMNA_DE_LA_DESCRIPCION - escrito;
+        format!(
+            "{sangrado}{invocacion}{:relleno$}{descripcion}
+",
+            ""
+        )
+    } else {
+        format!(
+            "{sangrado}{invocacion}
+{:COLUMNA_DE_LA_DESCRIPCION$}{descripcion}
+",
+            ""
+        )
+    }
+}
+
 /// El texto que escribe `--ayuda`.
 pub fn texto_de_ayuda(version: &str) -> String {
+    let programa = crate::plataforma::NOMBRE_DEL_EJECUTABLE;
+    let uso = [
+        (
+            programa.to_string(),
+            "Arranca y entra en el ciclo de trabajo.",
+        ),
+        (
+            format!("{programa} --ruta <carpeta>"),
+            "Arranca sobre esa carpeta, sin abrir el diálogo.",
+        ),
+        (
+            format!("{programa} --ayuda"),
+            "Muestra esta ayuda y termina.",
+        ),
+        (
+            format!("{programa} --version"),
+            "Escribe la versión y termina.",
+        ),
+        (
+            format!("{programa} --diagnostico"),
+            "Escribe el estado de la máquina, el motor y el modelo.",
+        ),
+    ]
+    .iter()
+    .map(|(invocacion, que_hace)| linea_de_uso(invocacion, que_hace))
+    .collect::<String>();
+
     format!(
         "Programator {version} — arnés que convierte un modelo local en un agente del canal
 
 USO
-  programator.exe              Arranca y entra en el ciclo de trabajo.
-  programator.exe --ruta <carpeta>
-                               Arranca sobre esa carpeta, sin abrir el diálogo.
-                               Manda sobre «[carpeta] ruta» del TOML.
-  programator.exe --ayuda      Muestra esta ayuda y termina.
-  programator.exe --version    Escribe la versión y termina.
-  programator.exe --diagnostico
-                               Escribe el estado de la máquina, el motor y el modelo,
-                               y termina sin arrancar el ciclo.
+{uso}
+  «--ruta» manda sobre «[carpeta] ruta» del TOML, y «--diagnostico» termina
+  sin arrancar el ciclo.
 
 CONFIGURACIÓN
   Se lee de «programator.toml», en la misma carpeta que el ejecutable.

@@ -4,3 +4,4 @@
 *.toml text eol=lf
 *.gguf binary
 *.exe binary
+*.png binary

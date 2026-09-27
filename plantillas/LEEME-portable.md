@@ -14,7 +14,18 @@ Esta carpeta contiene todo lo necesario para ejecutar Programator. La aplicació
 - `herramientas/`: Directorio donde reside `llama-server.exe` junto a sus bibliotecas de enlace dinámico.
 - `modelos/`: Directorio destinado a alojar los modelos cuantizados en formato GGUF.
 
-Las carpetas `herramientas/` y `modelos/` no se distribuyen en el repositorio de control de versiones debido a su gran volumen. Si tu copia no las incluye, deberás incorporar ambos componentes antes de iniciar las tareas de inferencia, tal como se explica más adelante.
+Las carpetas `herramientas/` y `modelos/` no se distribuyen con el repositorio debido a su gran volumen: el motor pesa algo más de un giga y el modelo trece. Si tu copia no las incluye, hay dos formas de conseguirlas.
+
+**La corta.** Lanza el script que viene en esta misma carpeta y se ocupa de todo:
+
+```
+powershell -ExecutionPolicy Bypass -File preparar-portable.ps1     (en Windows)
+./preparar-portable.sh                                             (en Linux)
+```
+
+Descarga el motor y el modelo de sus sitios oficiales, comprueba que lo descargado es exactamente lo que debía ser, lo deja donde el programa lo espera y termina enseñándote el diagnóstico de tu máquina. Si se corta a mitad, se relanza y continúa donde se quedó. Y si alguna descarga falla, te dice qué fichero necesitaba, de dónde, cuánto pesa y dónde dejarlo, para que puedas terminarlo a mano.
+
+**La larga**, si prefieres controlar tú cada pieza, está al final de este documento, en la sección de componentes necesarios. El detalle completo, incluido qué hacer si alguna de esas direcciones deja de existir, está en `docs/instalacion-paso-a-paso.md`.
 
 ## Puesta en marcha en tres pasos
 
@@ -108,7 +119,9 @@ Si tu distribución no incluye las dependencias de inferencia, es necesario aña
 1. El motor de inferencia en la carpeta `herramientas/`: Requiere una compilación de `llama.cpp` para Windows con soporte CUDA. La versión verificada en este entorno es la compilación b10993 con CUDA 12.4. El directorio debe contener `llama-server.exe` junto con sus bibliotecas auxiliares, en particular `ggml-cuda.dll`.
 2. El modelo de lenguaje en la carpeta `modelos/`: El modelo de referencia verificado en la especificación es `devstral-small-2-24b-Q4_K_M.gguf`.
 
-Programator no descarga componentes ni modelos de forma automática desde internet por razones de seguridad y estabilidad: las versiones de desarrollo de herramientas de inferencia cambian con frecuencia y alterar el modelo modifica directamente los resultados de las entregas. Cada usuario decide qué versiones exactas coloca en su máquina.
+**Programator, el programa, no descarga nada por su cuenta.** Las versiones de las herramientas de inferencia cambian casi a diario y cambiar el modelo cambia directamente lo que entrega, así que quién pone qué en la máquina es una decisión de quien la usa, no del arnés.
+
+El script `preparar-portable` es otra cosa: lo lanzas tú, a propósito, y trae versiones fijas y comprobadas una por una. No se ejecuta solo ni se ejecuta al arrancar el programa.
 
 ## Comprobaciones recomendadas
 

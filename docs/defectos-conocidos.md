@@ -13,6 +13,42 @@ Consecuencia para el usuario: La junta de comunicación entre el arnés y el mot
 
 Cómo mitigarlo: Antes de dar por buena una entrega para producción, es obligatorio ejecutar manualmente las pruebas ignoradas y seguir el protocolo de comprobación física descrito en `docs/pruebas-manuales.md`.
 
+## En Linux funciona el programa, pero no se ha probado contra una tarjeta gráfica
+
+Programator se desarrolla en Windows. Desde la versión 0.10.0 el código también compila y pasa la
+norma mecánica completa en Linux, y eso no es una suposición ni una comprobación de escritorio: la
+suite entera se ha ejecutado dentro de un Linux de verdad, con el formato verificado, clippy sin un
+solo aviso y todas las pruebas en verde. La integración continua lo repite en los dos sistemas en
+cada cambio, así que si alguna vez dejara de cumplirse, se vería.
+
+Lo que esa comprobación **no** demuestra es que funcione contra una tarjeta gráfica, porque la
+máquina donde se ejecuta no tiene ninguna. Nadie ha arrancado todavía Programator en un Linux con
+una NVIDIA delante.
+
+En concreto, lo que queda sin probar en esa combinación son dos cosas. La primera es la medición de
+la tarjeta: en Windows la cifra de memoria sale del sistema gráfico, y en Linux de preguntarle a
+`nvidia-smi` y descomponer su respuesta. El análisis de esa respuesta sí está probado, con ocho
+casos que cubren una tarjeta, dos tarjetas, líneas ilegibles, tarjetas que dicen no saber su
+memoria y cifras incoherentes; lo que no se ha probado es la llamada en sí, contra un controlador
+instalado. La segunda es el motor de inferencia cargando el modelo en una tarjeta bajo Linux, que
+es la misma junta que en Windows tampoco verifica ninguna prueba automática.
+
+Consecuencia para quien lo use: si la medición fallara, Programator diría que no sabe cuánta
+memoria hay, que es la respuesta prudente y no un fallo. A partir de ahí no podría decidir cuántas
+capas del modelo caben en la tarjeta.
+
+Cómo sortearlo mientras tanto: fijar el número de capas a mano en lugar de dejarlo en automático,
+cambiando la clave `capas_gpu` de la sección `[motor]` de `"auto"` a un número. Conviene empezar
+bajo e ir subiendo hasta que el motor se queje por falta de memoria. La orden
+`nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader,nounits` escrita en la
+terminal enseña exactamente lo que Programator intenta leer; si ahí sale algo razonable y el
+programa sigue diciendo que no sabe, es un defecto y conviene contarlo.
+
+Hay un detalle de la configuración que se olvida con facilidad: la clave `binario` de la sección
+`[motor]` viene escrita para Windows y termina en `.exe`. En Linux hay que dejarla en
+`herramientas/llama-server`, sin extensión, o el arranque fallará diciendo que no encuentra el
+motor.
+
 ## Limitaciones estructurales pendientes de evolución
 
 Durante la jornada de trabajo real en NatureLand (23 de septiembre de 2026), se identificaron cuatro limitaciones del protocolo de comunicación que actualmente permanecen pospuestas para no alterar de forma abrupta el contrato con los agentes coordinadores:

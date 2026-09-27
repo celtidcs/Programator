@@ -9,4 +9,5 @@ pub mod diagnostico;
 pub mod error;
 pub mod informe;
 pub mod motor;
+pub mod plataforma;
 pub mod protocolo;

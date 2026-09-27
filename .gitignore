@@ -3,9 +3,11 @@
 **/*.rs.bk
 
 # Artefactos portables: pesan cientos de megas y no se versionan. El motor y el modelo se
-# descargan aparte y se colocan en estas dos carpetas, como explica el LEEME del portable.
+# descargan aparte y los coloca en estas carpetas el script «preparar-portable»; «descargas/»
+# guarda los paquetes comprimidos por si hay que rehacer la instalación sin volver a bajarlos.
 /modelos/
 /herramientas/
+/descargas/
 *.gguf
 *.exe
 

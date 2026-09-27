@@ -1,0 +1,55 @@
+# Pasa la norma mecánica de la casa en los dos sistemas, en cada empujón y en cada propuesta.
+#
+# Por qué existe: Programator se desarrolla en Windows, y el soporte de Linux se escribió sin una
+# máquina Linux delante. Sin esto, «compila en Linux» sería una suposición. Aquí se comprueba.
+#
+# Lo que NO comprueba, y conviene saberlo: ninguna de estas máquinas tiene tarjeta gráfica ni
+# modelo, así que la junta entre el arnés y el motor de inferencia sigue sin verificarse sola. Eso
+# se hace a mano, siguiendo «docs/pruebas-manuales.md».
+
+name: Verificación
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  norma-mecanica:
+    name: ${{ matrix.sistema }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Sin esto, el fallo de un sistema cancelaría al otro y se perdería la mitad de la
+      # información justo cuando más falta hace: al arreglar algo que solo falla en uno.
+      fail-fast: false
+      matrix:
+        include:
+          - sistema: Linux
+            runner: ubuntu-latest
+          - sistema: Windows
+            runner: windows-latest
+
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@v4
+
+      - name: Preparar Rust con clippy y rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Reutilizar lo ya compilado de tandas anteriores
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formato
+        run: cargo fmt --check
+
+      - name: Clippy, sin un solo aviso
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Pruebas
+        run: cargo test
