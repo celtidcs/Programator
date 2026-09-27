@@ -35,7 +35,9 @@ jobs:
 
     steps:
       - name: Traer el código
-        uses: actions/checkout@v4
+        # La v4 ya avisa de que su tiempo de ejecución está descatalogado y GitHub la fuerza a
+        # correr en uno más nuevo. Se fija la mayor publicada para no vivir de un aviso.
+        uses: actions/checkout@v7
 
       - name: Preparar Rust con clippy y rustfmt
         uses: dtolnay/rust-toolchain@stable
