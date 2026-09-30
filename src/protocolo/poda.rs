@@ -34,6 +34,9 @@ pub struct Propuesta {
 /// solo podía ser todo-o-nada.
 const SEPARADOR_LINEA: &str = "---";
 
+/// Límite de caracteres para la muestra de texto que se adjunta en diagnósticos de poda inválida (§4.3).
+const TOPE_CARACTERES_MUESTRA_DIAGNOSTICO: usize = 60;
+
 /// Una línea del buzón con lo que hace falta para cortar por ella sin perder un byte.
 struct Linea<'a> {
     /// El texto de la línea, ya sin su terminador.
@@ -239,7 +242,10 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
         if !perdidos.is_empty() {
             msg.push_str(&format!("perdidos: {}", perdidos.len()));
             if let Some(first) = perdidos.first() {
-                let muestra: String = first.chars().take(60).collect();
+                let muestra: String = first
+                    .chars()
+                    .take(TOPE_CARACTERES_MUESTRA_DIAGNOSTICO)
+                    .collect();
                 msg.push_str(&format!("; primer perdido: «{}»", muestra.trim()));
             }
         }
@@ -249,7 +255,10 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
             }
             msg.push_str(&format!("inventados: {}", inventados.len()));
             if let Some(first) = inventados.first() {
-                let muestra: String = first.chars().take(60).collect();
+                let muestra: String = first
+                    .chars()
+                    .take(TOPE_CARACTERES_MUESTRA_DIAGNOSTICO)
+                    .collect();
                 msg.push_str(&format!("; primer inventado: «{}»", muestra.trim()));
             }
         }

@@ -305,7 +305,7 @@ fn calcular(config: &MotorConfig, modelo: &Path, gpu: Option<&Gpu>) -> (Encaje, 
         );
     };
 
-    let margen = config.margen_vram_mib.saturating_mul(1024 * 1024);
+    let margen = config.margen_vram_mib.saturating_mul(BYTES_POR_MIB);
     let encaje = decidir(&informe.pesos, kv, gpu.vram_libre, margen);
     let coste = coste_de_la_decision(&encaje, &informe.pesos, kv);
     (encaje, coste)
@@ -371,9 +371,15 @@ fn redactar_aviso(encaje: &Encaje, coste: Option<u64>, gpu: Option<&Gpu>) -> Str
     }
 }
 
+/// Factor de conversión de mebibytes a bytes (§4.3).
+const BYTES_POR_MIB: u64 = 1024 * 1024;
+
+/// Factor de conversión de bytes a gibibytes en coma flotante (§4.3).
+const BYTES_POR_GIB_F64: f64 = 1024.0 * 1024.0 * 1024.0;
+
 /// Bytes a GiB con un decimal, que es la unidad en la que se habla de VRAM.
 fn en_gib(bytes: u64) -> String {
-    format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    format!("{:.1} GiB", bytes as f64 / BYTES_POR_GIB_F64)
 }
 
 #[cfg(test)]

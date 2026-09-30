@@ -164,12 +164,15 @@ fn describir_modelo(modelo: &ResumenModelo) -> String {
     }
 }
 
+/// Factor de conversión de bytes a gibibytes en coma flotante (§4.3).
+const BYTES_POR_GIB_F64: f64 = 1024.0 * 1024.0 * 1024.0;
+
 /// Bytes a GiB con un decimal y **coma** decimal, que es como se escribe en español.
 ///
 /// Deliberadamente distinta de la `en_gib` de `motor::encaje`, que usa punto: aquella cifra la lee
 /// una máquina (se compara con otras cifras internas) y esta la lee una persona. No se unifican.
 fn en_gib(bytes: u64) -> String {
-    let gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    let gib = bytes as f64 / BYTES_POR_GIB_F64;
     format!("{gib:.1} GiB").replace('.', ",")
 }
 

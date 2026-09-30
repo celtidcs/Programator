@@ -263,14 +263,19 @@ pub fn marca_de_tiempo_actual() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
 }
 
+/// Longitud máxima de la primera línea en el latido antes de recortarla con elipsis (§4.3).
+pub const TOPE_CARACTERES_RESUMEN: usize = 120;
+/// Caracteres conservados de la primera línea antes de añadir el carácter de elipsis «…».
+pub const CARACTERES_PRE_ELIPSIS: usize = 117;
+
 /// Primera línea del cuerpo, recortada, para que el latido diga de un vistazo en qué se está.
 fn primera_linea(cuerpo: &str) -> String {
     let linea = cuerpo.lines().next().unwrap_or("").trim();
     if linea.is_empty() {
         return "sin novedad".to_string();
     }
-    if linea.chars().count() > 120 {
-        let recortada: String = linea.chars().take(117).collect();
+    if linea.chars().count() > TOPE_CARACTERES_RESUMEN {
+        let recortada: String = linea.chars().take(CARACTERES_PRE_ELIPSIS).collect();
         format!("{recortada}…")
     } else {
         linea.to_string()
