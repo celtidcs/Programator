@@ -3,7 +3,7 @@
 Qué falta, en qué orden y por qué ese orden. Cada versión se hace **paso a paso**: primero su
 especificación, luego su plan, y el plan se ejecuta tarea a tarea con revisión entre cada una.
 
-Estado al escribir esto: la versión 0.10.1 está integrada en `main` desde el 27/09/2026, con 457 pruebas pasando limpiamente en Windows y en Linux. El ciclo completo se ejecuta contra el modelo local a 18,4 tokens por segundo, y ya se ha empleado durante una jornada completa en un proyecto real (NatureLand, Godot/.NET/C#, 23/09/2026), logrando cuatro entregas aceptadas tras verificación independiente. La 0.10.0 resuelve las carencias del repertorio y las propuestas del informe sobre observabilidad y recuperación ante fallos del motor.
+Estado al escribir esto: la versión 0.10.2 está integrada en `main` desde el 30/09/2026, con 471 pruebas pasando limpiamente en Windows y en Linux. El ciclo completo se ejecuta contra el modelo local a 18,4 tokens por segundo, y ya se ha empleado durante una jornada completa en un proyecto real (NatureLand, Godot/.NET/C#, 23/09/2026), logrando cuatro entregas aceptadas tras verificación independiente. La 0.10.0 resolvió las carencias del repertorio y observabilidad, la 0.10.1 abrió la compatibilidad con Linux y la 0.10.2 añade lectura acotada por líneas y aviso explícito ante ciclo sin entrega.
 
 ---
 
@@ -109,6 +109,15 @@ plantilla y elegir la carpeta a mano se hacía en cada proyecto y en cada reinic
 De paso se resolvió otra cosa que estorbaba a cualquiera que llegara nuevo: las dos piezas pesadas, motor y modelo, había que ir a buscarlas a mano. Ahora las trae un script, con las versiones fijadas y verificando cada descarga, y un documento explica qué hacer cuando alguna de esas direcciones deje de existir.
 
 **Lo que queda pendiente de ahí.** Nadie ha arrancado todavía Programator en un Linux con una tarjeta gráfica delante, así que la medición real y la carga del modelo siguen sin verificar en ese sistema.
+
+## 0.10.2 — Lectura acotada y aviso de entrega (publicada el 30/09/2026)
+
+**Qué resolvió.** Experiencias reales en NatureLand mostraron dos limitaciones prácticas del arnés: el desbordamiento de ventana por lecturas masivas y la falta de señal cuando un ciclo terminaba sin invocar herramientas de entrega.
+
+- **Lectura acotada por líneas**: `leer_fichero` soporta ahora `desde_linea` y `hasta_linea` (base 1), permitiendo inspeccionar secciones específicas de ficheros grandes sin saturar la ventana ni desbordar el tope de bytes.
+- **Tipado en esquema de herramientas**: los argumentos declaran su tipo JSON (`integer`, `string`) hacia el servidor de inferencia.
+- **Aviso explícito ante ciclo sin entrega**: publicación visible en el canal y alerta en terminal ante `Desenlace::SinEntrega`.
+- **Higiene del repositorio**: purga de ramas fusionadas y worktrees obsoletos.
 
 ---
 
