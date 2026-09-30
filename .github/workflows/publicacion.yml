@@ -1,0 +1,114 @@
+# Empaqueta y publica automáticamente los binarios y activos portables al empujar una etiqueta de versión.
+#
+# Se activa ante cualquier etiqueta 'v*'. Compila en Windows y Linux, genera los paquetes
+# comprimidos con la estructura portable oficial y los adjunta a la Release en GitHub.
+
+name: Publicación de Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  compilar-windows:
+    name: Compilar y empaquetar Windows
+    runs-on: windows-latest
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@v4
+
+      - name: Preparar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Reutilizar compilación previa
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compilar binario release
+        run: cargo build --release
+
+      - name: Empaquetar portable Windows
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $staging = "staging-windows"
+          New-Item -ItemType Directory -Path "$staging/plantillas" -Force | Out-Null
+          Copy-Item "target/release/programator.exe" $staging
+          if (Test-Path "programator.ico") { Copy-Item "programator.ico" $staging }
+          if (Test-Path "programator.ejemplo.toml") { Copy-Item "programator.ejemplo.toml" $staging }
+          if (Test-Path "preparar-portable.ps1") { Copy-Item "preparar-portable.ps1" $staging }
+          if (Test-Path "README.md") { Copy-Item "README.md" "$staging/LEEME.md" }
+          if (Test-Path "docs/instalacion-paso-a-paso.md") { Copy-Item "docs/instalacion-paso-a-paso.md" "$staging/INSTALACION.md" }
+          if (Test-Path "docs/defectos-conocidos.md") { Copy-Item "docs/defectos-conocidos.md" "$staging/DEFECTOS-CONOCIDOS.md" }
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" $staging }
+          if (Test-Path "plantillas") { Copy-Item "plantillas/*" "$staging/plantillas" -Recurse }
+
+          $zipName = "programator-$version-windows-x86_64.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $zipName -CompressionLevel Optimal
+          Write-Host "Paquete generado: $zipName"
+
+      - name: Subir activo a la Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $zipName = "programator-$version-windows-x86_64.zip"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+              gh release create $tag --title "Programator $version" --generate-notes
+          }
+          gh release upload $tag $zipName --clobber
+
+  compilar-linux:
+    name: Compilar y empaquetar Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@v4
+
+      - name: Preparar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Reutilizar compilación previa
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compilar binario release
+        run: cargo build --release
+
+      - name: Empaquetar portable Linux
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          FOLDER="programator-$VERSION-linux-x86_64"
+          mkdir -p "$FOLDER/plantillas"
+          cp "target/release/programator" "$FOLDER/"
+          [ -f "programator.ejemplo.toml" ] && cp "programator.ejemplo.toml" "$FOLDER/"
+          [ -f "preparar-portable.sh" ] && cp "preparar-portable.sh" "$FOLDER/"
+          [ -f "README.md" ] && cp "README.md" "$FOLDER/LEEME.md"
+          [ -f "docs/instalacion-paso-a-paso.md" ] && cp "docs/instalacion-paso-a-paso.md" "$FOLDER/INSTALACION.md"
+          [ -f "docs/defectos-conocidos.md" ] && cp "docs/defectos-conocidos.md" "$FOLDER/DEFECTOS-CONOCIDOS.md"
+          [ -f "LICENSE" ] && cp "LICENSE" "$FOLDER/"
+          [ -d "plantillas" ] && cp -r plantillas/* "$FOLDER/plantillas/"
+
+          TARNAME="programator-$VERSION-linux-x86_64.tar.gz"
+          tar -czf "$TARNAME" "$FOLDER"
+          echo "Paquete generado: $TARNAME"
+
+      - name: Subir activo a la Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          TARNAME="programator-$VERSION-linux-x86_64.tar.gz"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --title "Programator $VERSION" --generate-notes
+          fi
+          gh release upload "$TAG" "$TARNAME" --clobber
