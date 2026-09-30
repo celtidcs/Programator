@@ -606,3 +606,131 @@ fn multiples_propuestas_se_publican_al_entregar_y_cierre_no_duplica() {
         "debe haber exactamente 2 bloques de comprobación (uno por entrega): {buzon}"
     );
 }
+
+#[test]
+fn al_cerrar_encargo_se_genera_propuesta_de_poda_y_reserva_en_estado() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "# Claude\n\n**LATIDO:** 10:00\n\n---\n\n## Para Programator\n\nImplementa el validador.\n\n---\n\n## Para Codex\n\nTarea pendiente.\n",
+    );
+
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Validador implementado con éxito."}),
+        ),
+        Respuesta::Texto("Fin.".to_string()),
+    ]);
+
+    let desenlace = ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    assert!(matches!(desenlace, DesenlacePasada::Atendidos(_)));
+
+    // 1. Verificar propuesta de poda generada en candidatos
+    let ruta_podado = carpeta.join(".gestor/candidatos/poda/claude.md");
+    let ruta_archivo = carpeta.join(".gestor/candidatos/poda/claude-archivo.md");
+    assert!(ruta_podado.exists(), "debe existir el fichero podado");
+    assert!(ruta_archivo.exists(), "debe existir el fichero de archivo");
+
+    let texto_podado = std::fs::read_to_string(&ruta_podado).unwrap();
+    let texto_archivo = std::fs::read_to_string(&ruta_archivo).unwrap();
+
+    assert!(texto_podado.contains("# Claude"));
+    assert!(texto_podado.contains("## Para Codex"));
+    assert!(!texto_podado.contains("Implementa el validador"));
+
+    assert!(texto_archivo.contains("Implementa el validador"));
+
+    // 2. Verificar reserva anotada en estado.md
+    let estado = std::fs::read_to_string(carpeta.join(".gestor/canal/estado.md")).unwrap();
+    assert!(
+        estado.contains("- **Programator**: `.gestor/candidatos/poda/claude.md` — propuesta de poda tras cerrar encargo"),
+        "la reserva debe constar en estado.md: {estado}"
+    );
+
+    // 3. Verificar aviso de poda en la respuesta en el buzón
+    let buzon = std::fs::read_to_string(carpeta.join(".gestor/canal/programator.md")).unwrap();
+    assert!(
+        buzon.contains("**Propuesta de poda para claude:**"),
+        "el buzón debe contener el aviso de poda: {buzon}"
+    );
+    assert!(buzon.contains(".gestor/candidatos/poda/claude.md"));
+}
+
+#[test]
+fn nueva_pasada_rota_buzon_propio_a_historico_manteniendo_solo_ultimo_latido() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nPrimera tarea.\n",
+    );
+
+    let mut motor1 = motor_con_guion(vec![
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Primera tarea completada."}),
+        ),
+        Respuesta::Texto("Fin 1.".to_string()),
+    ]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut motor1,
+    )
+    .unwrap();
+
+    let buzon1 = std::fs::read_to_string(carpeta.join(".gestor/canal/programator.md")).unwrap();
+    assert!(buzon1.contains("Primera tarea completada."));
+    let ruta_hist = carpeta.join(".gestor/canal/historico-programator.md");
+    assert!(!ruta_hist.exists());
+
+    // Segunda pasada con nueva tarea
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nPrimera tarea.\n\n---\n\n## Para Programator\n\nSegunda tarea.\n",
+    );
+
+    let mut motor2 = motor_con_guion(vec![
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Segunda tarea completada."}),
+        ),
+        Respuesta::Texto("Fin 2.".to_string()),
+    ]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut motor2,
+    )
+    .unwrap();
+
+    let buzon2 = std::fs::read_to_string(carpeta.join(".gestor/canal/programator.md")).unwrap();
+    assert!(buzon2.contains("Segunda tarea completada."));
+    assert!(
+        !buzon2.contains("Primera tarea completada."),
+        "el buzón propio vivo solo debe mantener el último latido"
+    );
+
+    assert!(ruta_hist.exists(), "debe haberse creado el histórico");
+    let texto_hist = std::fs::read_to_string(&ruta_hist).unwrap();
+    assert!(
+        texto_hist.contains("Primera tarea completada."),
+        "el historial previo debe conservarse en el archivo histórico"
+    );
+}

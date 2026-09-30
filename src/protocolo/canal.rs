@@ -131,6 +131,28 @@ impl Canal {
             .collect()
     }
 
+    /// Rota el contenido actual del buzón propio a su fichero histórico
+    /// (`historico-{yo}.md`), dejando el buzón limpio con únicamente el encabezado.
+    ///
+    /// Se invoca al iniciar la atención de nuevos encargos, garantizando que el buzón vivo
+    /// mantenga únicamente el último latido y que el historial anterior no se pierda.
+    pub fn rotar_a_historico(&self) -> Resultado<()> {
+        let ruta = self.directorio.join(&self.fichero_propio);
+        if !ruta.exists() {
+            return Ok(());
+        }
+        let contenido = std::fs::read_to_string(&ruta).map_err(|causa| Error::Lectura {
+            ruta: ruta.clone(),
+            causa,
+        })?;
+        let previo = extraer_contenido_rotar(&contenido);
+        if !previo.trim().is_empty() {
+            self.archivar_en_historico(previo.trim())?;
+            std::fs::write(&ruta, ENCABEZADO).map_err(|causa| Error::Escritura { ruta, causa })?;
+        }
+        Ok(())
+    }
+
     /// Añade un bloque al buzón propio, con el formato que exige el protocolo.
     ///
     /// El `cuerpo` lo aporta el modelo. El encabezado, el `LATIDO:` y el `LEÍDO:` los aporta este
@@ -179,6 +201,45 @@ impl Canal {
         std::fs::write(&ruta, contenido).map_err(|causa| Error::Escritura { ruta, causa })
     }
 
+    /// Archiva un bloque anterior en `.gestor/canal/historico-{fichero_propio}`.
+    fn archivar_en_historico(&self, bloque: &str) -> Resultado<()> {
+        let ruta_historico = self
+            .directorio
+            .join(format!("historico-{}", self.fichero_propio));
+
+        if !ruta_historico.exists() {
+            let agente = self.fichero_propio.trim_end_matches(".md");
+            let mut contenido = format!(
+                "# Histórico de {}\n\n> Archivo histórico de mensajes y latidos anteriores rotados automáticamente del buzón principal.\n\n",
+                agente
+            );
+            contenido.push_str(bloque);
+            contenido.push('\n');
+            std::fs::write(&ruta_historico, contenido).map_err(|causa| Error::Escritura {
+                ruta: ruta_historico,
+                causa,
+            })
+        } else {
+            let mut contenido =
+                std::fs::read_to_string(&ruta_historico).map_err(|causa| Error::Lectura {
+                    ruta: ruta_historico.clone(),
+                    causa,
+                })?;
+            if !contenido.ends_with('\n') {
+                contenido.push('\n');
+            }
+            if !contenido.ends_with("\n---\n") {
+                contenido.push_str("\n---\n\n");
+            }
+            contenido.push_str(bloque);
+            contenido.push('\n');
+            std::fs::write(&ruta_historico, contenido).map_err(|causa| Error::Escritura {
+                ruta: ruta_historico,
+                causa,
+            })
+        }
+    }
+
     /// Publica la entrega de una propuesta en el buzón propio en el instante en que queda escrita en disco.
     ///
     /// Pasa estrictamente por `publicar`, garantizando que apliquen todas las defensas
@@ -213,6 +274,34 @@ fn primera_linea(cuerpo: &str) -> String {
         format!("{recortada}…")
     } else {
         linea.to_string()
+    }
+}
+
+/// Extrae el contenido de mensajes o latidos previos de un buzón para su rotación a histórico.
+fn extraer_contenido_rotar(contenido: &str) -> &str {
+    if let Some(pos) = contenido.find("**LATIDO:**") {
+        &contenido[pos..]
+    } else if let Some(resto) = contenido.strip_prefix(ENCABEZADO) {
+        resto
+    } else {
+        let mut desplazamiento = 0;
+        for linea in contenido.lines() {
+            let recortada = linea.trim();
+            if recortada.starts_with('#') || recortada.starts_with('>') || recortada.is_empty() {
+                desplazamiento += linea.len();
+                if desplazamiento < contenido.len() && contenido.as_bytes()[desplazamiento] == b'\r'
+                {
+                    desplazamiento += 1;
+                }
+                if desplazamiento < contenido.len() && contenido.as_bytes()[desplazamiento] == b'\n'
+                {
+                    desplazamiento += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        &contenido[desplazamiento..]
     }
 }
 
@@ -498,6 +587,66 @@ mod pruebas {
             "no puede perder el contenido anterior"
         );
         assert!(buzon.contains("Bloque nuevo."));
+    }
+
+    #[test]
+    fn rotar_a_historico_mueve_mensajes_anteriores_y_deja_encabezado() {
+        let (dir, canal) = canal_de_prueba();
+        canal.rotar_a_historico().unwrap();
+
+        let buzon =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+        assert!(!buzon.contains("lo mío"));
+        assert!(buzon.starts_with("# Programator"));
+
+        let hist =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-programator.md"))
+                .unwrap();
+        assert!(hist.contains("lo mío"));
+    }
+
+    #[test]
+    fn rotar_a_historico_acumula_sucesivamente_en_historico() {
+        let dir = tempfile::tempdir().unwrap();
+        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let leido = ResumenLeido { entradas: vec![] };
+
+        canal
+            .publicar("Primer mensaje.", &leido, "2026-09-13 16:00")
+            .unwrap();
+
+        canal.rotar_a_historico().unwrap();
+
+        let buzon1 =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+        assert!(!buzon1.contains("Primer mensaje."));
+        assert!(buzon1.starts_with("# Programator"));
+
+        let hist1 =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-programator.md"))
+                .unwrap();
+        assert!(hist1.contains("Primer mensaje."));
+
+        canal
+            .publicar("Segundo mensaje.", &leido, "2026-09-13 16:10")
+            .unwrap();
+
+        canal.rotar_a_historico().unwrap();
+
+        let hist2 =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-programator.md"))
+                .unwrap();
+        assert!(hist2.contains("Primer mensaje."));
+        assert!(hist2.contains("Segundo mensaje."));
+
+        // Comprobar que buzones_ajenos() no lee el histórico
+        let ajenos = canal.buzones_ajenos().unwrap();
+        assert!(
+            !ajenos
+                .iter()
+                .any(|(nombre, _)| nombre.starts_with("historico-")),
+            "el histórico no puede aparecer en buzones_ajenos"
+        );
     }
 
     #[test]

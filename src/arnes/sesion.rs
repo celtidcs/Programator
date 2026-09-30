@@ -29,7 +29,10 @@ use crate::arnes::Ambito;
 use crate::config::Verificacion;
 use crate::error::Resultado;
 use crate::motor::Motor;
-use crate::protocolo::{detectar, Canal, Delta, DetalleEncargo, Latido, RegistroLectura};
+use crate::protocolo::{
+    anotar_reserva, detectar, guardar_propuesta_poda, proponer_poda_por_cierre, Canal, Delta,
+    DetalleEncargo, Latido, RegistroLectura,
+};
 use chrono::Local;
 use std::path::Path;
 
@@ -219,8 +222,14 @@ pub fn ejecutar_pasada(
         .con_tope_de_lectura(ajustes.tope_lectura_bytes)
         .con_leido(leido.clone());
 
+    // Rotar el historial anterior del buzón propio a su fichero histórico para que
+    // esta pasada mantenga únicamente el último latido.
+    canal.rotar_a_historico()?;
+
     let mut resumen = ResumenPasada::default();
     let mut alguna_publicacion_fallo = false;
+    let mut contenidos_buzones: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     for encargo in encargos {
         let detalle = DetalleEncargo::nuevo(&encargo.de, &encargo.texto);
@@ -269,7 +278,41 @@ pub fn ejecutar_pasada(
         // publican de inmediato en el buzón al entregarse (incidencia C2 de NatureLand). Al cierre del
         // encargo sólo se adjuntan veredictos si quedó alguno sin publicar por un fallo previo.
         let cuerpo = con_veredictos(&cuerpo_base, repertorio.veredictos_no_publicados());
-        let cuerpo = con_avisos(&cuerpo, &resumen.avisos);
+        let mut cuerpo = con_avisos(&cuerpo, &resumen.avisos);
+
+        // Vía A: Si el encargo concluyó (con entrega o sin entrega directa), proponer la poda
+        // del buzón de origen retirando la tarea recién cerrada.
+        if matches!(
+            desenlace,
+            Desenlace::Publicado(_) | Desenlace::SinEntrega(_)
+        ) {
+            let agente_origen = encargo.de.trim_end_matches(".md");
+            let contenido_origen = contenidos_buzones
+                .get(&encargo.de)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(canal.ruta_buzon(agente_origen)).ok());
+
+            if let Some(ref texto_origen) = contenido_origen {
+                if let Some(propuesta) = proponer_poda_por_cierre(texto_origen, &encargo.texto) {
+                    if let Ok((_ruta_podado, _ruta_archivo)) =
+                        guardar_propuesta_poda(carpeta, &encargo.de, &propuesta)
+                    {
+                        let rel_podado = format!(".gestor/candidatos/poda/{agente_origen}.md");
+                        let _ = anotar_reserva(
+                            &canal.ruta_estado(),
+                            agente,
+                            &rel_podado,
+                            "propuesta de poda tras cerrar encargo",
+                        );
+                        contenidos_buzones.insert(encargo.de.clone(), propuesta.podado);
+                        cuerpo.push_str(&format!(
+                            "\n\n---\n\n**Propuesta de poda para {agente_origen}:** He dejado una versión limpia de tu buzón en `{rel_podado}` y la tarea cerrada en `.gestor/candidatos/poda/{agente_origen}-archivo.md`. Puedes revisarla y aplicarla a tu buzón cuando gustes."
+                        ));
+                    }
+                }
+            }
+        }
+
         let cuerpo = cuerpo.as_str();
 
         // Decisión 6: el desenlace sale al canal únicamente por `Canal::publicar`.

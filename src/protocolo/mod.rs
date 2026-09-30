@@ -14,4 +14,7 @@ pub use encargo::{detectar, Encargo};
 pub use estado::anotar_reserva;
 pub use latido::{DetalleEncargo, EstadoLatido, Latido};
 pub use lectura::{Delta, RegistroLectura};
-pub use poda::{componer, trocear, verificar_integridad, Bloque, Clasificacion, Propuesta};
+pub use poda::{
+    componer, guardar_propuesta_poda, proponer_poda_por_cierre, trocear, verificar_integridad,
+    Bloque, Clasificacion, Propuesta,
+};

@@ -5,6 +5,7 @@
 //! `verificar_integridad` lo comprueba byte a byte antes de que nada llegue al disco.
 
 use crate::error::{Error, Resultado};
+use std::path::{Path, PathBuf};
 
 /// Un fragmento indivisible del buzón, tal y como lo escribió su dueño.
 #[derive(Debug, Clone)]
@@ -283,6 +284,134 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
     }
 
     Ok(())
+}
+
+/// Genera una propuesta de poda para un buzón ajeno tras el cierre de un encargo.
+///
+/// Localiza el bloque indivisible que contiene el encargo recién cerrado, lo clasifica como
+/// `Superado` y mantiene el resto de bloques como `Vivo`. Verifica la integridad byte a byte
+/// antes de devolver la propuesta; si algo no cuadra o no se encuentra el bloque, devuelve `None`.
+pub fn proponer_poda_por_cierre(
+    contenido_original: &str,
+    encargo_texto: &str,
+) -> Option<Propuesta> {
+    let bloques = trocear(contenido_original);
+    if bloques.is_empty() {
+        return None;
+    }
+
+    let mut candidatos = Vec::new();
+    let lineas: Vec<&str> = encargo_texto
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    for (indice, bloque) in bloques.iter().enumerate() {
+        // El primer bloque es el encabezado del buzón ajeno, nunca se poda por cierre de encargo
+        if indice == 0 && bloques.len() > 1 {
+            continue;
+        }
+
+        if bloque.texto.contains(encargo_texto) {
+            candidatos.push(indice);
+            continue;
+        }
+
+        if !lineas.is_empty() {
+            let mut pos = 0;
+            let mut todas_encontradas = true;
+            for linea in &lineas {
+                if let Some(desplazamiento) = bloque.texto[pos..].find(linea) {
+                    pos += desplazamiento + linea.len();
+                } else {
+                    todas_encontradas = false;
+                    break;
+                }
+            }
+            if todas_encontradas {
+                candidatos.push(indice);
+            }
+        }
+    }
+
+    if candidatos.is_empty() {
+        return None;
+    }
+
+    // Si hay coincidencias, tomamos la última correspondiente al encargo cerrado
+    let indice_superado = *candidatos.last()?;
+
+    let clases: Vec<Clasificacion> = (0..bloques.len())
+        .map(|i| {
+            if i == indice_superado {
+                Clasificacion::Superado
+            } else {
+                Clasificacion::Vivo
+            }
+        })
+        .collect();
+
+    let propuesta = componer(&bloques, &clases).ok()?;
+    verificar_integridad(contenido_original, &propuesta).ok()?;
+    Some(propuesta)
+}
+
+/// Guarda una propuesta de poda en `.gestor/candidatos/poda/<agente>.md` y
+/// `.gestor/candidatos/poda/<agente>-archivo.md`.
+///
+/// Devuelve las rutas absolutas del fichero podado y del archivo histórico.
+pub fn guardar_propuesta_poda(
+    carpeta_trabajo: &Path,
+    agente_origen: &str,
+    propuesta: &Propuesta,
+) -> Resultado<(PathBuf, PathBuf)> {
+    let dir_poda = carpeta_trabajo
+        .join(".gestor")
+        .join("candidatos")
+        .join("poda");
+    std::fs::create_dir_all(&dir_poda).map_err(|causa| Error::Escritura {
+        ruta: dir_poda.clone(),
+        causa,
+    })?;
+
+    let nombre_limpio = agente_origen.trim().trim_end_matches(".md").to_lowercase();
+    let ruta_podado = dir_poda.join(format!("{nombre_limpio}.md"));
+    let ruta_archivo = dir_poda.join(format!("{nombre_limpio}-archivo.md"));
+
+    std::fs::write(&ruta_podado, &propuesta.podado).map_err(|causa| Error::Escritura {
+        ruta: ruta_podado.clone(),
+        causa,
+    })?;
+
+    // Acumular en archivo histórico respetando separaciones previas si ya existía
+    if ruta_archivo.exists() {
+        let mut contenido_archivo =
+            std::fs::read_to_string(&ruta_archivo).map_err(|causa| Error::Lectura {
+                ruta: ruta_archivo.clone(),
+                causa,
+            })?;
+        if !contenido_archivo.contains(propuesta.archivo.trim()) {
+            if !contenido_archivo.is_empty() && !contenido_archivo.ends_with('\n') {
+                contenido_archivo.push('\n');
+            }
+            if !contenido_archivo.ends_with("\n---\n") && !propuesta.archivo.starts_with("---") {
+                contenido_archivo.push_str("\n---\n\n");
+            }
+            contenido_archivo.push_str(&propuesta.archivo);
+            std::fs::write(&ruta_archivo, contenido_archivo).map_err(|causa| Error::Escritura {
+                ruta: ruta_archivo.clone(),
+                causa,
+            })?;
+        }
+    } else {
+        std::fs::write(&ruta_archivo, &propuesta.archivo).map_err(|causa| Error::Escritura {
+            ruta: ruta_archivo.clone(),
+            causa,
+        })?;
+    }
+
+    Ok((ruta_podado, ruta_archivo))
 }
 
 #[cfg(test)]
@@ -749,5 +878,94 @@ Mensaje B
 
         assert_eq!(bloques.len(), 1, "sin salto final no hay separador");
         assert_eq!(bloques[0].texto, original);
+    }
+
+    #[test]
+    fn proponer_poda_por_cierre_aisla_el_encargo_y_mantiene_integridad() {
+        let buzon = "\
+# Claude
+
+> Solo escribe Claude.
+
+**LATIDO:** 10:00 — antiguo
+**LEÍDO:** nada nuevo
+
+---
+
+## Para Programator — Tarea cerrada
+
+Implementa la función suma en src/calc.rs.
+
+---
+
+## Para Gemini — Otra tarea viva
+
+Revisa el plan de pruebas.
+";
+        let encargo_texto = "Implementa la función suma en src/calc.rs.";
+        let propuesta =
+            proponer_poda_por_cierre(buzon, encargo_texto).expect("debe generar propuesta válida");
+
+        // El podado conserva encabezado y la otra tarea, sin la cerrada
+        assert!(propuesta.podado.contains("# Claude"));
+        assert!(propuesta
+            .podado
+            .contains("## Para Gemini — Otra tarea viva"));
+        assert!(!propuesta.podado.contains("Tarea cerrada"));
+        assert!(!propuesta.podado.contains("Implementa la función suma"));
+
+        // El archivo contiene exactamente el bloque cerrado
+        assert!(propuesta
+            .archivo
+            .contains("## Para Programator — Tarea cerrada"));
+        assert!(propuesta
+            .archivo
+            .contains("Implementa la función suma en src/calc.rs."));
+
+        // La integridad byte a byte debe cumplirse formalmente
+        verificar_integridad(buzon, &propuesta).unwrap();
+    }
+
+    #[test]
+    fn proponer_poda_por_cierre_funciona_con_finales_de_linea_crlf() {
+        let buzon = "# Claude\r\n\r\n**LATIDO:** 10:00\r\n\r\n---\r\n\r\n## Para Programator\r\n\r\nEncargo Windows.\r\n\r\n---\r\n\r\nResto vivo.\r\n";
+        let propuesta =
+            proponer_poda_por_cierre(buzon, "Encargo Windows.").expect("debe funcionar con CRLF");
+
+        assert!(!propuesta.podado.contains("Encargo Windows."));
+        assert!(propuesta.archivo.contains("Encargo Windows."));
+        verificar_integridad(buzon, &propuesta).unwrap();
+    }
+
+    #[test]
+    fn proponer_poda_por_cierre_devuelve_none_si_encargo_no_existe() {
+        let buzon = "# Claude\n\n**LATIDO:** 10:00\n\n---\n\nAlgo diferente.\n";
+        assert!(proponer_poda_por_cierre(buzon, "Texto inexistente").is_none());
+    }
+
+    #[test]
+    fn guardar_propuesta_poda_escribe_ficheros_en_candidatos() {
+        let dir = tempfile::tempdir().unwrap();
+        let buzon = "# Claude\n\n**LATIDO:** 10:00\n\n---\n\n## Para Programator\n\nTarea A.\n";
+        let propuesta = proponer_poda_por_cierre(buzon, "Tarea A.").unwrap();
+
+        let (ruta_podado, ruta_archivo) =
+            guardar_propuesta_poda(dir.path(), "claude.md", &propuesta).unwrap();
+
+        assert!(ruta_podado.exists());
+        assert!(ruta_archivo.exists());
+        assert_eq!(
+            ruta_podado,
+            dir.path().join(".gestor/candidatos/poda/claude.md")
+        );
+        assert_eq!(
+            ruta_archivo,
+            dir.path().join(".gestor/candidatos/poda/claude-archivo.md")
+        );
+
+        let contenido_podado = std::fs::read_to_string(ruta_podado).unwrap();
+        let contenido_archivo = std::fs::read_to_string(ruta_archivo).unwrap();
+        assert_eq!(contenido_podado, propuesta.podado);
+        assert_eq!(contenido_archivo, propuesta.archivo);
     }
 }
