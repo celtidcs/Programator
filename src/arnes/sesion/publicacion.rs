@@ -7,6 +7,25 @@
 
 use crate::protocolo::ResumenLeido;
 
+/// Obtiene el texto base del cuerpo según el desenlace del encargo.
+///
+/// Si el desenlace es `SinEntrega`, antepone un aviso visible y explícito (INC-N02)
+/// advirtiendo de que no se invocó ninguna herramienta de entrega (`publicar` o `escribir_propuesta`).
+pub(super) fn cuerpo_base_desenlace(desenlace: &crate::arnes::ciclo::Desenlace) -> String {
+    match desenlace {
+        crate::arnes::ciclo::Desenlace::Publicado(cuerpo) => cuerpo.clone(),
+        crate::arnes::ciclo::Desenlace::SinEntrega(texto) => {
+            let aviso = "⚠️ Programator no invocó herramientas de entrega («publicar» o «escribir_propuesta»).";
+            if texto.trim().is_empty() {
+                format!("{aviso}\n\nEl modelo terminó la generación sin producir texto ni invocar herramientas.")
+            } else {
+                format!("{aviso}\n\nRespuesta directa del modelo:\n\n{texto}")
+            }
+        }
+        crate::arnes::ciclo::Desenlace::Abortado(motivo) => motivo.clone(),
+    }
+}
+
 /// Añade al cuerpo que publicará el modelo el resultado de comprobar sus propuestas.
 ///
 /// **Quién escribe qué importa aquí más que en ningún otro sitio.** El modelo redacta su cuerpo y
@@ -143,5 +162,30 @@ mod pruebas {
         assert!(texto.contains("Consecuencia:"));
         assert!(texto.contains("las propuestas generadas SÍ quedan a salvo en disco"));
         assert!(texto.contains("Qué hacer:"));
+    }
+
+    #[test]
+    fn cuerpo_base_desenlace_publicado_devuelve_cuerpo_tal_cual() {
+        let desenlace = crate::arnes::ciclo::Desenlace::Publicado("Solución lista.".to_string());
+        assert_eq!(cuerpo_base_desenlace(&desenlace), "Solución lista.");
+    }
+
+    #[test]
+    fn cuerpo_base_desenlace_sin_entrega_antepone_aviso_visible() {
+        let desenlace = crate::arnes::ciclo::Desenlace::SinEntrega("Texto directo".to_string());
+        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        assert!(cuerpo.starts_with("⚠️ Programator no invocó herramientas de entrega"));
+        assert!(cuerpo.contains("Respuesta directa del modelo:\n\nTexto directo"));
+
+        let desenlace_vacio = crate::arnes::ciclo::Desenlace::SinEntrega(String::new());
+        let cuerpo_vacio = cuerpo_base_desenlace(&desenlace_vacio);
+        assert!(cuerpo_vacio.contains("sin producir texto ni invocar herramientas"));
+    }
+
+    #[test]
+    fn cuerpo_base_desenlace_abortado_devuelve_motivo() {
+        let desenlace =
+            crate::arnes::ciclo::Desenlace::Abortado("🔴 Abortado por límite".to_string());
+        assert_eq!(cuerpo_base_desenlace(&desenlace), "🔴 Abortado por límite");
     }
 }

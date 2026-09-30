@@ -253,21 +253,22 @@ pub fn ejecutar_pasada(
                 motivo.clone(),
             )
             .guardar_con_aviso(&ruta_latido);
+        } else if let Desenlace::SinEntrega(_) = &desenlace {
+            eprintln!(
+                "⚠️ Programator procesó el encargo de «{}» pero no invocó herramientas de entrega («publicar» o «escribir_propuesta»). Se publica la respuesta directa en el canal.",
+                encargo.de
+            );
         }
 
         // Decisión 7: los tres desenlaces se publican, no solo el bueno. El §2.3 del protocolo
         // exige registrar la parada: un agente que calla cuando algo le sale mal es peor que uno
-        // que falla.
-        let cuerpo = match &desenlace {
-            Desenlace::Publicado(cuerpo) => cuerpo.as_str(),
-            Desenlace::SinEntrega(texto) => texto.as_str(),
-            Desenlace::Abortado(motivo) => motivo.as_str(),
-        };
+        // que falla. Si no hubo entrega con herramientas, se antepone un aviso visible (INC-N02).
+        let cuerpo_base = publicacion::cuerpo_base_desenlace(&desenlace);
 
         // **El cuerpo lo redacta el modelo; el veredicto de sus propuestas, no.** Las propuestas se
         // publican de inmediato en el buzón al entregarse (incidencia C2 de NatureLand). Al cierre del
         // encargo sólo se adjuntan veredictos si quedó alguno sin publicar por un fallo previo.
-        let cuerpo = con_veredictos(cuerpo, repertorio.veredictos_no_publicados());
+        let cuerpo = con_veredictos(&cuerpo_base, repertorio.veredictos_no_publicados());
         let cuerpo = con_avisos(&cuerpo, &resumen.avisos);
         let cuerpo = cuerpo.as_str();
 

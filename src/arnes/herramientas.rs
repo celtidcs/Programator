@@ -242,6 +242,46 @@ impl Repertorio {
         }
     }
 
+    /// Saca un argumento numérico de línea (opcional) de la solicitud.
+    /// Admite números enteros positivos tanto en formato numérico JSON (`10`)
+    /// como en cadena (`"10"`). Si se omite o es `null`, devuelve `Ok(None)`.
+    fn argumento_linea(
+        &self,
+        s: &SolicitudHerramienta,
+        clave: &str,
+    ) -> Result<Option<usize>, Decision> {
+        match s.argumentos.get(clave) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::Number(n)) => {
+                if let Some(u) = n.as_u64() {
+                    Ok(Some(u as usize))
+                } else {
+                    Err(Decision::Denegada(format!(
+                        "el argumento «{clave}» debe ser un entero positivo. {}",
+                        Self::recordatorio_de_firma(&s.nombre)
+                    )))
+                }
+            }
+            Some(serde_json::Value::String(s_val)) => {
+                let limpio = s_val.trim();
+                if limpio.is_empty() {
+                    Ok(None)
+                } else if let Ok(u) = limpio.parse::<usize>() {
+                    Ok(Some(u))
+                } else {
+                    Err(Decision::Denegada(format!(
+                        "el argumento «{clave}» debe ser un entero positivo. {}",
+                        Self::recordatorio_de_firma(&s.nombre)
+                    )))
+                }
+            }
+            Some(_) => Err(Decision::Denegada(format!(
+                "el argumento «{clave}» debe ser un entero positivo. {}",
+                Self::recordatorio_de_firma(&s.nombre)
+            ))),
+        }
+    }
+
     /// La firma del verbo y para qué sirve cada argumento, en una frase.
     ///
     /// Si el verbo no estuviera en la ficha —cosa que `atender` ya impide— se calla en vez de
@@ -262,12 +302,34 @@ impl Repertorio {
             Ok(r) => r,
             Err(d) => return d,
         };
+        let desde_linea = match self.argumento_linea(s, "desde_linea") {
+            Ok(d) => d,
+            Err(d) => return d,
+        };
+        let hasta_linea = match self.argumento_linea(s, "hasta_linea") {
+            Ok(h) => h,
+            Err(d) => return d,
+        };
+
+        if let (Some(d), Some(h)) = (desde_linea, hasta_linea) {
+            if d > h {
+                return Decision::Denegada(format!(
+                    "«desde_linea» ({d}) no puede ser mayor que «hasta_linea» ({h}). {}",
+                    Self::recordatorio_de_firma(&s.nombre)
+                ));
+            }
+        }
+
         match self.ambito.resolver(ruta) {
             Err(e) => Decision::Denegada(motivo_para_el_modelo(ruta, &e)),
             Ok(resuelta) => match std::fs::read_to_string(&resuelta) {
-                Ok(contenido) => {
-                    Decision::Concedida(preparar_lectura(ruta, &contenido, self.tope_lectura))
-                }
+                Ok(contenido) => Decision::Concedida(preparar_lectura(
+                    ruta,
+                    &contenido,
+                    self.tope_lectura,
+                    desde_linea,
+                    hasta_linea,
+                )),
                 Err(e) => Decision::Denegada(format!("no se pudo leer «{ruta}»: {e}")),
             },
         }

@@ -140,14 +140,14 @@ pub fn cuerpo_peticion(
                 for argumento in ficha.obligatorios {
                     propiedades.insert(
                         argumento.nombre.to_string(),
-                        serde_json::json!({ "type": "string", "description": argumento.para_que }),
+                        serde_json::json!({ "type": argumento.tipo, "description": argumento.para_que }),
                     );
                     obligatorios.push(serde_json::json!(argumento.nombre));
                 }
                 for argumento in ficha.opcionales {
                     propiedades.insert(
                         argumento.nombre.to_string(),
-                        serde_json::json!({ "type": "string", "description": argumento.para_que }),
+                        serde_json::json!({ "type": argumento.tipo, "description": argumento.para_que }),
                     );
                 }
             }
@@ -374,6 +374,29 @@ mod pruebas {
         assert_eq!(obligatorios.len(), 2);
         assert!(obligatorios.contains(&serde_json::json!("nombre")));
         assert!(obligatorios.contains(&serde_json::json!("contenido")));
+    }
+
+    #[test]
+    fn leer_fichero_declara_argumentos_obligatorios_y_opcionales_con_sus_tipos() {
+        let cuerpo = cuerpo_peticion(
+            &[],
+            "devstral",
+            &["leer_fichero"],
+            &crate::config::Muestreo::default(),
+        );
+
+        let funcion = &cuerpo["tools"][0]["function"];
+        assert_eq!(funcion["name"], "leer_fichero");
+
+        let propiedades = &funcion["parameters"]["properties"];
+        assert_eq!(propiedades["ruta"]["type"], "string");
+        assert_eq!(propiedades["desde_linea"]["type"], "integer");
+        assert_eq!(propiedades["hasta_linea"]["type"], "integer");
+
+        let obligatorios = funcion["parameters"]["required"]
+            .as_array()
+            .expect("required es una lista");
+        assert_eq!(obligatorios, &vec![serde_json::json!("ruta")]);
     }
 
     #[test]

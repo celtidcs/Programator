@@ -18,6 +18,8 @@ pub struct Argumento {
     pub nombre: &'static str,
     /// Una línea para el modelo y para quien dirige. No es documentación interna: se publica.
     pub para_que: &'static str,
+    /// Tipo JSON schema de la propiedad ("string", "integer").
+    pub tipo: &'static str,
 }
 
 /// En qué situación está un verbo del repertorio.
@@ -86,8 +88,20 @@ pub const REPERTORIO: &[Ficha] = &[
         obligatorios: &[Argumento {
             nombre: "ruta",
             para_que: "Ruta del fichero, relativa a la carpeta de trabajo",
+            tipo: "string",
         }],
-        opcionales: &[],
+        opcionales: &[
+            Argumento {
+                nombre: "desde_linea",
+                para_que: "Primera línea a leer (base 1, opcional)",
+                tipo: "integer",
+            },
+            Argumento {
+                nombre: "hasta_linea",
+                para_que: "Última línea a leer inclusive (base 1, opcional)",
+                tipo: "integer",
+            },
+        ],
         estado: Estado::Concedible,
     },
     Ficha {
@@ -96,6 +110,7 @@ pub const REPERTORIO: &[Ficha] = &[
         obligatorios: &[Argumento {
             nombre: "ruta",
             para_que: "Ruta del directorio, relativa a la carpeta de trabajo",
+            tipo: "string",
         }],
         opcionales: &[],
         estado: Estado::Concedible,
@@ -117,6 +132,7 @@ pub const REPERTORIO: &[Ficha] = &[
         obligatorios: &[Argumento {
             nombre: "cual",
             para_que: "Cuál de las verificaciones de la lista blanca quieres",
+            tipo: "string",
         }],
         opcionales: &[],
         estado: Estado::Pendiente {
@@ -134,6 +150,7 @@ pub const REPERTORIO: &[Ficha] = &[
         obligatorios: &[Argumento {
             nombre: "texto",
             para_que: "El cuerpo entero de lo que quieres publicar",
+            tipo: "string",
         }],
         opcionales: &[],
         estado: Estado::Concedible,
@@ -145,10 +162,12 @@ pub const REPERTORIO: &[Ficha] = &[
             Argumento {
                 nombre: "nombre",
                 para_que: "Nombre del fichero, a secas: sin rutas ni carpetas",
+                tipo: "string",
             },
             Argumento {
                 nombre: "contenido",
                 para_que: "El contenido completo del fichero, no un fragmento",
+                tipo: "string",
             },
         ],
         opcionales: &[],
@@ -170,10 +189,12 @@ pub const REPERTORIO: &[Ficha] = &[
             Argumento {
                 nombre: "ruta",
                 para_que: "Ruta del fichero que reservas, relativa a la carpeta de trabajo",
+                tipo: "string",
             },
             Argumento {
                 nombre: "motivo",
                 para_que: "Para qué lo reservas, en una línea",
+                tipo: "string",
             },
         ],
         opcionales: &[],
@@ -209,6 +230,15 @@ mod pruebas {
     fn la_firma_pone_los_obligatorios_en_orden_y_los_opcionales_entre_corchetes() {
         let propuesta = buscar("escribir_propuesta").expect("está en el repertorio");
         assert_eq!(propuesta.firma(), "escribir_propuesta(nombre, contenido)");
+    }
+
+    #[test]
+    fn la_firma_de_leer_fichero_incluye_los_opcionales() {
+        let leer = buscar("leer_fichero").expect("está en el repertorio");
+        assert_eq!(
+            leer.firma(),
+            "leer_fichero(ruta, [desde_linea], [hasta_linea])"
+        );
     }
 
     #[test]

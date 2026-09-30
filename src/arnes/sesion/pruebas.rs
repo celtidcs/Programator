@@ -106,6 +106,47 @@ fn un_encargo_dirigido_a_programator_se_atiende_y_se_publica() {
 }
 
 #[test]
+fn un_encargo_que_termina_sin_entrega_se_publica_con_aviso_explicito() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "## Para Programator\n\nAnaliza pero no entregues nada.\n",
+    );
+
+    let mut asegurar_motor = motor_con_guion(vec![Respuesta::Texto(
+        "He terminado de analizar sin usar herramientas.".to_string(),
+    )]);
+
+    let desenlace = ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    match desenlace {
+        DesenlacePasada::Atendidos(resumen) => {
+            assert_eq!(resumen.atendidos, 1);
+            assert_eq!(resumen.fallidos, 0);
+        }
+        otro => panic!("se esperaba Atendidos: {otro:?}"),
+    }
+
+    let buzon = std::fs::read_to_string(carpeta.join(".gestor/canal/programator.md")).unwrap();
+    assert!(
+        buzon.contains("⚠️ Programator no invocó herramientas de entrega"),
+        "no incluye el aviso explícito de falta de entrega: {buzon}"
+    );
+    assert!(
+        buzon.contains("He terminado de analizar sin usar herramientas."),
+        "no incluye la respuesta directa del modelo: {buzon}"
+    );
+}
+
+#[test]
 fn un_encargo_dirigido_a_otro_agente_no_dispara_nada() {
     let (_dir, carpeta) = carpeta_de_prueba();
     sembrar_registro_no_vacio(&carpeta);

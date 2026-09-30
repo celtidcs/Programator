@@ -501,8 +501,8 @@ fn la_clave_ausente_sigue_dando_el_mensaje_de_siempre() {
     };
     assert_eq!(
         motivo,
-        "falta el argumento «ruta». La firma es leer_fichero(ruta). «ruta»: Ruta del \
-             fichero, relativa a la carpeta de trabajo."
+        "falta el argumento «ruta». La firma es leer_fichero(ruta, [desde_linea], [hasta_linea]). «ruta»: Ruta del \
+             fichero, relativa a la carpeta de trabajo. «desde_linea»: Primera línea a leer (base 1, opcional). «hasta_linea»: Última línea a leer inclusive (base 1, opcional)."
     );
 }
 
@@ -534,7 +534,61 @@ fn denegar_por_tipo_incorrecto_tambien_trae_la_firma() {
     let Decision::Denegada(motivo) = decision else {
         panic!("«ruta» no era una cadena: tenía que denegarse");
     };
-    assert!(motivo.contains("leer_fichero(ruta)"), "sin firma: {motivo}");
+    assert!(
+        motivo.contains("leer_fichero(ruta, [desde_linea], [hasta_linea])"),
+        "sin firma: {motivo}"
+    );
+}
+
+#[test]
+fn leer_fichero_con_rango_de_lineas_extrae_el_fragmento_solicitado() {
+    let (dir, mut r) = repertorio_de_prueba();
+    let ruta_codigo = dir.path().join("codigo.txt");
+    std::fs::write(&ruta_codigo, "l1\nl2\nl3\nl4\nl5\n").unwrap();
+
+    let decision = r.atender(&solicitar(
+        "leer_fichero",
+        serde_json::json!({"ruta": "codigo.txt", "desde_linea": 2, "hasta_linea": 4}),
+    ));
+
+    let Decision::Concedida(salida) = decision else {
+        panic!("debía concederse la lectura por líneas");
+    };
+    assert!(salida.contains("[Líneas 2 a 4 de «codigo.txt» (total 5 líneas)]:"));
+    assert!(salida.contains("l2\nl3\nl4\n"));
+    assert!(!salida.contains("l1\n"));
+    assert!(!salida.contains("l5\n"));
+}
+
+#[test]
+fn leer_fichero_deniega_si_desde_linea_supera_hasta_linea() {
+    let (_dir, mut r) = repertorio_de_prueba();
+    let decision = r.atender(&solicitar(
+        "leer_fichero",
+        serde_json::json!({"ruta": "src/main.rs", "desde_linea": 10, "hasta_linea": 5}),
+    ));
+
+    let Decision::Denegada(motivo) = decision else {
+        panic!("debía denegarse por rango invertido");
+    };
+    assert!(motivo.contains("«desde_linea» (10) no puede ser mayor que «hasta_linea» (5)"));
+}
+
+#[test]
+fn leer_fichero_acepta_argumentos_de_linea_en_cadena() {
+    let (dir, mut r) = repertorio_de_prueba();
+    let ruta_codigo = dir.path().join("codigo.txt");
+    std::fs::write(&ruta_codigo, "uno\ndos\ntres\n").unwrap();
+
+    let decision = r.atender(&solicitar(
+        "leer_fichero",
+        serde_json::json!({"ruta": "codigo.txt", "desde_linea": "2", "hasta_linea": "3"}),
+    ));
+
+    let Decision::Concedida(salida) = decision else {
+        panic!("debía concederse leyendo líneas en formato string");
+    };
+    assert!(salida.contains("dos\ntres\n"));
 }
 
 #[test]
