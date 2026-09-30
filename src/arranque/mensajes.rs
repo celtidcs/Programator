@@ -257,7 +257,17 @@ pub fn mensaje_instrucciones_instaladas(destino_normas: &Path) -> String {
 
 /// Redacta el aviso de publicación exitosa de la guía para el equipo en el canal.
 pub fn mensaje_guia_publicada() -> String {
-    "Publicada la guía para el resto del equipo en el canal.".to_string()
+    "Publicada la guía para el resto del equipo en .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md."
+        .to_string()
+}
+
+/// Redacta la orientación para el usuario sobre cómo comenzar la colaboración desde su modelo de pago habitual.
+pub fn mensaje_orientacion_modelo_pago() -> String {
+    "💡 Cómo empezar:\n   \
+     Abre tu modelo de pago habitual (Claude, ChatGPT, etc.) en esta carpeta de trabajo y pídele:\n   \
+     «Accede a la ayuda de Programator en .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md, \
+     infórmame de sus capacidades y coordínate con él para gestionar el trabajo.»"
+        .to_string()
 }
 
 /// Redacta el aviso cuando el sondeo detecta novedades en el canal para atender.

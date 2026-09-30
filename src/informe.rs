@@ -63,9 +63,8 @@ const ANCHO_ETIQUETA: usize = 20;
 pub fn componer_informe(datos: &DatosDeArranque) -> String {
     let mut lineas = Vec::new();
     lineas.push(format!(
-        "Programator {} — «{} --ayuda» para ver qué se le puede pedir\n",
-        datos.version,
-        crate::plataforma::NOMBRE_DEL_EJECUTABLE
+        "Programator {} — asistente de código local en segundo plano\n",
+        datos.version
     ));
     lineas.push(fila(
         "Carpeta de trabajo:",
@@ -95,34 +94,18 @@ fn fila(etiqueta: &str, valor: &str) -> String {
 fn describir_carpeta(carpeta: Option<&Path>, preguntar_siempre: bool) -> String {
     match carpeta {
         Some(c) => c.display().to_string(),
-        // No dice cuál de las que quedan se usará, y es deliberado: `--diagnostico` se compone
-        // antes de resolver la carpeta, así que aquí no se sabe si hay una recordada ni si vendrá
-        // una por `--ruta`. Afirmar «se elegiría con un diálogo» era cierto hasta la 0.9.0 y desde
-        // la 0.9.0 puede ser falso, y un arnés que afirma de sí mismo lo que no sabe es
-        // exactamente lo que hizo diagnosticar mal dos veces en NatureLand.
-        //
-        // Lo que sí puede decir es cuáles están descartadas: con `preguntar_siempre` puesto, la
-        // última carpeta usada no entra, y nombrarla sería ofrecer una salida que no existe.
         None if preguntar_siempre => SIN_CARPETA_PREGUNTANDO.to_string(),
         None => SIN_CARPETA_CON_MEMORIA.to_string(),
     }
 }
 
 /// La línea del informe cuando no hay carpeta fijada y `preguntar_siempre` está puesto.
-///
-/// Se escribe con `concat!` en vez de con una cadena partida por barras invertidas porque el
-/// formateador junta esas continuaciones y deja dentro del texto los espacios de la sangría, que
-/// luego salen impresos en la terminal.
-const SIN_CARPETA_PREGUNTANDO: &str = concat!(
-    "no fijada en «programator.toml» (se decidirá al arrancar: «--ruta» o un diálogo; ",
-    "la última carpeta usada no cuenta, porque «preguntar_siempre» está puesto)"
-);
+const SIN_CARPETA_PREGUNTANDO: &str =
+    "no fijada (elige la carpeta de trabajo en la ventana emergente)";
 
 /// La línea del informe cuando no hay carpeta fijada y la memoria de la última sigue en juego.
-const SIN_CARPETA_CON_MEMORIA: &str = concat!(
-    "no fijada en «programator.toml» (se decidirá al arrancar: «--ruta», ",
-    "la última carpeta usada o un diálogo)"
-);
+const SIN_CARPETA_CON_MEMORIA: &str =
+    "no fijada (usará la última carpeta guardada o la que elijas en la ventana emergente)";
 
 fn describir_gpu(gpu: Option<&Gpu>) -> String {
     match gpu {
@@ -218,10 +201,10 @@ mod pruebas {
     }
 
     #[test]
-    fn el_informe_dice_siempre_como_pedir_ayuda() {
+    fn el_informe_presenta_la_aplicacion_y_la_version() {
         let texto = componer_informe(&datos_completos());
-        assert!(texto.contains("--ayuda"), "{texto}");
-        assert!(texto.contains("0.5.0"), "{texto}");
+        assert!(texto.contains("Programator 0.5.0"), "{texto}");
+        assert!(!texto.contains("--ayuda"), "{texto}");
     }
 
     #[test]
@@ -241,13 +224,6 @@ mod pruebas {
 
     #[test]
     fn sin_carpeta_fijada_lo_dice_en_vez_de_dar_una_ruta_vacia() {
-        // `--diagnostico` compone este informe sin abrir el diálogo de carpeta (Tarea A-1): si
-        // `[carpeta] ruta` no está en el TOML, la línea tiene que decirlo, no callarse ni fingir
-        // una ruta que nadie ha elegido todavía.
-        //
-        // **Desde la 0.9.0 tampoco puede afirmar cuál se usará.** El informe se compone antes de
-        // resolver la carpeta, y ya hay tres fuentes por delante del diálogo, así que prometer el
-        // diálogo sería una afirmación que el arnés no está en condiciones de hacer.
         let datos = DatosDeArranque {
             carpeta: None,
             ..datos_completos()
@@ -255,20 +231,16 @@ mod pruebas {
 
         let texto = componer_informe(&datos);
 
-        assert!(texto.contains("no fijada en «programator.toml»"), "{texto}");
-        assert!(texto.contains("--ruta"), "{texto}");
-        assert!(texto.contains("la última carpeta usada"), "{texto}");
+        assert!(texto.contains("no fijada"), "{texto}");
+        assert!(texto.contains("ventana emergente"), "{texto}");
         assert!(
-            !texto.contains("se elegiría con un diálogo"),
-            "el informe no puede prometer el diálogo: ya no es la única salida:\n{texto}"
+            !texto.contains("se decidirá al arrancar"),
+            "el informe no debe incluir jerga interna:\n{texto}"
         );
     }
 
     #[test]
     fn con_preguntar_siempre_el_informe_no_ofrece_la_ultima_carpeta_usada() {
-        // La memoria de la última carpeta puede existir y estar bien, pero con la bandera puesta
-        // no se va a mirar. Nombrarla aquí mandaría a quien lee el diagnóstico a buscar la avería
-        // en un sitio donde no hay ninguna, que es justo el error que esta versión persigue.
         let datos = DatosDeArranque {
             carpeta: None,
             preguntar_siempre: true,
@@ -277,12 +249,11 @@ mod pruebas {
 
         let texto = componer_informe(&datos);
 
-        assert!(texto.contains("no fijada en «programator.toml»"), "{texto}");
-        assert!(texto.contains("--ruta"), "{texto}");
-        assert!(texto.contains("preguntar_siempre"), "{texto}");
+        assert!(texto.contains("no fijada"), "{texto}");
+        assert!(texto.contains("ventana emergente"), "{texto}");
         assert!(
-            !texto.contains("«--ruta», la última carpeta usada"),
-            "el informe sigue ofreciendo una fuente que ya no se va a mirar"
+            !texto.contains("última carpeta guardada"),
+            "el informe no ofrece la carpeta guardada si preguntar_siempre está activo:\n{texto}"
         );
     }
 

@@ -15,6 +15,7 @@ pub use self::mensajes::{
     mensaje_desenlace_sin_encargos, mensaje_fallo_arranque, mensaje_fallo_pasada_ciclo,
     mensaje_fallo_publicar_guia, mensaje_fallo_sondeo_canal, mensaje_guia_publicada,
     mensaje_instrucciones_instaladas, mensaje_listo_primer_arranque, mensaje_listo_reinicio,
-    mensaje_novedades_atendiendo, mensaje_reanudacion_encargo_esperando_motor, mensaje_version,
+    mensaje_novedades_atendiendo, mensaje_orientacion_modelo_pago,
+    mensaje_reanudacion_encargo_esperando_motor, mensaje_version,
 };
 pub use self::sondeo::{hay_novedades, Sondeo};

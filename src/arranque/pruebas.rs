@@ -565,10 +565,12 @@ fn mensajes_de_inicio_y_guia_formatean_correctamente() {
     assert!(msg_normas.contains("Instaladas las instrucciones del proyecto en"));
 
     let msg_guia = mensaje_guia_publicada();
-    assert_eq!(
-        msg_guia,
-        "Publicada la guía para el resto del equipo en el canal."
-    );
+    assert!(msg_guia.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"));
+
+    let msg_orientacion = mensaje_orientacion_modelo_pago();
+    assert!(msg_orientacion.contains("Cómo empezar:"));
+    assert!(msg_orientacion.contains("Abre tu modelo de pago habitual"));
+    assert!(msg_orientacion.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"));
 }
 
 #[test]

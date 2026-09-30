@@ -3,7 +3,7 @@
 Qué falta, en qué orden y por qué ese orden. Cada versión se hace **paso a paso**: primero su
 especificación, luego su plan, y el plan se ejecuta tarea a tarea con revisión entre cada una.
 
-Estado al escribir esto: la versión 0.10.2 está integrada en `main` desde el 30/09/2026, con 471 pruebas pasando limpiamente en Windows y en Linux. El ciclo completo se ejecuta contra el modelo local a 18,4 tokens por segundo, y ya se ha empleado durante una jornada completa en un proyecto real (NatureLand, Godot/.NET/C#, 23/09/2026), logrando cuatro entregas aceptadas tras verificación independiente. La 0.10.0 resolvió las carencias del repertorio y observabilidad, la 0.10.1 abrió la compatibilidad con Linux y la 0.10.2 añade lectura acotada por líneas y aviso explícito ante ciclo sin entrega.
+Estado al escribir esto: la versión 0.10.3 está integrada en `main` desde el 30/09/2026, con 471 pruebas pasando limpiamente en Windows y en Linux. El ciclo completo se ejecuta contra el modelo local a 18,4 tokens por segundo, y ya se ha empleado durante una jornada completa en un proyecto real (NatureLand, Godot/.NET/C#, 23/09/2026), logrando cuatro entregas aceptadas tras verificación independiente. La 0.10.0 resolvió las carencias del repertorio y observabilidad, la 0.10.1 abrió la compatibilidad con Linux, la 0.10.2 añadió lectura acotada por líneas y aviso explícito ante ciclo sin entrega, y la 0.10.3 humaniza los mensajes de inicio en consola y ofrece la orientación directa para colaborar con el modelo de pago.
 
 ---
 

@@ -73,8 +73,9 @@ Programator determina la carpeta de trabajo evaluando cuatro fuentes por orden d
 
 Para evitar confusiones sobre cuándo se puede empezar a enviar trabajo, Programator imprime en la consola un mensaje claro sobre su disponibilidad operativa:
 
-- En el primer arranque sobre un proyecto nuevo, el arnés toma una instantánea del canal para fijar la línea base sin atender encargos anteriores, anuncia que ya está escuchando e indica el intervalo de sondeo configurado en segundos. A partir de la aparición de ese aviso, cualquier nuevo encargo publicado en el canal será procesado.
+- En el primer arranque sobre un proyecto nuevo, el arnés toma una instantánea del canal para fijar la línea base sin atender encargos anteriores, anuncia que ya está escuchando e indica el intervalo de sondeo configurado. A partir de la aparición de ese aviso, cualquier nuevo encargo publicado en el canal será procesado.
 - En los arranques posteriores sobre proyectos ya conocidos, Programator detecta que ya existe un registro previo de lectura y avisa de inmediato de que está listo y escuchando, indicando la cadencia con la que revisará el buzón.
+- Al publicar la guía de trabajo en `.gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md`, Programator muestra una indicación clara para el usuario, detallando la petición exacta que debe formularle a su modelo de pago habitual (Claude, ChatGPT, etc.) para que este acceda a la guía, conozca las capacidades de Programator y comience a coordinarse con él.
 
 ## Ficheros que escribe Programator en el proyecto de trabajo
 

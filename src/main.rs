@@ -110,10 +110,19 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
             );
             ruta
         }
-        None => rfd::FileDialog::new()
-            .set_title("Elige la carpeta de trabajo de Programator")
-            .pick_folder()
-            .ok_or_else(|| Error::Configuracion("no se eligió carpeta de trabajo".to_string()))?,
+        None => {
+            let ruta = rfd::FileDialog::new()
+                .set_title("Elige la carpeta de trabajo de Programator")
+                .pick_folder()
+                .ok_or_else(|| {
+                    Error::Configuracion("no se eligió carpeta de trabajo".to_string())
+                })?;
+            println!(
+                "{}",
+                arranque::mensaje_carpeta_de_trabajo(&ruta, "elegida en la ventana emergente")
+            );
+            ruta
+        }
     };
 
     // Recordada en cuanto se sabe que es buena, y no al terminar: un ciclo que vive días no puede
@@ -159,7 +168,10 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
         &plantilla_desempeno,
         &config.verificacion.comprobadores,
     ) {
-        Ok(()) => println!("{}", arranque::mensaje_guia_publicada()),
+        Ok(()) => {
+            println!("{}", arranque::mensaje_guia_publicada());
+            println!("{}", arranque::mensaje_orientacion_modelo_pago());
+        }
         Err(fallo) => eprintln!("{}", arranque::mensaje_fallo_publicar_guia(&fallo)),
     }
 
