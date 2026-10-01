@@ -57,12 +57,34 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
     // dejarlo huérfano con el modelo cargado en VRAM.
     proceso::registrar_cierre_ordenado()?;
 
+    // Aviso, solo informativo, de si hay una versión más nueva en GitHub. Nunca puede impedir que
+    // Programator arranque: sin red, con GitHub caído o fuera del tiempo de espera, el arranque
+    // sigue igual, solo que el aviso dice que no se pudo comprobar en vez de calentarse. Va antes
+    // del informe (y no después, donde iba hasta el 2026-10-01) para que no quede metido entre la
+    // fila de carpeta del informe y la línea que confirma la carpeta resuelta, justo debajo: esas
+    // dos sí tienen que quedar juntas. Se comprueba también en `--diagnostico`, que es justo para
+    // preguntar «¿esto cómo está hoy?».
+    if config.actualizaciones.comprobar {
+        use programator::actualizacion::{mensaje_al_dia, mensaje_no_comprobado, Comprobacion};
+        match programator::actualizacion::comprobar_version_mas_reciente(
+            &config.actualizaciones.repositorio,
+            VERSION,
+            std::time::Duration::from_secs(config.actualizaciones.tiempo_espera_segundos),
+        ) {
+            Comprobacion::VersionNueva(aviso) => eprintln!("{aviso}"),
+            Comprobacion::AlDia => eprintln!("{}", mensaje_al_dia(VERSION)),
+            Comprobacion::NoComprobado => eprintln!("{}", mensaje_no_comprobado()),
+        }
+    }
+
     // El informe se compone **antes** de resolver la carpeta de trabajo, y a propósito no la
     // necesita resuelta: `--diagnostico` existe justo para poder preguntar «¿esto cómo está hoy?»
     // sin dejar un proceso colgado, que es lo que pasaba cuando el diálogo de carpeta se abría
-    // primero. Si `[carpeta] ruta` no está fijada, la línea lo dice y ya; los otros cuatro datos
-    // no dependen de la carpeta para nada. Va por `stderr`, como el resto de los avisos desde la
-    // 0.4.0.
+    // primero. Si `[carpeta] ruta` no está fijada, la última fila lo dice y ya; los otros cuatro
+    // datos no dependen de la carpeta para nada. Va por `stderr`, como el resto de los avisos
+    // desde la 0.4.0. La fila de carpeta va última a propósito (2026-10-01): si el diálogo decide
+    // la carpeta más abajo, la línea que lo confirma se imprime justo después, sin nada entre
+    // medias.
     let datos = reunir_datos_de_arranque(&config);
     // Capturado antes de que `componer_informe` se lleve `datos.modelo` por valor: lo necesita el
     // registro del historial de encaje, más abajo, una vez se conoce la carpeta de trabajo.
@@ -83,20 +105,6 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
         preguntar_siempre: config.carpeta.preguntar_siempre,
     });
     eprintln!("{informe}");
-
-    // Aviso, solo informativo, de si hay una versión más nueva en GitHub. Nunca puede impedir que
-    // Programator arranque: sin red, con GitHub caído o fuera del tiempo de espera, simplemente no
-    // hay nada que avisar. Se comprueba también en `--diagnostico`, que es justo para preguntar
-    // «¿esto cómo está hoy?».
-    if config.actualizaciones.comprobar {
-        if let Some(aviso) = programator::actualizacion::comprobar_version_mas_reciente(
-            &config.actualizaciones.repositorio,
-            VERSION,
-            std::time::Duration::from_secs(config.actualizaciones.tiempo_espera_segundos),
-        ) {
-            eprintln!("{aviso}");
-        }
-    }
 
     // `--diagnostico` llega hasta aquí y no más allá: sin abrir el diálogo de carpeta, sin
     // instalar normas, sin crear el directorio del canal y sin entrar en el bucle.

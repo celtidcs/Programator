@@ -46,6 +46,25 @@ fn componentes_de_version(cadena: &str) -> Option<(u32, u32, u32)> {
     ))
 }
 
+/// Lo que se supo al intentar comprobar si hay una versión más nueva en GitHub.
+///
+/// Antes esto era un `Option<String>`: `Some` con el aviso si había versión nueva, `None` en
+/// cualquier otro caso. Eso mezclaba dos desenlaces bien distintos bajo el mismo silencio: «se
+/// comprobó y ya tienes la última» y «no se pudo ni comprobar» (sin red, GitHub caído, tiempo
+/// agotado). El Director pidió distinguirlos, porque desde la terminal no hay forma de saber cuál
+/// de los dos ha pasado (2026-10-01).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Comprobacion {
+    /// Hay una versión más nueva publicada: el aviso ya redactado, listo para imprimir.
+    VersionNueva(String),
+    /// Se comprobó sin problema y la instalada ya es la más reciente publicada.
+    AlDia,
+    /// No se pudo completar la comprobación (sin red, GitHub caído, tiempo agotado o una respuesta
+    /// que no tiene la forma esperada). Sigue sin ser un error que haya que propagar: solo cambia
+    /// de qué informa la terminal.
+    NoComprobado,
+}
+
 /// Redacta el aviso de que hay una versión más nueva disponible.
 pub fn mensaje_version_disponible(actual: &str, ultima: &str, repositorio: &str) -> String {
     format!(
@@ -54,36 +73,55 @@ pub fn mensaje_version_disponible(actual: &str, ultima: &str, repositorio: &str)
     )
 }
 
-/// Comprueba contra GitHub si hay una versión más nueva que `version_actual`, y devuelve el aviso
-/// listo para imprimir si la hay.
+/// Redacta la confirmación de que la versión instalada ya es la más reciente publicada.
+pub fn mensaje_al_dia(actual: &str) -> String {
+    format!("✅ Programator {actual} ya es la versión más reciente publicada en GitHub.")
+}
+
+/// Redacta el aviso de que no se pudo comprobar si hay una versión más nueva.
+///
+/// No dice por qué (sin red, GitHub caído, tiempo agotado y un JSON inesperado se tratan igual):
+/// ninguno de esos motivos cambia qué puede hacer quien lee el aviso, que es nada, así que
+/// distinguirlos en el mensaje solo añadiría ruido.
+pub fn mensaje_no_comprobado() -> String {
+    "⚠️ No se pudo comprobar si hay una versión más nueva de Programator en GitHub (sin red, \
+     GitHub no respondió a tiempo, o la respuesta no tenía el formato esperado). No afecta al \
+     arranque; no hace falta hacer nada."
+        .to_string()
+}
+
+/// Comprueba contra GitHub si hay una versión más nueva que `version_actual`.
 ///
 /// **Nunca falla hacia afuera.** Cualquier problema —sin red, tiempo agotado, GitHub caído, JSON
-/// inesperado— se traduce en `None`: no hay nada que avisar, en vez de un error que alguien tenga
-/// que gestionar. Es coherente con lo que dice este módulo entero: es una comodidad, no una
-/// garantía.
+/// inesperado— se traduce en `Comprobacion::NoComprobado`, nunca en un error que alguien tenga que
+/// gestionar. Es coherente con lo que dice este módulo entero: es una comodidad, no una garantía.
 pub fn comprobar_version_mas_reciente(
     repositorio: &str,
     version_actual: &str,
     tiempo_espera: Duration,
-) -> Option<String> {
+) -> Comprobacion {
     let url = format!("https://api.github.com/repos/{repositorio}/releases/latest");
     let agente = ureq::AgentBuilder::new().timeout(tiempo_espera).build();
-    let respuesta = agente
+    let Ok(respuesta) = agente
         .get(&url)
         // La API de GitHub exige un User-Agent identificable; sin él, rechaza la petición.
         .set("User-Agent", "Programator")
         .call()
-        .ok()?;
-    let cuerpo: RespuestaUltimaRelease = respuesta.into_json().ok()?;
+    else {
+        return Comprobacion::NoComprobado;
+    };
+    let Ok(cuerpo) = respuesta.into_json::<RespuestaUltimaRelease>() else {
+        return Comprobacion::NoComprobado;
+    };
 
     if hay_version_mas_nueva(version_actual, &cuerpo.tag_name) {
-        Some(mensaje_version_disponible(
+        Comprobacion::VersionNueva(mensaje_version_disponible(
             version_actual,
             &cuerpo.tag_name,
             repositorio,
         ))
     } else {
-        None
+        Comprobacion::AlDia
     }
 }
 
@@ -133,16 +171,30 @@ mod pruebas {
     }
 
     #[test]
+    fn el_mensaje_al_dia_nombra_la_version_instalada() {
+        let mensaje = mensaje_al_dia("0.11.0");
+        assert!(mensaje.contains("0.11.0"));
+        assert!(mensaje.contains("más reciente"));
+    }
+
+    #[test]
+    fn el_mensaje_no_comprobado_no_culpa_a_nadie_y_dice_que_no_hace_falta_actuar() {
+        let mensaje = mensaje_no_comprobado();
+        assert!(mensaje.contains("No se pudo comprobar"));
+        assert!(mensaje.contains("no hace falta hacer nada"));
+    }
+
+    #[test]
     #[ignore = "toca la red de verdad (api.github.com): se lanza a mano, igual que las pruebas de GPU y GGUF de §3 de CLAUDE.md"]
-    fn un_repositorio_que_no_contesta_a_tiempo_no_devuelve_ningun_aviso() {
+    fn un_repositorio_que_no_contesta_a_tiempo_no_se_declara_version_nueva() {
         // Un tiempo de espera absurdamente corto contra la API real: la petición no puede
-        // completarse a tiempo. Comprueba que un fallo de red se traduce en «nada que avisar», no
-        // en un panic ni un error propagado.
-        let aviso = comprobar_version_mas_reciente(
+        // completarse a tiempo. Comprueba que un fallo de red se traduce en «no se pudo
+        // comprobar», no en un panic ni un error propagado.
+        let resultado = comprobar_version_mas_reciente(
             "celtidcs/Programator",
             "0.10.4",
             Duration::from_millis(1),
         );
-        assert!(aviso.is_none());
+        assert_eq!(resultado, Comprobacion::NoComprobado);
     }
 }

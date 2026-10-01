@@ -66,10 +66,6 @@ pub fn componer_informe(datos: &DatosDeArranque) -> String {
         "Programator {} — asistente de código local en segundo plano\n",
         datos.version
     ));
-    lineas.push(fila(
-        "Carpeta de trabajo:",
-        &describir_carpeta(datos.carpeta, datos.preguntar_siempre),
-    ));
     lineas.push(fila("GPU:", &describir_gpu(datos.gpu)));
     lineas.push(fila(
         "Motor:",
@@ -83,6 +79,14 @@ pub fn componer_informe(datos: &DatosDeArranque) -> String {
         } else {
             datos.encaje
         },
+    ));
+    // Última a propósito: si no está fijada, `main` imprime justo debajo, sin nada entre medias,
+    // la línea que confirma qué carpeta se usó de verdad (recordada o elegida en el diálogo). Antes
+    // iba primera y las cuatro filas de hardware se interponían entre las dos líneas de carpeta,
+    // que el Director encontró confuso al leerlas separadas (2026-10-01).
+    lineas.push(fila(
+        "Carpeta de trabajo:",
+        &describir_carpeta(datos.carpeta, datos.preguntar_siempre),
     ));
     lineas.join("\n")
 }
@@ -100,12 +104,16 @@ fn describir_carpeta(carpeta: Option<&Path>, preguntar_siempre: bool) -> String 
 }
 
 /// La línea del informe cuando no hay carpeta fijada y `preguntar_siempre` está puesto.
+///
+/// «NO FIJA» y no «no fijada»: el Director señaló que «no fijada» se lee como si el arnés hubiera
+/// fallado al intentar fijarla, cuando en realidad es que `[carpeta] ruta` no está en el TOML
+/// (2026-10-01).
 const SIN_CARPETA_PREGUNTANDO: &str =
-    "no fijada (elige la carpeta de trabajo en la ventana emergente)";
+    "NO FIJA (elige la carpeta de trabajo en la ventana emergente)";
 
 /// La línea del informe cuando no hay carpeta fijada y la memoria de la última sigue en juego.
 const SIN_CARPETA_CON_MEMORIA: &str =
-    "no fijada (usará la última carpeta guardada o la que elijas en la ventana emergente)";
+    "NO FIJA (usará la última carpeta guardada o la que elijas en la ventana emergente)";
 
 fn describir_gpu(gpu: Option<&Gpu>) -> String {
     match gpu {
@@ -234,11 +242,26 @@ mod pruebas {
 
         let texto = componer_informe(&datos);
 
-        assert!(texto.contains("no fijada"), "{texto}");
+        assert!(texto.contains("NO FIJA"), "{texto}");
         assert!(texto.contains("ventana emergente"), "{texto}");
         assert!(
             !texto.contains("se decidirá al arrancar"),
             "el informe no debe incluir jerga interna:\n{texto}"
+        );
+    }
+
+    #[test]
+    fn la_carpeta_va_la_ultima_para_quedar_junto_a_la_confirmacion_que_imprime_main() {
+        // `main` imprime justo después de este informe la línea que confirma la carpeta resuelta
+        // (recordada o elegida en el diálogo). Si «Carpeta de trabajo» no fuera la última fila de
+        // aquí, las de GPU/Motor/Modelo/Encaje quedarían metidas entre las dos líneas de carpeta,
+        // que es la confusión que el Director señaló el 2026-10-01.
+        let texto = componer_informe(&datos_completos());
+        let posicion_carpeta = texto.find("Carpeta de trabajo:").expect("falta la fila");
+        let posicion_encaje = texto.find("Encaje:").expect("falta la fila");
+        assert!(
+            posicion_carpeta > posicion_encaje,
+            "«Carpeta de trabajo» tiene que ser la última fila:\n{texto}"
         );
     }
 
@@ -252,7 +275,7 @@ mod pruebas {
 
         let texto = componer_informe(&datos);
 
-        assert!(texto.contains("no fijada"), "{texto}");
+        assert!(texto.contains("NO FIJA"), "{texto}");
         assert!(texto.contains("ventana emergente"), "{texto}");
         assert!(
             !texto.contains("última carpeta guardada"),
