@@ -1,5 +1,6 @@
 //! Programator: arnés que convierte un modelo local en un agente del canal `.gestor/canal/`.
 
+pub mod actualizacion;
 pub mod argumentos;
 pub mod arnes;
 pub mod arranque;

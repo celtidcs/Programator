@@ -64,6 +64,14 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
     // no dependen de la carpeta para nada. Va por `stderr`, como el resto de los avisos desde la
     // 0.4.0.
     let datos = reunir_datos_de_arranque(&config);
+    // Capturado antes de que `componer_informe` se lleve `datos.modelo` por valor: lo necesita el
+    // registro del historial de encaje, más abajo, una vez se conoce la carpeta de trabajo.
+    let capas_totales_modelo = match &datos.modelo {
+        programator::informe::ResumenModelo::Pesado { capas, .. } => {
+            capas.and_then(|c| u32::try_from(c).ok())
+        }
+        _ => None,
+    };
     let informe = componer_informe(&DatosDeArranque {
         version: VERSION,
         carpeta: config.carpeta.ruta.as_deref().map(Path::new),
@@ -75,6 +83,20 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
         preguntar_siempre: config.carpeta.preguntar_siempre,
     });
     eprintln!("{informe}");
+
+    // Aviso, solo informativo, de si hay una versión más nueva en GitHub. Nunca puede impedir que
+    // Programator arranque: sin red, con GitHub caído o fuera del tiempo de espera, simplemente no
+    // hay nada que avisar. Se comprueba también en `--diagnostico`, que es justo para preguntar
+    // «¿esto cómo está hoy?».
+    if config.actualizaciones.comprobar {
+        if let Some(aviso) = programator::actualizacion::comprobar_version_mas_reciente(
+            &config.actualizaciones.repositorio,
+            VERSION,
+            std::time::Duration::from_secs(config.actualizaciones.tiempo_espera_segundos),
+        ) {
+            eprintln!("{aviso}");
+        }
+    }
 
     // `--diagnostico` llega hasta aquí y no más allá: sin abrir el diálogo de carpeta, sin
     // instalar normas, sin crear el directorio del canal y sin entrar en el bucle.
@@ -128,6 +150,37 @@ fn ejecutar(orden: Orden) -> Resultado<()> {
     // Recordada en cuanto se sabe que es buena, y no al terminar: un ciclo que vive días no puede
     // esperar a su propio final para dejar anotado dónde trabajaba.
     carpeta::recordar(&junto_al_toml, &carpeta);
+
+    // Una línea más al historial de encaje (INC-N07 de NatureLand), ahora que la carpeta de
+    // trabajo ya se conoce. `reunir_datos_de_arranque` corre antes de resolverla a propósito (para
+    // que `--diagnostico` funcione sin ella), así que este registro va aquí y no allí. Sin modelo
+    // declarado no hay nada que registrar; un fallo al escribir solo avisa, nunca aborta.
+    if let Some(capas_en_gpu) = datos.capas_en_gpu {
+        let marca_tiempo = programator::protocolo::marca_de_tiempo_actual();
+        let linea = programator::motor::encaje_historico::linea_historico(
+            &programator::motor::encaje_historico::DatosDeEncaje {
+                marca_tiempo: &marca_tiempo,
+                gpu: datos.gpu.as_ref(),
+                contexto: config.motor.contexto,
+                capas_en_gpu,
+                capas_totales: capas_totales_modelo,
+                version: VERSION,
+            },
+        );
+        let ruta_encaje_historico =
+            espacio::ruta_del_encaje_historico(&carpeta, &config.agente.nombre);
+        if let Err(fallo) =
+            programator::motor::encaje_historico::registrar(&ruta_encaje_historico, &linea)
+        {
+            eprintln!(
+                "{}",
+                programator::motor::encaje_historico::mensaje_fallo_registrar(
+                    &ruta_encaje_historico,
+                    &fallo
+                )
+            );
+        }
+    }
 
     // Las instrucciones que ve el modelo en cada encargo. Se resuelve aquí, una vez, y no en cada
     // pasada: es configuración, no algo que cambie mientras el ciclo corre.

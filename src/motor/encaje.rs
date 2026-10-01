@@ -378,7 +378,11 @@ const BYTES_POR_MIB: u64 = 1024 * 1024;
 const BYTES_POR_GIB_F64: f64 = 1024.0 * 1024.0 * 1024.0;
 
 /// Bytes a GiB con un decimal, que es la unidad en la que se habla de VRAM.
-fn en_gib(bytes: u64) -> String {
+///
+/// `pub(crate)` y no privada: `encaje_historico` la reutiliza para que el log acumulativo hable de
+/// VRAM con la misma cifra y el mismo redondeo que el aviso de arranque, en vez de reinventar el
+/// formato.
+pub(crate) fn en_gib(bytes: u64) -> String {
     format!("{:.1} GiB", bytes as f64 / BYTES_POR_GIB_F64)
 }
 

@@ -999,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "programator"
-version = "0.10.4"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "ctrlc",

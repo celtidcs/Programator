@@ -186,6 +186,20 @@ tiempo_maximo_segundos = 30
 # java = ["javac", "-d", ".", "{fichero}"]
 # go   = ["gofmt", "-e", "{fichero}"]
 
+# Cómo comprobar contra un proyecto real, no solo el fichero suelto.
+#
+# Un fichero de Godot/.NET, de Unity o de cualquier framework con referencias cruzadas no compila
+# aislado: necesita el resto del proyecto. La orden de arriba no te sirve para eso, porque corre en
+# un directorio temporal vacío (ver el aviso de dos líneas más arriba). Lo que sí funciona es que
+# «{fichero}» apunte a un script tuyo que copie la propuesta DENTRO de una copia de tu proyecto real
+# y compile ahí, por ejemplo:
+#
+#   cs = ["bash", "comprobar-cs.sh", "{fichero}"]
+#
+# con «comprobar-cs.sh» (tuyo, fuera de este repositorio) copiando «{fichero}» sobre la ruta real
+# dentro de una copia de trabajo del proyecto y lanzando «dotnet build» ahí. El arnés no sabe nada
+# de tu estructura de proyecto ni la necesita: solo le importa el código de salida del script.
+
 [muestreo]
 # Todo lo que hay en esta sección se manda al modelo tal cual en cada petición: es exactamente lo
 # que el modelo recibe, sin ningún valor oculto decidido por el servidor.
@@ -264,3 +278,20 @@ max_denegaciones_seguidas = 2
 # (§3.2: «un tope orientativo de 80 líneas activas»). Es orientativo: la poda la propone el arnés
 # y la revisa una persona o un agente de pago antes de que se aplique nada.
 umbral_lineas = 80
+
+[actualizaciones]
+# Si Programator comprueba, al arrancar, si hay una versión más nueva publicada en GitHub. Por
+# defecto: true.
+#
+# Solo avisa: no descarga nada, no reemplaza el ejecutable y no decide nada por ti. Y nunca puede
+# impedir que Programator arranque — sin red, con GitHub caído o fuera del tiempo de espera, la
+# comprobación se calla sin más y el arranque sigue exactamente igual que si esto no existiera.
+comprobar = true
+# Repositorio de GitHub (propietario/nombre) contra el que se compara la versión instalada.
+# Por defecto: "celtidcs/Programator".
+repositorio = "celtidcs/Programator"
+# Cuánto se espera a GitHub antes de rendirse, en segundos. Por defecto: 3.
+#
+# Corto a propósito: es una comprobación informativa sobre una máquina que ya va a tardar minutos
+# en atender un encargo. No tiene sentido que el arranque se note más lento por ella.
+tiempo_espera_segundos = 3

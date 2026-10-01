@@ -19,11 +19,27 @@ Va a unos **18 tokens por segundo**. Una respuesta de código tarda entre uno y 
 
 {repertorio}
 
-**Aprovecha `leer_fichero`.** Es lo que más te ahorra y lo que más se olvida: en vez de pegarle un
-fichero de 19 KB dentro del encargo, dale la ruta y pídele que lo lea. Un encargo de dos líneas en
-vez de uno que no cabe en su ventana. También sirve para decirle «mira si esta constante ya existe
-en el proyecto antes de declararla», que es la única forma de que no duplique valores que ya tienen
-dueño.
+**`leer_fichero` ahorra ventana, pero pedirle muchas lecturas en el mismo encargo tiene un coste
+medido.** En vez de pegarle un fichero de 19 KB entero dentro del encargo, dale la ruta y pídele que
+lea solo el tramo que necesita acotando el rango de líneas. Para una consulta puntual («¿existe
+ya esta constante?») es la vía más barata.
+
+Pero si el encargo es una auditoría o necesita varios tramos de un fichero grande, medido en
+NatureLand: pegar el fragmento exacto en el propio encargo, **numerado con su línea real**, entrega
+con más fiabilidad que pedirle que lea — tanto en si entrega algo (encadenar varias lecturas en el
+mismo encargo ha hecho que el modelo confunda el rótulo `[solicito leer_fichero]` que ve en su
+propio historial con una respuesta de texto normal y la repita, perdiendo el encargo entero) como en
+la precisión de las líneas que cita después (de un fichero leído, prácticamente ninguna línea citada
+coincidía con la real; de un fichero pegado y numerado, la inmensa mayoría sí). El arnés ya detecta
+y corrige ese rótulo imitado dándole un aviso en vez de cerrar el encargo, así que el riesgo de
+perderlo entero es menor que antes.
+
+**La línea que cita en una auditoría tampoco es fiable, y para eso hay una vía aparte.** Si pegas
+`plantillas/formato-auditoria.md` junto al encargo, el arnés comprueba por sí mismo —buscando el
+fragmento literal que cite dentro del fichero real— si la línea es correcta, y la corrige si no lo
+es. No es magia: si el literal citado aparece más de una vez en el fichero, el arnés no adivina y lo
+marca «sin verificar» en vez de inventarse cuál de las dos quiso decir. Fuera de ese formato formal,
+sigue sin haber ninguna garantía sobre la línea citada: verifícala tú.
 
 ## Lo que NO hace, y no insistas
 
@@ -140,6 +156,36 @@ arriba da igual. Y si dice «sin verificar», es que no hay comprobador configur
 extensión: que compile sigue sin saberse.
 
 {comprobadores}
+
+**Cómo configurar un comprobador para tu lenguaje.** Va en `[verificacion.comprobadores]` de tu
+`programator.toml`: una extensión y la orden que la comprueba, ya documentado con ejemplos dentro
+del propio fichero. Si tu lenguaje tiene referencias cruzadas entre ficheros (un proyecto de
+Godot/.NET, de Unity, cualquier framework con un fichero de proyecto), un comprobador contra el
+fichero suelto no basta — ahí dentro del mismo fichero hay un ejemplo de cómo apuntar a un script
+propio que copie la propuesta sobre una copia de tu proyecto real antes de compilar.
+
+## Falsos positivos que ya se han visto repetirse
+
+En auditorías con vocabulario de principios de diseño (SOLID, inyección de dependencias), confunde
+que un método use **campos o métodos de su propia clase** con una violación de Inversión de
+Dependencias. Se le ha avisado en varios encargos distintos y ha reaparecido cada vez con una
+variación distinta. Si el encargo es de ese tipo, pega junto a él
+`plantillas/auditoria-solid.md`, que trae un ejemplo correcto y uno incorrecto de cada principio
+—con este falso positivo marcado primero, porque es el que más veces ha costado un encargo— en vez
+de escribir el aviso de nuevo cada vez.
+
+También declara haber cumplido una exclusión del encargo (por ejemplo «no toques los colores») en la
+misma respuesta donde la incumple. Pedirle que declare cumplimiento por requisito sigue mejorando la
+tasa de aciertos de conjunto, pero **esa declaración no es una señal fiable por sí sola**: verifica
+siempre contra el fichero real, no contra lo que él diga que hizo.
+
+## Cómo saber si sigue vivo mientras trabaja
+
+Programator escribe su estado en `.gestor/<agente>/latido.json` en cada sondeo del canal, con tres
+valores posibles: `reposo` (sin nada que atender), `atendiendo` (generando una respuesta, con el
+encargo en curso) y `error` (algo falló, con el motivo). Vigilar la transición de `atendiendo` a
+`reposo` o `error` es la forma más rápida de saber cuándo ha terminado, sin esperar a ver algo nuevo
+en el canal.
 
 ## Resumen para quien tenga prisa
 

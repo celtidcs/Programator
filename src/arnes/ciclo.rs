@@ -45,6 +45,16 @@ impl Default for Limites {
     }
 }
 
+/// Prefijo literal con el que el arnés etiqueta, en el historial que ve el modelo, una llamada a
+/// herramienta ya resuelta. Vive aquí porque `etiqueta_solicitud` es la única fuente: si el
+/// formato cambiara en un sitio y no en el otro, la detección de INC-N11 dejaría de encontrarlo.
+const PREFIJO_ETIQUETA_SOLICITUD: &str = "[solicito ";
+
+/// Cómo queda en el historial, para el modelo, una llamada a herramienta ya resuelta.
+fn etiqueta_solicitud(nombre: &str) -> String {
+    format!("{PREFIJO_ETIQUETA_SOLICITUD}{nombre}]")
+}
+
 /// Ejecuta un encargo de principio a fin.
 pub fn atender_encargo(
     motor: &mut dyn Motor,
@@ -56,6 +66,7 @@ pub fn atender_encargo(
     let mut usadas = 0u32;
     let mut denegaciones_seguidas = 0u32;
     let mut ultima_denegada: Option<String> = None;
+    let mut intentos_etiqueta_como_texto = 0u32;
     let mut historial = HistorialRepeticiones::nuevo(limites.max_repeticiones_recordadas);
 
     loop {
@@ -92,10 +103,35 @@ pub fn atender_encargo(
 
         match respuesta {
             Respuesta::Texto(texto) => {
-                return match repertorio.pendiente_de_publicar() {
-                    Some(cuerpo) => Desenlace::Publicado(cuerpo.to_string()),
-                    None => Desenlace::SinEntrega(texto),
-                };
+                if let Some(cuerpo) = repertorio.pendiente_de_publicar() {
+                    return Desenlace::Publicado(cuerpo.to_string());
+                }
+
+                // El modelo escribe la etiqueta de una llamada a herramienta como texto plano en
+                // vez de invocarla de verdad (INC-N11 de NatureLand): imita el rótulo que el propio
+                // arnés deja en el historial tras una llamada ya resuelta. Sin esto, el encargo
+                // terminaba en el acto dando SinEntrega aunque el modelo solo necesitara corregir el
+                // formato de la llamada, no abandonar el encargo.
+                if texto.trim_start().starts_with(PREFIJO_ETIQUETA_SOLICITUD) {
+                    intentos_etiqueta_como_texto += 1;
+                    if intentos_etiqueta_como_texto >= limites.max_denegaciones_seguidas {
+                        let detalle_entrega = estado_entrega_propuestas(repertorio);
+                        return Desenlace::Abortado(format!(
+                            "🔴 Programator abortó el encargo: el modelo escribió la etiqueta de una herramienta como texto en vez de invocarla, repetidamente. {detalle_entrega}"
+                        ));
+                    }
+                    conversacion.push(Mensaje {
+                        papel: Papel::Modelo,
+                        contenido: texto,
+                    });
+                    conversacion.push(Mensaje {
+                        papel: Papel::Usuario,
+                        contenido: "[Aviso del arnés: Has escrito la petición de una herramienta como texto plano, no como una llamada real. Para usar una herramienta, invócala mediante la llamada estructurada; no escribas su etiqueta.]".to_string(),
+                    });
+                    continue;
+                }
+
+                return Desenlace::SinEntrega(texto);
             }
 
             Respuesta::Herramienta(solicitud) => {
@@ -105,9 +141,10 @@ pub fn atender_encargo(
                 if let Some(salida_previa) = historial.buscar_repeticion(&solicitud) {
                     denegaciones_seguidas = 0;
                     ultima_denegada = None;
+                    intentos_etiqueta_como_texto = 0;
                     conversacion.push(Mensaje {
                         papel: Papel::Modelo,
-                        contenido: format!("[solicito {nombre}]"),
+                        contenido: etiqueta_solicitud(&nombre),
                     });
                     conversacion.push(Mensaje {
                         papel: Papel::Usuario,
@@ -134,10 +171,15 @@ pub fn atender_encargo(
                     Decision::Concedida(salida) => {
                         denegaciones_seguidas = 0;
                         ultima_denegada = None;
+                        intentos_etiqueta_como_texto = 0;
                         historial.registrar(&solicitud, salida.clone());
                         format!("Resultado de «{nombre}»:\n\n{salida}")
                     }
                     Decision::Denegada(motivo) => {
+                        // Una denegación es, igualmente, una llamada estructurada de verdad: el
+                        // modelo ya ha demostrado saber invocar la herramienta, aunque con un
+                        // argumento que no cuadra.
+                        intentos_etiqueta_como_texto = 0;
                         if ultima_denegada.as_deref() == Some(nombre.as_str()) {
                             denegaciones_seguidas += 1;
                         } else {
@@ -159,7 +201,7 @@ pub fn atender_encargo(
 
                 conversacion.push(Mensaje {
                     papel: Papel::Modelo,
-                    contenido: format!("[solicito {nombre}]"),
+                    contenido: etiqueta_solicitud(&nombre),
                 });
                 conversacion.push(Mensaje {
                     papel: Papel::Usuario,
@@ -617,6 +659,78 @@ mod pruebas {
             }
             otro => panic!("se esperaba Abortado: {otro:?}"),
         }
+    }
+
+    #[test]
+    fn el_modelo_que_escribe_la_etiqueta_de_solicitud_como_texto_recibe_un_aviso_y_puede_rectificar(
+    ) {
+        let (_dir, mut r) = repertorio();
+        // El modelo imita «[solicito leer_fichero]» como texto plano (INC-N11 de NatureLand) en vez
+        // de invocar la herramienta de verdad. El arnés no debe darlo por terminado: debe avisarle y
+        // dejarle rectificar, igual que ante una denegación.
+        let mut motor = MotorDoble::con_guion(vec![
+            Respuesta::Texto("[solicito leer_fichero]".to_string()),
+            pedir(
+                "publicar",
+                serde_json::json!({"texto": "Rectifiqué tras el aviso."}),
+            ),
+            Respuesta::Texto("Listo.".to_string()),
+        ]);
+
+        let desenlace = atender_encargo(&mut motor, &mut r, vec![], &Limites::default());
+
+        assert!(
+            matches!(desenlace, Desenlace::Publicado(ref t) if t.contains("Rectifiqué tras el aviso"))
+        );
+    }
+
+    #[test]
+    fn el_aviso_por_etiqueta_como_texto_explica_que_hay_que_invocar_la_herramienta() {
+        let (_dir, mut r) = repertorio();
+        let mut motor = MotorDoble::con_guion(vec![
+            Respuesta::Texto("[solicito leer_fichero]".to_string()),
+            pedir("publicar", serde_json::json!({"texto": "Ya."})),
+            Respuesta::Texto("Listo.".to_string()),
+        ]);
+
+        atender_encargo(&mut motor, &mut r, vec![], &Limites::default());
+
+        // El primer mensaje de usuario que ve el modelo es el aviso del mimetismo.
+        let conversacion = motor.ultima_conversacion();
+        let aviso = conversacion
+            .iter()
+            .find(|m| m.papel == Papel::Usuario)
+            .expect("debe haber al menos un mensaje de usuario");
+        assert!(aviso.contenido.contains("texto plano"));
+        assert!(aviso.contenido.contains("invóca"));
+    }
+
+    #[test]
+    fn insistir_escribiendo_la_etiqueta_como_texto_aborta_igual_que_insistir_en_una_denegacion() {
+        let (_dir, mut r) = repertorio();
+        let mut motor = MotorDoble::con_guion(vec![
+            Respuesta::Texto("[solicito leer_fichero]".to_string()),
+            Respuesta::Texto("[solicito leer_fichero]".to_string()),
+        ]);
+
+        let desenlace = atender_encargo(&mut motor, &mut r, vec![], &Limites::default());
+
+        assert!(
+            matches!(desenlace, Desenlace::Abortado(ref m) if m.contains("etiqueta de una herramienta como texto"))
+        );
+    }
+
+    #[test]
+    fn un_texto_final_que_no_empieza_por_la_etiqueta_de_solicitud_termina_sin_entrega_como_siempre()
+    {
+        let (_dir, mut r) = repertorio();
+        let mut motor = MotorDoble::con_guion(vec![Respuesta::Texto(
+            "He terminado de pensar, pero no publico nada.".to_string(),
+        )]);
+
+        let desenlace = atender_encargo(&mut motor, &mut r, vec![], &Limites::default());
+
+        assert!(matches!(desenlace, Desenlace::SinEntrega(_)));
     }
 
     #[test]

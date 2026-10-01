@@ -65,6 +65,8 @@ pub struct Config {
     pub poda: Poda,
     #[serde(default)]
     pub muestreo: Muestreo,
+    #[serde(default)]
+    pub actualizaciones: Actualizaciones,
     #[serde(skip)]
     base: PathBuf,
 }
@@ -463,6 +465,48 @@ impl Default for Muestreo {
             min_p: min_p_por_defecto(),
             penalizacion_repeticion: penalizacion_repeticion_por_defecto(),
             semilla: None,
+        }
+    }
+}
+
+/// Comprobación, puramente informativa, de si hay una versión más nueva publicada en GitHub.
+///
+/// No descarga nada, no actualiza nada y no puede fallar el arranque: solo avisa en consola si hay
+/// una versión más nueva que la instalada (INC-N05 del Director, 2026-10-01).
+#[derive(Debug, Deserialize)]
+pub struct Actualizaciones {
+    /// Si Programator comprueba, al arrancar, si hay una versión más nueva en GitHub. Por
+    /// defecto: `true`.
+    #[serde(default = "comprobar_actualizaciones_por_defecto")]
+    pub comprobar: bool,
+    /// Repositorio de GitHub (`propietario/nombre`) contra el que se compara la versión instalada.
+    /// Por defecto: "celtidcs/Programator".
+    #[serde(default = "repositorio_actualizaciones_por_defecto")]
+    pub repositorio: String,
+    /// Cuánto se espera a GitHub antes de rendirse, en segundos. Por defecto: 3.
+    ///
+    /// Corto a propósito: es una comprobación informativa sobre una máquina que ya va a tardar
+    /// minutos en atender un encargo. No tiene sentido que el arranque se note más lento por ella.
+    #[serde(default = "tiempo_espera_actualizaciones_por_defecto")]
+    pub tiempo_espera_segundos: u64,
+}
+
+fn comprobar_actualizaciones_por_defecto() -> bool {
+    true
+}
+fn repositorio_actualizaciones_por_defecto() -> String {
+    "celtidcs/Programator".to_string()
+}
+fn tiempo_espera_actualizaciones_por_defecto() -> u64 {
+    3
+}
+
+impl Default for Actualizaciones {
+    fn default() -> Self {
+        Self {
+            comprobar: comprobar_actualizaciones_por_defecto(),
+            repositorio: repositorio_actualizaciones_por_defecto(),
+            tiempo_espera_segundos: tiempo_espera_actualizaciones_por_defecto(),
         }
     }
 }

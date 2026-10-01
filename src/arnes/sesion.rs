@@ -247,6 +247,10 @@ pub fn ejecutar_pasada(
             eprintln!("{aviso}");
             resumen.avisos.push(aviso);
         }
+        // Fotografía previa a este encargo concreto: `repertorio` es compartido por toda la
+        // pasada, así que sin esto no se podría saber si fue ESTE encargo el que entregó algo.
+        let propuestas_antes = repertorio.propuestas().len();
+
         let desenlace = atender_encargo(
             motor.as_mut(),
             &mut repertorio,
@@ -324,12 +328,31 @@ pub fn ejecutar_pasada(
             Err(fallo) => {
                 // Un fallo atendiendo un encargo no puede tumbar el proceso: se avisa por stderr
                 // y se sigue con el siguiente.
-                eprintln!(
-                    "{}",
-                    publicacion::mensaje_fallo_publicar_desenlace(&encargo.de, &fallo)
-                );
                 resumen.fallidos += 1;
-                alguna_publicacion_fallo = true;
+                let propuestas_de_este_encargo = repertorio.propuestas().len() - propuestas_antes;
+                if publicacion::fallo_de_cierre_pierde_el_encargo(
+                    propuestas_de_este_encargo,
+                    repertorio.veredictos_no_publicados().len(),
+                ) {
+                    eprintln!(
+                        "{}",
+                        publicacion::mensaje_fallo_publicar_desenlace(&encargo.de, &fallo)
+                    );
+                    alguna_publicacion_fallo = true;
+                } else {
+                    // Las propuestas de este encargo ya habían salido al canal al entregarse
+                    // (`Canal::publicar_entrega`, incidencia C2): lo único que no se pudo publicar
+                    // es el resumen de cierre. Reatender el encargo solo produciría una segunda
+                    // respuesta que contradice a la primera (INC-N13 de NatureLand), así que el
+                    // registro avanza igual que si el cierre hubiera salido bien.
+                    eprintln!(
+                        "{}",
+                        publicacion::mensaje_fallo_publicar_cierre_con_entrega_ya_registrada(
+                            &encargo.de,
+                            &fallo
+                        )
+                    );
+                }
             }
         }
     }

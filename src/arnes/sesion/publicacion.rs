@@ -102,6 +102,38 @@ pub(super) fn mensaje_fallo_publicar_desenlace(
     )
 }
 
+/// ¿Debe el fallo al publicar el **cierre** de un encargo impedir que el registro avance?
+///
+/// Si el encargo entregó al menos una propuesta y todos sus veredictos ya habían salido al canal
+/// por la vía inmediata (`Canal::publicar_entrega` al escribir la propuesta, incidencia C2 de
+/// NatureLand), el fallo se queda en el resumen de cierre: la entrega ya quedó anotada. Reatender
+/// el encargo solo produciría una segunda respuesta que contradice a la primera —exactamente lo que
+/// documenta INC-N13 de NatureLand, dos pasadas sobre el mismo encargo 027-bis, la segunda sin
+/// entrega y peor que la primera. Si no hubo ninguna propuesta (p. ej. `SinEntrega` o `Abortado`), o
+/// si queda algún veredicto sin publicar, el fallo sí pierde información real y hay que reintentar.
+pub(super) fn fallo_de_cierre_pierde_el_encargo(
+    propuestas_de_este_encargo: usize,
+    veredictos_pendientes: usize,
+) -> bool {
+    propuestas_de_este_encargo == 0 || veredictos_pendientes > 0
+}
+
+/// Redacta el aviso emitido cuando el cierre de un encargo no se pudo publicar, pero su entrega
+/// ya había quedado anotada en el canal y por eso el registro avanza de todos modos.
+pub(super) fn mensaje_fallo_publicar_cierre_con_entrega_ya_registrada(
+    solicitante: &str,
+    fallo: &crate::error::Error,
+) -> String {
+    format!(
+        "⚠️ No se pudo publicar el resumen de cierre del encargo de «{solicitante}» en el canal: {fallo}.\n\
+         Consecuencia: la propuesta ya había quedado anotada en el canal al entregarse, así que no se \
+         pierde trabajo; solo falta el resumen final. El registro avanza igual: el encargo no se \
+         reatenderá (INC-N13).\n\
+         Qué hacer: no hace falta nada; si el fallo persiste en el siguiente ciclo, comprueba que el \
+         archivo del canal no esté bloqueado por otro proceso o protegido contra escritura."
+    )
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -180,6 +212,34 @@ mod pruebas {
         let desenlace_vacio = crate::arnes::ciclo::Desenlace::SinEntrega(String::new());
         let cuerpo_vacio = cuerpo_base_desenlace(&desenlace_vacio);
         assert!(cuerpo_vacio.contains("sin producir texto ni invocar herramientas"));
+    }
+
+    #[test]
+    fn un_fallo_de_cierre_sin_propuestas_de_este_encargo_pierde_el_encargo() {
+        assert!(fallo_de_cierre_pierde_el_encargo(0, 0));
+    }
+
+    #[test]
+    fn un_fallo_de_cierre_con_veredictos_sin_publicar_pierde_el_encargo() {
+        assert!(fallo_de_cierre_pierde_el_encargo(1, 1));
+    }
+
+    #[test]
+    fn un_fallo_de_cierre_con_la_propuesta_ya_anotada_no_pierde_el_encargo() {
+        assert!(!fallo_de_cierre_pierde_el_encargo(1, 0));
+    }
+
+    #[test]
+    fn mensaje_fallo_publicar_cierre_con_entrega_ya_registrada_explica_que_no_se_pierde_nada() {
+        let err = crate::error::Error::Escritura {
+            ruta: std::path::PathBuf::from(".gestor/canal/programator.md"),
+            causa: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "bloqueado"),
+        };
+        let texto = mensaje_fallo_publicar_cierre_con_entrega_ya_registrada("claude.md", &err);
+        assert!(texto.contains("«claude.md»"));
+        assert!(texto.contains("no se pierde trabajo"));
+        assert!(texto.contains("no se reatenderá"));
+        assert!(texto.contains("Qué hacer:"));
     }
 
     #[test]

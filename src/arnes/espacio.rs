@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 /// El acuse de hasta dónde se leyó cada buzón.
 const NOMBRE_DEL_REGISTRO: &str = "lectura.json";
 
+/// El historial acumulativo de cómo se repartió el modelo entre GPU y CPU en cada arranque.
+const NOMBRE_DEL_ENCAJE_HISTORICO: &str = "encaje-historico.log";
+
 /// El fichero de instrucciones del proyecto que lee el modelo.
 ///
 /// **El nombre no se deriva del agente a propósito.** Es el contrato publicado con las
@@ -33,6 +36,11 @@ pub fn ruta_del_registro(carpeta: &Path, agente: &str) -> PathBuf {
 /// Dónde se guarda el latido del arnés en cada sondeo.
 pub fn ruta_del_latido(carpeta: &Path, agente: &str, nombre_fichero: &str) -> PathBuf {
     carpeta_del_agente(carpeta, agente).join(nombre_fichero)
+}
+
+/// Dónde se añade cada línea del historial de encaje, una por arranque.
+pub fn ruta_del_encaje_historico(carpeta: &Path, agente: &str) -> PathBuf {
+    carpeta_del_agente(carpeta, agente).join(NOMBRE_DEL_ENCAJE_HISTORICO)
 }
 
 /// Dónde se instala el fichero de instrucciones en una instalación nueva.
@@ -80,6 +88,15 @@ mod pruebas {
         assert_eq!(
             calculada,
             Path::new("/trabajo/.gestor/programator/latido.json")
+        );
+    }
+
+    #[test]
+    fn el_encaje_historico_vive_en_la_carpeta_del_agente() {
+        let calculada = ruta_del_encaje_historico(Path::new("/trabajo"), "Programator");
+        assert_eq!(
+            calculada,
+            Path::new("/trabajo/.gestor/programator/encaje-historico.log")
         );
     }
 

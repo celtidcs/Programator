@@ -23,6 +23,11 @@ pub struct DatosReunidos {
     /// de verdad se pedirán, o una explicación de por qué no hay nada que calcular si no hay
     /// modelo declarado.
     pub encaje: String,
+    /// Las capas que de verdad se van a pedir a `llama-server` (`resolucion.capas`), para quien
+    /// quiera registrar el historial de encaje (INC-N07) sin tener que volver a calcularlas ni
+    /// extraerlas del texto del aviso. `None` cuando no hay modelo declarado: no hay nada que
+    /// registrar.
+    pub capas_en_gpu: Option<u32>,
 }
 
 /// Reúne lo que se sabe de la máquina, el motor y el modelo. Cada dato que falte se convierte en
@@ -39,10 +44,11 @@ pub fn reunir_datos_de_arranque(config: &Config) -> DatosReunidos {
         None => MotorInstalado::NoDeclarado,
     };
 
-    let (modelo, encaje) = match &config.motor.modelo {
+    let (modelo, encaje, capas_en_gpu) = match &config.motor.modelo {
         None => (
             ResumenModelo::NoDeclarado,
             "no calculado: la configuración no declara ningún modelo".to_string(),
+            None,
         ),
         Some(cadena) => {
             let ruta_modelo = config.resolver(cadena);
@@ -68,7 +74,7 @@ pub fn reunir_datos_de_arranque(config: &Config) -> DatosReunidos {
                     resolucion.aviso, resolucion.capas
                 )
             };
-            (modelo, encaje)
+            (modelo, encaje, Some(resolucion.capas))
         }
     };
 
@@ -77,6 +83,7 @@ pub fn reunir_datos_de_arranque(config: &Config) -> DatosReunidos {
         motor,
         modelo,
         encaje,
+        capas_en_gpu,
     }
 }
 

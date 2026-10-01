@@ -3,6 +3,7 @@
 
 pub mod doble;
 pub mod encaje;
+pub mod encaje_historico;
 pub mod gguf;
 pub mod hardware;
 pub mod llama;

@@ -5,10 +5,12 @@
 //! para firmar, aprobar o aceptar: el §1.1 del protocolo dice que nada se da por bueno porque lo
 //! diga quien lo hizo, y Programator no puede violarlo porque no dispone del verbo.
 
+mod auditoria;
 mod candidatos;
 mod error;
 mod lectura;
 
+use self::auditoria::corregir_lineas_de_auditoria;
 use self::candidatos::siguiente_libre;
 use self::error::motivo_para_el_modelo;
 use self::lectura::preparar_lectura;
@@ -384,6 +386,10 @@ impl Repertorio {
             Ok(t) => t.to_string(),
             Err(d) => return d,
         };
+        // Corrige, línea a línea, la cita de un hallazgo de auditoría contra el fichero real
+        // (INC-N08 e INC-N10 de NatureLand). No toca nada que no tenga la forma exacta del
+        // formato formal: un texto sin auditorías sale idéntico.
+        let texto = corregir_lineas_de_auditoria(&texto, &self.ambito);
         self.pendiente_de_publicar = Some(texto);
         Decision::Concedida("anotado; el arnés lo publicará al cerrar el ciclo".to_string())
     }
