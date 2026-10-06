@@ -15,6 +15,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Este flujo solo lee el código y lo compila: no publica, no comenta ni etiqueta nada. Sin esta
+# declaración heredaría los permisos por defecto del GITHUB_TOKEN, que pueden incluir escritura.
+# La caché de Swatinem/rust-cache usa su propio token de ejecución y no necesita más que esto.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
