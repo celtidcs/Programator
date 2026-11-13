@@ -5,7 +5,7 @@
 //! (`herramientas.rs`), una petición al motor sin `properties` (`llama.rs`), una tabla a mano en el
 //! preámbulo del modelo y una guía para los demás agentes que afirmaba que el modelo no tenía
 //! herramientas. Los cuatro divergieron, y dos de las divergencias costaron una jornada de trabajo
-//! en NatureLand el 23/09/2026.
+//! en uso real el 23/09/2026.
 //!
 //! Aquí se declara una vez y de aquí come todo. **Este módulo no ejecuta nada**: no toca disco, no
 //! llama al motor y no decide si una solicitud se concede. Eso sigue siendo de `herramientas.rs`.
@@ -141,7 +141,7 @@ pub const REPERTORIO: &[Ficha] = &[
                      verificado nada que no se haya ejecutado de verdad.",
             condicion: "cuando `ciclo.rs` ejecute la verificación de verdad, este estado pasa a \
                         `Concedible` y hay que ajustar la prueba \
-                        `solo_son_concedibles_los_cinco_que_hoy_se_atienden`. Es la Tarea 16.",
+                        `solo_son_concedibles_los_cinco_que_hoy_se_atienden`.",
         },
     },
     Ficha {
@@ -301,7 +301,7 @@ mod pruebas {
 
     #[test]
     fn el_orden_de_la_ficha_es_el_del_repertorio_que_ya_fijaba_la_especificacion() {
-        // La Tarea 2 deriva `Repertorio::nombres()` de aquí y hay una prueba que fija ese orden
+        // `Repertorio::nombres()` se deriva de aquí y hay una prueba que fija ese orden
         // desde antes de que la ficha existiera. Si los dos órdenes se separan, la derivación
         // cambia el contrato sin que nadie lo pida.
         let nombres: Vec<&str> = todas().iter().map(|f| f.nombre).collect();

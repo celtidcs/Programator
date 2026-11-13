@@ -1,0 +1,20 @@
+[
+  {
+    "_id": "6938ce9113a75af5dff15dc0",
+    "id": "unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF",
+    "lastModified": "2025-12-15T10:16:01.000Z",
+    "downloads": 148706
+  },
+  {
+    "_id": "69370a647d4fa6dda78bda6a",
+    "id": "lmstudio-community/Devstral-Small-2-24B-Instruct-2512-GGUF",
+    "lastModified": "2025-12-10T17:23:46.000Z",
+    "downloads": 33825
+  },
+  {
+    "_id": "6938533da5908f1f41488ce5",
+    "id": "bartowski/mistralai_Devstral-Small-2-24B-Instruct-2512-GGUF",
+    "lastModified": "2025-12-09T21:25:08.000Z",
+    "downloads": 31173
+  }
+]

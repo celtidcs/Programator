@@ -1,0 +1,44 @@
+id = "U02"
+titulo = "Auditar validaciones y significado en unas reservas de hotel en Rust"
+familia = "uso"
+clase = "validaciones"
+auditado = "reservas.rs"
+
+# Siete defectos sembrados. VALIDACION y SIGNIFICADO no son tipos del formato formal del arnés,
+# así que aquí el arnés no corrige la línea y se mide la que cite el modelo. Si se toca el fichero,
+# hay que volver a medir estas líneas.
+
+[[defectos]]
+lineas = [43, 51]
+tipo = "VALIDACION"
+descripcion = "reservar acepta una salida igual o anterior a la entrada"
+
+[[defectos]]
+lineas = [43, 51]
+tipo = "VALIDACION"
+descripcion = "reservar acepta cero personas"
+
+[[defectos]]
+lineas = [69, 71]
+tipo = "SIGNIFICADO"
+descripcion = "ocupada no mira el estado: una reserva cancelada sigue bloqueando la habitación, contra lo que dice su comentario"
+
+[[defectos]]
+lineas = [77]
+tipo = "SIGNIFICADO"
+descripcion = "noches suma una de más: la salida no es una noche, según el comentario del módulo"
+
+[[defectos]]
+lineas = [88]
+tipo = "VALIDACION"
+descripcion = "cancelar no comprueba si ya estaba cancelada: se puede reembolsar dos veces"
+
+[[defectos]]
+lineas = [90]
+tipo = "SIGNIFICADO"
+descripcion = "usa > donde el comentario dice «o más»: con siete días justos solo reembolsa la mitad"
+
+[[defectos]]
+lineas = [90]
+tipo = "VALIDACION"
+descripcion = "entrada - hoy se desborda si se cancela después de la entrada"

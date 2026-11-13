@@ -1,0 +1,181 @@
+# Configuración del banco de modelos: copia este fichero como banco.toml y adáptalo.
+#
+# El motor, el modelo y el agente salen de programator.toml, como siempre; aquí solo está lo que
+# añade el banco. Toda clave es opcional: si falta, vale lo que se indica como «por defecto».
+
+# Las semillas con que se pasa cada encargo. La nota de un encargo es la media entre semillas, con
+# su dispersión. Por defecto [42, 43, 44]: la 42 es la de la evaluación del 22/09/2026. No puede
+# estar vacía. Tres semillas con quince encargos son entre hora y media y dos horas y cuarto con
+# Devstral.
+semillas = [42, 43, 44]
+
+# La temperatura del modelo durante la tanda. Por defecto 0.2, la del 22/09/2026.
+temperatura = 0.2
+
+# A cuántas líneas de un defecto sembrado puede caer un hallazgo de auditoría para contar como
+# acierto. Por defecto 2.
+margen_lineas = 2
+
+# Cuánto se espera a que el modelo entregue un encargo antes de darlo por no entregado, en segundos.
+# Por defecto 900: un encargo tardó entre dos y tres minutos con Devstral.
+tiempo_maximo_encargo_segundos = 900
+
+# El buzón del canal desde el que el banco escribe cada encargo, como si fuera el agente que dirige.
+# Por defecto "banco": el encargo llega a Programator desde .gestor/canal/banco.md.
+buzon_que_encarga = "banco"
+
+# Las capas del modelo en la GPU durante la tanda, con la misma sintaxis que capas_gpu en
+# programator.toml (un número o "auto"). Si se pone, sustituye a la de programator.toml solo para
+# el banco. Por defecto, la de programator.toml.
+#
+# Fíjala si vas a comparar tandas: el reparto de capas forma parte de lo que se repite, y con
+# "auto" depende de la memoria libre que haya en ese momento. Con 30 capas, la misma semilla dio
+# otra respuesta que con 35 (medido el 12/11/2026).
+# capas_gpu = 34
+
+# ---------------------------------------------------------------------------------------------
+# Las pruebas ocultas, en este equipo. Programator solo usa el equipo donde corre: no hay otra
+# máquina. Son opcionales y van ENCENDIDAS POR DEFECTO, también si esta sección no está: el banco
+# ejecuta el código que escribió el modelo para ver si funciona.
+#
+# **El código del modelo se ejecuta aquí, sin que nadie lo haya revisado**, con el aislamiento de
+# abajo, y hace falta tener instalados los lenguajes de los encargos. El banco lo recuerda al
+# arrancar. Para apagarlas basta con dos líneas:
+#
+#   [comprobacion_local]
+#   activa = false
+#
+# Apagadas, el modelo escribe el código igual y queda guardado en la tanda, no hace falta ningún
+# lenguaje instalado, y lo que se puntúa ejecutándolo sale «no evaluado» diciendo por qué.
+#
+# La sección [comprobacion], que llevaba las pruebas a otra máquina, ya no existe: si tu banco.toml
+# la trae, el banco no arranca y te dice qué hacer.
+#
+# Cada entrega se copia a <carpeta de la tanda>/comprobacion/<entrega>/ y cada orden de la ficha se
+# ejecuta ahí dentro. Las cachés y los temporales de las herramientas van a
+# <carpeta de la tanda>/comprobacion/.cache/. Al terminar, también si algo falla, se borra
+# comprobacion/ entera. Fuera de la carpeta de la tanda no se borra nada: se mira si quedó algo en
+# las carpetas de «vigilar» y, si quedó, se dice en la terminal y en el informe.
+#
+# Hace falta bash: en Windows, el de Git for Windows. El de WSL se rechaza, porque ejecutaría en
+# otro sistema y con otras herramientas. Y las herramientas que pidan los encargos (cargo, python,
+# node y npm, dotnet, lua, sqlite3): la que falte deja sus encargos «no evaluado».
+#
+# [comprobacion_local]
+# # Si se ejecutan las pruebas ocultas. Por defecto true; con false no se ejecuta código del
+# # modelo en este equipo.
+# activa = true
+# # La shell que ejecuta cada orden de las fichas, con la orden como último argumento. Por defecto,
+# # en Windows, el bash de Git for Windows en su carpeta de siempre (Git no lo pone en el PATH);
+# # en Linux, ["bash", "-c"]. Si Git está instalado en otra carpeta, pon aquí su ruta.
+# interprete = ['C:\Program Files\Git\bin\bash.exe', "-c"]
+# # Windows, con «integridad_baja»: dónde se copia Git, relativa a la carpeta del banco. El bash de
+# # Git no arranca aislado si hay otro bash de la misma instalación abierto (lo normal si trabajas
+# # con agentes en este equipo), así que Programator copia bin/, etc/ y usr/ de tu Git aquí, unos
+# # 200 MB, y comprueba con la copia. Lo hace solo, antes de cargar el modelo, la primera vez y
+# # cuando se actualice Git. Con "" no se copia y se usa el intérprete tal cual.
+# copia_del_interprete = "interprete-aislado"
+# # Cuánto puede tardar cada orden, en segundos. Por defecto 300.
+# tiempo_maximo_comprobacion_segundos = 300
+# # Las carpetas donde mirar si quedó rastro, con las variables de entorno entre llaves. Por
+# # defecto, en Windows, las de abajo; en Linux, las mismas bajo {HOME} (~/.npm, ~/.cache/pip...).
+# vigilar = [
+#     "{LOCALAPPDATA}/npm-cache",
+#     "{USERPROFILE}/.nuget/packages",
+#     "{USERPROFILE}/.dotnet",
+#     "{APPDATA}/NuGet",
+#     "{USERPROFILE}/.cargo/registry",
+#     "{LOCALAPPDATA}/pip/cache",
+# ]
+# # El temporal del sistema. También se vigila, pero lo que aparezca ahí puede ser de otro
+# # programa, y se dice así. Por defecto ["{TEMP}"] en Windows y ["/tmp"] en Linux.
+# temporales_del_sistema = ["{TEMP}"]
+# # Cuántos niveles se miran dentro de cada carpeta vigilada (1 es solo lo de primer nivel) y
+# # cuántas entradas como mucho por carpeta. Pasado el tope, se dice que esa carpeta no se pudo
+# # vigilar entera. Por defecto 4 y 20000.
+# profundidad_rastro = 4
+# entradas_maximas_rastro = 20000
+# # Cómo se aísla cada orden de las fichas. Por defecto, el de la plataforma:
+# #   "integridad_baja"     Windows: el código del modelo no puede escribir fuera de comprobacion/
+# #                         y corre en un Job que limita procesos y memoria y, al terminar, mata
+# #                         todo lo que lanzó. La red no se corta, pero se vigila: si el código
+# #                         del modelo intenta conectarse fuera del equipo, ese paso falla.
+# #   "espacio_de_nombres"  Linux: corre sin red, con «envoltorio» delante de cada orden. Algunas
+# #                         distribuciones lo prohíben a los usuarios normales; el banco lo dice.
+# # El [preparar] de las fichas, que descarga dependencias y no toca el código del modelo, va
+# # siempre con red: sin envoltorio y sin las variables de red de abajo.
+# #   "ninguno"             sin aislar: con todos los permisos de tu usuario. El banco avisa al
+# #                         empezar y el informe lo anota.
+# # aislamiento = "integridad_baja"   (el de Windows; en Linux, "espacio_de_nombres")
+# # Topes del Job de Windows: procesos a la vez y memoria de todos juntos, en MiB. Por defecto
+# # 64 y 8192.
+# procesos_maximos = 64
+# memoria_maxima_mib = 8192
+# # Con «integridad_baja», cada cuántos milisegundos se mira si algún proceso de la orden tiene
+# # una conexión abierta fuera del equipo. Una más breve puede no verse. Por defecto 50.
+# vigilar_red_cada_ms = 50
+# # Los programas que lanzan las herramientas por su cuenta y se conectan fuera, cuyas
+# # conexiones no cuentan como intento del código del modelo. Cada intento dice en el informe
+# # qué programa lo abrió, así que uno nuevo se reconoce allí. Por defecto, la telemetría del
+# # enlazador de MSVC, que rustc usa en Windows.
+# programas_del_sistema = ["vctip.exe"]
+# # Lo que se antepone a cada orden con «espacio_de_nombres». Por defecto, el unshare de
+# # util-linux, que además enciende «lo» antes de la orden: el espacio nace con ella apagada, y
+# # sin ella tampoco funciona 127.0.0.1, donde las pruebas que necesitan red levantan su servidor.
+# envoltorio = ["unshare", "--user", "--map-root-user", "--net", "--", "sh", "-c", 'ip link set lo up && exec "$@"', "envoltorio"]
+#
+# # Las fichas llaman a los programas como se llaman en Linux. Si aquí tienen otro nombre, cada
+# # línea crea una función de bash con el nombre de la ficha. Por defecto, ninguna.
+# [comprobacion_local.nombres]
+# python3 = "python"
+# "lua5.4" = "lua"
+#
+# # Los lenguajes y programas que el banco sabe comprobar, cada uno con la orden que mira si está
+# # instalado (termina con 0 si lo está). Si falta uno, los encargos que lo piden se escriben
+# # igual y su código sale «no evaluado» sin ejecutarse. Vienen de serie: rust = "cargo --version",
+# # python = "python3 --version", node = "node --version && npm --version",
+# # dotnet = "dotnet --list-sdks", lua = "lua5.4 -v", sqlite = "sqlite3 -version". Aquí se
+# # cambia la orden de uno de serie y SE AÑADE CUALQUIER OTRO: el nombre es el que escriben las
+# # fichas en «herramientas». Si una ficha pide uno que no está ni de serie ni aquí, el banco no
+# # arranca y dice qué línea añadir. Las órdenes pasan por los nombres de arriba, así que con
+# # python3 = "python" vale la de serie. Ver «docs/Como adaptar el banco de modelos.md».
+# [comprobacion_local.herramientas]
+# lua = "lua -v"
+# php = "php --version"
+#
+# # Las variables de entorno de cada orden, también del [preparar] de las fichas. {cache} es la
+# # carpeta de cachés de la tanda. Estas son las de por defecto; solo hace falta escribir las que
+# # cambien, y una vacía la quita:
+# #   APPDATA                       = "{cache}/appdata"   (NuGet.Config y demás, en Windows)
+# #   TEMP, TMP, TMPDIR             = "{cache}/tmp"
+# #   npm_config_cache              = "{cache}/npm"
+# #   npm_config_logs_dir           = "{cache}/npm-logs"
+# #   NUGET_PACKAGES                = "{cache}/nuget"
+# #   DOTNET_CLI_HOME               = "{cache}/dotnet"
+# #   DOTNET_CLI_TELEMETRY_OPTOUT, DOTNET_SKIP_FIRST_TIME_EXPERIENCE, DOTNET_NOLOGO = "1"
+# #   DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE = "true"  (que dotnet build no busque workloads)
+# #   CARGO_HOME                    = "{cache}/cargo-home"
+# #   PIP_CACHE_DIR                 = "{cache}/pip"
+# #   npm_config_update_notifier    = "false"             (que npm no pregunte por versiones)
+# #   RUSTC_WRAPPER, CARGO_BUILD_RUSTC_WRAPPER = "{vacio}" (puestas vacías: apagan sccache)
+# #   Solo en Linux: HOME = "{cache}/home" y RUSTUP_HOME = "{HOME}/.rustup" (dotnet escribe en
+# #   $HOME, y rustup necesita sus toolchains)
+# # Una con "" no se pone; una con "{vacio}" se pone vacía, que es como se anula lo que el
+# # sistema configura. Una que cita una del sistema entre llaves, como {HOME}, solo se pone si el
+# # sistema no la trae ya.
+# # No pongas CARGO_TARGET_DIR ni PYTHONPYCACHEPREFIX: lo compilado ya queda dentro de la copia de
+# # cada entrega, y una carpeta común deja que una entrega herede lo compilado para otra. Si para
+# # descargar necesitas un proxy de tu red, ponlo aquí: el [preparar] lo usará y el código del
+# # modelo seguirá apuntando a la trampa.
+# [comprobacion_local.variables]
+# CARGO_HOME = "{cache}/cargo-home"
+#
+# # Las que cortan las descargas, solo para las órdenes que ejecutan el código del modelo; mandan
+# # sobre las de arriba. {proxy} es el puerto del proxy trampa de Programator, que no reenvía
+# # nada: anota adónde se quería ir, y ese paso falla. Por defecto:
+# #   CARGO_NET_OFFLINE = "true", PIP_NO_INDEX = "1", npm_config_offline = "true"
+# #   HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, http_proxy, https_proxy, all_proxy
+# #                                 = "http://127.0.0.1:{proxy}"
+# #   NO_PROXY, no_proxy            = "127.0.0.1,localhost,::1"   (el servidor de las pruebas)
+# [comprobacion_local.variables_de_red]
+# npm_config_offline = "true"

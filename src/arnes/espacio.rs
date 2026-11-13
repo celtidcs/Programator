@@ -13,6 +13,13 @@ const NOMBRE_DEL_REGISTRO: &str = "lectura.json";
 /// El historial acumulativo de cómo se repartió el modelo entre GPU y CPU en cada arranque.
 const NOMBRE_DEL_ENCAJE_HISTORICO: &str = "encaje-historico.log";
 
+/// El principio y el final del nombre de cada registro de conversación; en medio va la marca.
+const PREFIJO_DE_LA_CONVERSACION: &str = "conversacion-";
+const EXTENSION_DE_LA_CONVERSACION: &str = ".jsonl";
+
+/// El principio del nombre de cada carpeta de trabajo de la verificación; detrás va la marca.
+const PREFIJO_DE_LA_VERIFICACION: &str = "verificacion-";
+
 /// El fichero de instrucciones del proyecto que lee el modelo.
 ///
 /// **El nombre no se deriva del agente a propósito.** Es el contrato publicado con las
@@ -25,7 +32,7 @@ const NOMBRE_DE_LAS_NORMAS: &str = "PROGRAMATOR.md";
 /// En minúsculas porque el nombre configurado es para leerlo («Programator») y una carpeta con
 /// mayúsculas en medio de `.gestor/` desentona con el resto del árbol.
 pub fn carpeta_del_agente(carpeta: &Path, agente: &str) -> PathBuf {
-    carpeta.join(".gestor").join(agente.to_lowercase())
+    crate::protocolo::carpetas::carpeta_del_gestor(carpeta).join(agente.to_lowercase())
 }
 
 /// Dónde se guarda el registro de lectura del canal.
@@ -41,6 +48,26 @@ pub fn ruta_del_latido(carpeta: &Path, agente: &str, nombre_fichero: &str) -> Pa
 /// Dónde se añade cada línea del historial de encaje, una por arranque.
 pub fn ruta_del_encaje_historico(carpeta: &Path, agente: &str) -> PathBuf {
     carpeta_del_agente(carpeta, agente).join(NOMBRE_DEL_ENCAJE_HISTORICO)
+}
+
+/// Dónde se guarda la conversación de un encargo. `marca` la distingue de las demás.
+pub fn ruta_de_la_conversacion(carpeta: &Path, agente: &str, marca: &str) -> PathBuf {
+    carpeta_del_agente(carpeta, agente).join(format!(
+        "{PREFIJO_DE_LA_CONVERSACION}{marca}{EXTENSION_DE_LA_CONVERSACION}"
+    ))
+}
+
+/// Si un nombre de fichero es el de una conversación guardada por `ruta_de_la_conversacion`.
+pub fn es_fichero_de_conversacion(nombre: &str) -> bool {
+    nombre.starts_with(PREFIJO_DE_LA_CONVERSACION) && nombre.ends_with(EXTENSION_DE_LA_CONVERSACION)
+}
+
+/// Dónde trabaja el comprobador de una propuesta. `marca` la distingue de las demás.
+///
+/// Dentro de la carpeta de trabajo y no en el temporal del sistema: Programator no escribe fuera
+/// del proyecto en el que trabaja.
+pub fn carpeta_de_verificacion(carpeta: &Path, agente: &str, marca: &str) -> PathBuf {
+    carpeta_del_agente(carpeta, agente).join(format!("{PREFIJO_DE_LA_VERIFICACION}{marca}"))
 }
 
 /// Dónde se instala el fichero de instrucciones en una instalación nueva.
@@ -66,6 +93,16 @@ pub fn normas_en_uso(carpeta: &Path, agente: &str) -> PathBuf {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn una_conversacion_guardada_se_reconoce_por_su_nombre() {
+        let ruta = ruta_de_la_conversacion(Path::new("/trabajo"), "Programator", "20261112-1");
+        let nombre = ruta.file_name().unwrap().to_string_lossy();
+
+        assert!(es_fichero_de_conversacion(&nombre));
+        assert!(!es_fichero_de_conversacion("registro.toml"));
+        assert!(!es_fichero_de_conversacion("conversacion-20261112-1.txt"));
+    }
 
     #[test]
     fn la_carpeta_del_agente_va_en_minusculas_bajo_gestor() {
@@ -133,7 +170,7 @@ mod pruebas {
 
     #[test]
     fn un_fichero_en_la_raiz_sigue_mandando() {
-        // La instalación de MMCelt tiene su PROGRAMATOR.md adaptado en la raíz desde antes de
+        // Una instalación anterior puede tener su PROGRAMATOR.md adaptado en la raíz desde antes de
         // esta versión. Mover el sitio no puede dejarla sin instrucciones.
         let temporal = tempfile::tempdir().unwrap();
         let carpeta = temporal.path();

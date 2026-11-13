@@ -8,6 +8,7 @@ pub mod ficha;
 pub mod herramientas;
 pub mod normas;
 pub mod redaccion;
+pub mod registro;
 pub mod sesion;
 pub mod verificacion;
 

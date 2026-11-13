@@ -11,6 +11,12 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// El error de un fichero de estado del arnés (el registro de lectura, el latido) que está en
+/// disco pero no se deja leer como JSON. Un solo sitio lo redacta para los dos.
+pub(crate) fn fichero_corrupto(ruta: &Path, causa: &serde_json::Error) -> Error {
+    Error::Configuracion(format!("{ruta:?} está corrupto: {causa}"))
+}
+
 /// Lo que hay de nuevo en un buzón desde la última vez.
 #[derive(Debug)]
 pub enum Delta {
@@ -44,8 +50,7 @@ impl RegistroLectura {
             ruta: ruta.to_path_buf(),
             causa,
         })?;
-        serde_json::from_str(&texto)
-            .map_err(|e| Error::Configuracion(format!("{ruta:?} está corrupto: {e}")))
+        serde_json::from_str(&texto).map_err(|e| fichero_corrupto(ruta, &e))
     }
 
     /// Guarda el registro, creando el directorio si hace falta.

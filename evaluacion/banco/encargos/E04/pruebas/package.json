@@ -1,0 +1,9 @@
+{
+  "name": "banco-e04",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "devDependencies": {
+    "typescript": "5.9.2"
+  }
+}

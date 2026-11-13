@@ -5,13 +5,9 @@ use super::*;
 use crate::error::Error;
 use crate::plataforma::{EJEMPLO_DE_RUTA, NOMBRE_DEL_EJECUTABLE};
 
-/// El fragmento de desempeño no es lo que estas pruebas examinan, así que se escribe una vez,
-/// vacío de marcadores, y se reutiliza.
-fn escribir_desempeno_vacio(dir: &std::path::Path) -> std::path::PathBuf {
-    let ruta = dir.join("desempeno.md");
-    std::fs::write(&ruta, "CIFRAS").unwrap();
-    ruta
-}
+/// El fragmento de desempeño no es lo que estas pruebas examinan, así que va uno fijo, vacío de
+/// marcadores.
+const DESEMPENO_VACIO: &str = "CIFRAS";
 
 #[test]
 fn la_guia_para_el_equipo_se_actualiza_en_cada_arranque() {
@@ -20,7 +16,6 @@ fn la_guia_para_el_equipo_se_actualiza_en_cada_arranque() {
     // detrás. Se lee como vigente aunque no lo sea.
     let dir = tempfile::tempdir().unwrap();
     let plantilla = dir.path().join("guia.md");
-    let desempeno = escribir_desempeno_vacio(dir.path());
     let canal = tempfile::tempdir().unwrap();
     let comprobadores = crate::arnes::verificacion::Comprobadores::new();
 
@@ -30,7 +25,7 @@ fn la_guia_para_el_equipo_se_actualiza_en_cada_arranque() {
         &plantilla,
         "GUIA.md",
         16384,
-        &desempeno,
+        DESEMPENO_VACIO,
         &comprobadores,
     )
     .unwrap();
@@ -41,7 +36,7 @@ fn la_guia_para_el_equipo_se_actualiza_en_cada_arranque() {
         &plantilla,
         "GUIA.md",
         16384,
-        &desempeno,
+        DESEMPENO_VACIO,
         &comprobadores,
     )
     .unwrap();
@@ -55,12 +50,11 @@ fn la_guia_para_el_equipo_se_actualiza_en_cada_arranque() {
 
 #[test]
 fn la_guia_publica_el_contexto_en_vigor_y_no_una_cifra_escrita_a_mano() {
-    // En NatureLand la guía decía 16.384 mientras el TOML declaraba 32.768. Las dos cifras eran
+    // En uso real la guía decía 16.384 mientras el TOML declaraba 32.768. Las dos cifras eran
     // ciertas —una era el defecto y la otra el ajuste local— y ninguna decía cuál mandaba.
     let plantilla_dir = tempfile::tempdir().unwrap();
     let plantilla = plantilla_dir.path().join("guia.md");
     std::fs::write(&plantilla, "ventana de {contexto} tokens").unwrap();
-    let desempeno = escribir_desempeno_vacio(plantilla_dir.path());
     let canal = tempfile::tempdir().unwrap();
     let comprobadores = crate::arnes::verificacion::Comprobadores::new();
 
@@ -69,7 +63,7 @@ fn la_guia_publica_el_contexto_en_vigor_y_no_una_cifra_escrita_a_mano() {
         &plantilla,
         "GUIA.md",
         32768,
-        &desempeno,
+        DESEMPENO_VACIO,
         &comprobadores,
     )
     .unwrap();
@@ -85,8 +79,7 @@ fn la_guia_compone_el_repertorio_el_desempeno_y_los_comprobadores() {
     let dir = tempfile::tempdir().unwrap();
     let plantilla = dir.path().join("guia.md");
     std::fs::write(&plantilla, "{repertorio}\n{desempeno}\n{comprobadores}").unwrap();
-    let desempeno = dir.path().join("desempeno.md");
-    std::fs::write(&desempeno, "27 de 41 auditando formas").unwrap();
+    let desempeno = "27 de 41 auditando formas";
     let canal = tempfile::tempdir().unwrap();
     let mut comprobadores = crate::arnes::verificacion::Comprobadores::new();
     comprobadores.insert("py".to_string(), vec!["python".to_string()]);
@@ -96,7 +89,7 @@ fn la_guia_compone_el_repertorio_el_desempeno_y_los_comprobadores() {
         &plantilla,
         "GUIA.md",
         16384,
-        &desempeno,
+        desempeno,
         &comprobadores,
     )
     .unwrap();
@@ -369,7 +362,7 @@ fn tras_una_pasada_ignorada_el_canal_quieto_sigue_sin_dar_novedades() {
     hay_novedades(dir.path(), &mut huella).unwrap();
     drop(bloqueo);
 
-    // Éste es el fallo que sufrió el Director: al recuperarse la lectura, el sondeo anunciaba
+    // Éste es el fallo que se vio en uso real: al recuperarse la lectura, el sondeo anunciaba
     // una segunda novedad falsa. Con la referencia intacta, no hay nada que anunciar.
     assert_eq!(
         hay_novedades(dir.path(), &mut huella).unwrap(),

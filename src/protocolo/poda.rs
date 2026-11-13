@@ -375,8 +375,7 @@ pub fn guardar_propuesta_poda(
     agente_origen: &str,
     propuesta: &Propuesta,
 ) -> Resultado<(PathBuf, PathBuf)> {
-    let dir_poda = carpeta_trabajo
-        .join(".gestor")
+    let dir_poda = super::carpetas::carpeta_del_gestor(carpeta_trabajo)
         .join("candidatos")
         .join("poda");
     std::fs::create_dir_all(&dir_poda).map_err(|causa| Error::Escritura {

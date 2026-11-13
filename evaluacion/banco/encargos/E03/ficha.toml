@@ -1,0 +1,71 @@
+id = "E03"
+titulo = "Rust: expandir una cadena de rangos"
+familia = "oficio"
+entrega = "rangos.rs"
+colocar_en = "src/rangos.rs"
+herramientas = ["rust"]
+
+[compilar]
+orden = "cargo build --quiet --tests"
+
+[[comprobaciones]]
+nombre = "caso_basico_del_enunciado"
+orden = "cargo test --quiet --test adversarias -- --exact caso_basico_del_enunciado"
+
+[[comprobaciones]]
+nombre = "un_numero_suelto"
+orden = "cargo test --quiet --test adversarias -- --exact un_numero_suelto"
+
+[[comprobaciones]]
+nombre = "rango_de_un_solo_elemento"
+orden = "cargo test --quiet --test adversarias -- --exact rango_de_un_solo_elemento"
+
+[[comprobaciones]]
+nombre = "rechaza_la_cadena_vacia"
+orden = "cargo test --quiet --test adversarias -- --exact rechaza_la_cadena_vacia"
+
+[[comprobaciones]]
+nombre = "rechaza_un_rango_invertido"
+orden = "cargo test --quiet --test adversarias -- --exact rechaza_un_rango_invertido"
+
+[[comprobaciones]]
+nombre = "rechaza_un_numero_no_valido"
+orden = "cargo test --quiet --test adversarias -- --exact rechaza_un_numero_no_valido"
+
+[[comprobaciones]]
+nombre = "rechaza_separadores_sobrantes"
+orden = "cargo test --quiet --test adversarias -- --exact rechaza_separadores_sobrantes"
+
+[[comprobaciones]]
+nombre = "un_numero_que_no_cabe_en_u32_es_un_error_y_no_un_panico"
+orden = "cargo test --quiet --test adversarias -- --exact un_numero_que_no_cabe_en_u32_es_un_error_y_no_un_panico"
+
+[[comprobaciones]]
+nombre = "el_error_dice_donde_fallo"
+orden = "cargo test --quiet --test adversarias -- --exact el_error_dice_donde_fallo"
+
+[[comprobaciones]]
+nombre = "sus_propias_pruebas_pasan"
+orden = "cargo test --quiet --lib"
+
+[[texto]]
+nombre = "sin unwrap fuera de las pruebas"
+patron = ".unwrap()"
+maximo = 0
+antes_de = "#[cfg(test)]"
+
+[[texto]]
+nombre = "sin expect fuera de las pruebas"
+patron = ".expect("
+maximo = 0
+antes_de = "#[cfg(test)]"
+
+[[texto]]
+nombre = "ErrorRango es un enum propio"
+patron = "enum ErrorRango"
+minimo = 1
+
+[[texto]]
+nombre = "al menos cinco pruebas"
+patron = "#[test]"
+minimo = 5

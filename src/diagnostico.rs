@@ -24,7 +24,7 @@ pub struct DatosReunidos {
     /// modelo declarado.
     pub encaje: String,
     /// Las capas que de verdad se van a pedir a `llama-server` (`resolucion.capas`), para quien
-    /// quiera registrar el historial de encaje (INC-N07) sin tener que volver a calcularlas ni
+    /// quiera registrar el historial de encaje sin tener que volver a calcularlas ni
     /// extraerlas del texto del aviso. `None` cuando no hay modelo declarado: no hay nada que
     /// registrar.
     pub capas_en_gpu: Option<u32>,

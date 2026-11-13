@@ -1,6 +1,6 @@
 //! Estado comprobable del arnés en cada sondeo.
 //!
-//! **Por qué este módulo.** El informe de NatureLand (incidencia C1) documentó el coste de un
+//! **Por qué este módulo.** El uso real documentó el coste de un
 //! arnés mudo: a las 10:35 quien dirigía concluyó que Programator estaba parado porque `lectura.json`
 //! no se tocaba desde las 09:34. Era falso: los ficheros solo cambiaban cuando el arnés actuaba, no
 //! cuando sondeaba. El duplicado resultante hubo que retirarlo a mano doce minutos después.
@@ -169,8 +169,8 @@ impl Latido {
             ruta: ruta.to_path_buf(),
             causa,
         })?;
-        let latido = serde_json::from_str(&texto)
-            .map_err(|e| Error::Configuracion(format!("{ruta:?} está corrupto: {e}")))?;
+        let latido =
+            serde_json::from_str(&texto).map_err(|e| super::lectura::fichero_corrupto(ruta, &e))?;
         Ok(Some(latido))
     }
 
@@ -217,7 +217,8 @@ pub fn advertencia_escritura_fallida(error: &Error) -> String {
 
 /// Formatea una fecha y hora local con el patrón estándar ISO sin microsegundos.
 fn formatear_marca_tiempo(dt: DateTime<Local>) -> String {
-    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+    dt.format(super::canal::FORMATO_DE_LA_HORA_DEL_LATIDO)
+        .to_string()
 }
 
 /// Calcula el par (marca de tiempo actual, próximo sondeo) a partir de una marca de tiempo base

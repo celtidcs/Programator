@@ -6,7 +6,7 @@ delante, y (más adelante) un modelo real cargado en GPU. No forman parte de `ca
 ## Antes de empezar
 
 1. Necesitas el binario `llama-server.exe` y el fichero `.gguf` del modelo descargados en tu
-   máquina (solo hacen falta para las pruebas de la sección «Pendientes de la Tarea 16»; las
+   máquina (solo hacen falta para las pruebas de la sección «Pendientes (requieren GPU)»; las
    pruebas A, B y C de aquí abajo no requieren GPU).
 2. **Copia `programator.ejemplo.toml` a `programator.toml`, en la misma carpeta que
    `programator.exe`.** Sin este fichero, Programator no arranca: falla nombrando la ruta que
@@ -98,7 +98,7 @@ configurados, porque es la única forma de ver el encaje calculado contra hardwa
    código de salida 2 (`echo $LASTEXITCODE` en PowerShell tras ejecutarlo).
 4. **`programator.exe --diagnostico`**, con `programator.toml` apuntando a la carpeta portable (el
    binario de `llama-server` con CUDA y el Devstral real en `[motor]`).
-   **Qué tiene que ver el Director:** `--diagnostico` **no abre ningún diálogo**, tenga o no fijada
+   **Qué tiene que verse:** `--diagnostico` **no abre ningún diálogo**, tenga o no fijada
    `[carpeta] ruta` en el TOML: la consola imprime el informe completo directamente y nada de bucle
    detrás (el programa termina solo, sin esperar Ctrl+C), con estas cinco líneas:
    - `Carpeta de trabajo:` con la ruta fijada en el TOML, o, si no la tiene, el texto que dice que no
@@ -156,7 +156,7 @@ dedicada en la máquina, así que no forma parte de la suite normal.
 
 ---
 
-## Pendientes de la Tarea 16 (requieren GPU; no ejecutables hoy)
+## Pendientes (requieren GPU)
 
 Las siguientes tres pruebas están documentadas para no perder el criterio de aceptación original. El
 ciclo que necesitan ya está encadenado —`programator.exe` arranca `llama-server` y llama al modelo
@@ -185,10 +185,12 @@ cambia.
 
 ### 2. Un ciclo completo sobre una copia del canal
 
-1. Copia `.gestor/canal/` de MMCelt a una carpeta de pruebas.
-2. Añade a `codex.md` una sección `## Para Programator` con un encargo sencillo.
+1. Copia el `.gestor/canal/` de un proyecto real a una carpeta de pruebas.
+2. Añade a `codex.md` una intervención nueva, `LATIDO: <fecha y hora>` y debajo una línea
+   `Para Programator: <un encargo sencillo>`.
 3. Ejecuta Programator sobre esa carpeta.
-4. Comprueba en `programator.md` que la respuesta lleva `LATIDO:` y `LEÍDO:`.
+4. Comprueba en `programator.md` que la respuesta empieza con `LATIDO: AAAA-MM-DD HH:MM:SS`, sin
+   negrita, y lleva `LEÍDO:`. Si el modelo reservó algo, la línea ya no está en `estado.md`.
 5. Comprueba con una huella SHA-256 que `codex.md` y `claude.md` **no han cambiado**.
 
 ### 3. Coste por ciclo
@@ -244,7 +246,7 @@ configuración de la 0.5.0, 18,4 t/s con la de la 0.6.0, y 23,0 t/s con las 40 c
 
 ## Prueba G — el primer encargo de la sesión se atiende solo
 
-**Por qué existe.** Es el defecto INC-04, y ninguna prueba automática puede cubrirlo: hace falta un
+**Por qué existe.** Es un defecto que ya se dio, y ninguna prueba automática puede cubrirlo: hace falta un
 motor de verdad tardando de verdad en cargar. Hasta la 0.7.1, **el primer encargo de cada sesión se
 quedaba colgado para siempre** si nadie volvía a escribir en el canal.
 
@@ -253,7 +255,8 @@ se trata de que Programator arranque el suyo y lo pille cargando.
 
 **Paso 2.** Arrancar `portable\programator.exe` y esperar a ver el informe de arranque.
 
-**Paso 3.** Publicar **un solo encargo** en el canal, como sección nueva `## Para Programator: …`.
+**Paso 3.** Publicar **un solo encargo** en el canal, en una intervención nueva con su línea
+`Para Programator: …`.
 
 **Paso 4.** No tocar nada más. Ni el canal, ni los ficheros, nada.
 
@@ -268,7 +271,7 @@ Encargos atendidos: 1 (fallos al publicar: 0).
 ```
 
 **La línea que importa es la cuarta.** Si tras «todavía está cargando» no aparece nada más y el
-programa se queda mudo, INC-04 ha vuelto.
+programa se queda mudo, el defecto ha vuelto.
 
 ---
 
@@ -276,7 +279,7 @@ programa se queda mudo, INC-04 ha vuelto.
 
 **Por qué existe.** Ninguna prueba automática puede comprobar que el arnés no ensucia un repositorio
 ajeno ni que arranca sin una persona delante: hacen falta una carpeta de proyecto de verdad y dos
-arranques seguidos. Es lo que falló la jornada entera del 23/09/2026 en NatureLand.
+arranques seguidos. Es lo que falló la jornada entera del 23/09/2026 en uso real.
 
 **Paso 0, y no se salta.** Copiar el ejecutable recién compilado sobre el portable:
 
@@ -324,14 +327,241 @@ comprobador configurado. Cuando entregue, su buzón debe decir «⚠️ SIN COMP
 configurado para «.xx»», nombrando la extensión. Si dice «sin verificar», la 0.9.0 ha retrocedido.
 
 **Paso 7 — no rompe lo que ya estaba.** En una carpeta que ya tenga su `PROGRAMATOR.md` **en la
-raíz** (MMCelt lo tiene), arrancar y comprobar que ese fichero **se sigue usando, no se modifica y
+raíz**, arrancar y comprobar que ese fichero **se sigue usando, no se modifica y
 no se crea un segundo** en `.gestor\programator\`.
 
 ---
 
-### Aviso para quien implemente la Tarea 16: el cierre con Ctrl+C puede no bastar
+## Prueba I — el banco de modelos mide lo que dice
 
-`ServidorLocal` (Tarea 14, `src/motor/proceso.rs`) mata a `llama-server` en su `Drop`, pero **`Drop`
+**Por qué existe.** Las pruebas automáticas del banco pasan los encargos con un motor de mentira y
+lanzan las pruebas ocultas contra un lanzador de mentira. Solo esta prueba junta el banco con el
+motor real, con las pruebas ocultas de verdad y con una persona que puntúa a mano.
+
+**Antes de nada, dónde.** Esta prueba ocupa la tarjeta durante horas y ejecuta código del modelo
+en el equipo donde corre Programator: Programator no usa ninguna otra máquina. Conviene hacerla
+en una máquina de pruebas, nunca en el equipo de uso diario, y dejarla limpia al acabar.
+
+**Paso 0 — binario nuevo y configuración.** Como en la prueba H, copiar el ejecutable recién
+compilado sobre el portable. Copiar `evaluacion\banco\banco.ejemplo.toml` a
+`evaluacion\banco\banco.toml` y descomentar la sección `[comprobacion_local]`, con los `nombres`
+que pida ese sistema. Comprobar con `--diagnostico` que el modelo cabe entero en la VRAM libre: si
+no cabe, la velocidad medida no sirve de referencia.
+
+**Paso 1 — la tanda.** Desde la raíz del repositorio:
+
+```
+portable\programator.exe --banco evaluacion\banco
+```
+
+Antes de empezar debe decir cuántos encargos y semillas va a pasar, cuánto calcula que tardará y
+que el código del modelo se ejecutará en este equipo, dentro de la carpeta `comprobacion` de la
+tanda. No pide ninguna autorización. Mientras dura, una línea por encargo.
+
+**Paso 1b — si fallan las pruebas ocultas, no se repite la tanda.** Si la fase 2 falla, el banco
+tiene que decir dónde está `pasadas.toml` y con qué orden se termina. Lanzar esa orden
+(`--banco-comprobar <tanda>`): no carga el modelo, y las notas que deja son las mismas que habría
+dejado la tanda completa. Pasó dos veces el 12/11/2026, cuando las pruebas iban todavía a una
+máquina aparte; las dos se terminaron así, sin repetir los 42 minutos de tarjeta.
+
+**Paso 2 — el equipo queda como estaba.** Al terminar, `comprobacion\` ya no existe dentro de la
+tanda, y el `informe.md` dice si quedó algo fuera de ella.
+
+**Paso 3 — las notas de oficio son las de una persona.** Escoger dos encargos de oficio y una
+semilla. Copiar a mano su carpeta `trabajo\<id>-semilla-<s>-pruebas` a una carpeta aparte (y
+borrarla después), compilar y pasar las pruebas como lo haría una persona, y comparar con
+`comprobaciones_superadas` y `comprobaciones_total` del `resultados.toml`. Tienen que coincidir.
+
+**Paso 4 — las rúbricas.** Abrir los ficheros de `rubricas\`, puntuarlos según la rúbrica de cada
+uno y rehacer el informe:
+
+```
+portable\programator.exe --banco-informe evaluacion\banco\resultados\<tanda>\resultados.toml
+```
+
+El aviso de rúbricas pendientes tiene que desaparecer del `informe.md` y aparecer la media de
+criterio.
+
+**Paso 5 — repetible.** Fijar `capas_gpu` en `banco.toml` y pasar una segunda tanda con la misma
+orden y la misma configuración. Después:
+
+```
+portable\programator.exe --banco-comparar evaluacion\banco\resultados\<tanda-1> evaluacion\banco\resultados\<tanda-2>
+```
+
+Tiene que decir **«✅ Las dos tandas son repetición una de otra»**, con todas las pasadas
+idénticas. Si dice que no son comparables, el motivo va primero (otras capas, otra versión…). Si
+alguna pasada se separa, nombra la vuelta: se abren las dos conversaciones de esa pasada en
+`trabajo/<id>-semilla-<s>/.gestor/programator/` y se mira qué cambió antes de comparar modelos. La
+excepción declarada es una pasada cortada por el tiempo máximo, que depende del reloj y sale
+marcada.
+
+**Paso 6 — el registro de modelos.** Con todas las rúbricas de una tanda puntuadas:
+
+```
+portable\programator.exe --registro-anotar evaluacion\banco\resultados\<tanda>
+```
+
+Tiene que decir **«✅ Anotado en …registro-de-modelos.toml»**, con el modelo, la tarjeta y las
+notas de las tres familias, que tienen que coincidir con las del `informe.md` de la tanda.
+Repetir la orden tiene que decir que sustituye a la entrada anterior y que ninguna cifra cambia.
+Con una tanda anterior al 12/11/2026 tiene que negarse, porque no guarda la tarjeta.
+
+Después se arranca Programator sobre una carpeta de prueba y se abre
+`.gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md`. La sección «En qué acierta y en qué no, medido»
+tiene que traer la tabla del registro, con la fecha y la tarjeta de la tanda, y no nombrar
+el proyecto privado en que se midió al principio. Con otro contexto en `programator.toml` que el de la tanda, tiene que llevar el aviso
+«Ojo».
+
+---
+
+## Prueba J — la comprobación local, sin máquina aparte
+
+**Por qué existe.** Las pruebas automáticas de la comprobación local usan un lanzador de mentira y
+no ejecutan más que un `echo`. Solo esta prueba ejecuta el código del modelo con bash, las
+herramientas de verdad y las variables que desvían las cachés, y mira si queda algo fuera.
+
+**Nunca en el equipo de uso diario.** Se ejecuta código del modelo sin revisar. Se hace en una
+máquina Windows de pruebas, que se deja limpia al acabar.
+
+**Paso 0 — lo que hay.** En la máquina de pruebas: el ejecutable, `evaluacion\banco\encargos\`, una tanda ya pasada
+con su `resultados.toml`, `pasadas.toml` y `trabajo\`, y un `banco.toml` con
+`[comprobacion_local]` descomentada (de `banco.ejemplo.toml`) y los `nombres` que pida ese Windows.
+Anotar qué herramientas hay: bash de Git for Windows, Python, Node, .NET, Lua, SQLite y Rust.
+
+**Paso 1 — sin la sección no ejecuta nada.** Con `[comprobacion_local]` comentada,
+`programator --banco-comprobar <tanda>` termina sin crear `comprobacion\`, y las notas de oficio
+salen «no evaluado». Con una sección `[comprobacion]` de las de antes, se niega a arrancar y dice
+que se cambie por `[comprobacion_local]`.
+
+**Paso 2 — la comprobación.** Con `[comprobacion_local]` descomentada, y sin pedir autorización
+(ejecutar en el equipo donde corre es para lo que nació Programator):
+
+```
+programator --banco-comprobar <tanda>
+```
+
+Tiene que decir que comprueba en este equipo y en qué carpeta, y avisar de las herramientas que no
+responden. Al terminar:
+
+- `comprobacion\` ya no existe dentro de la tanda;
+- el `informe.md` dice «en el equipo que pasó la tanda (windows)» y que fuera no quedó rastro, o
+  lista lo que quedó;
+- las notas de oficio coinciden, herramienta a herramienta, con las de la misma tanda comprobada en
+  una máquina Linux de pruebas. Si alguna no coincide, se explica antes de dar la prueba por buena.
+
+**Paso 3 — el bash de WSL se rechaza.** Si la máquina tiene WSL, poner en `interprete` el `bash.exe` de
+`System32`: tiene que negarse y explicar por qué.
+
+**Hecha el 12/11/2026 en una máquina Windows de pruebas.** Las 51 notas coinciden con las de Linux,
+sin rastro fuera. El paso 3 no se pudo hacer porque la máquina no tenía WSL. Lo que conviene saber
+para repetirla:
+
+- Un Windows recién instalado no trae Git, Node, .NET, Lua ni SQLite.
+  - Sin el bash de Git no empieza.
+  - Sin las demás, sus encargos salen «no evaluado».
+  - Se pueden instalar con winget, y al terminar se deja la máquina como estaba.
+- En ese Windows hacen falta `python3 = "python"` y `"lua5.4" = "lua"` en
+  `[comprobacion_local.nombres]`.
+- Si una nota no coincide con la de Linux, se mira primero si la entrega es la misma y si algo se
+  compiló fuera de la copia de la entrega. Así se encontró la carpeta común de cargo, que dejaba a
+  una entrega heredar lo compilado para otra.
+
+### El aislamiento (mejoras del 12/11/2026)
+
+Las mismas reglas: en máquinas de pruebas, nunca en el equipo de uso diario, y cada una devuelta
+a su estado limpio al acabar.
+
+**Paso 4 — la etiqueta y la tabla funcionan.** En la máquina Windows de pruebas, desde la raíz del repositorio:
+
+```
+cargo test --test aislamiento_windows -- --ignored
+```
+
+Un proceso de integridad baja no puede escribir en una carpeta normal y sí en una marcada. Y la
+tabla de conexiones ve la de un proceso del Job a un servidor de la prueba en `127.0.0.1`.
+
+**Paso 5 — aislado, las mismas notas.** El paso 2 con el `banco.toml` de antes, que no escribe
+`aislamiento`, así que va con `integridad_baja`. Las 51 notas tienen que coincidir con las de Linux,
+sin rastro fuera, y el informe tiene que decir cómo se aisló. Si una herramienta falla por el
+aislamiento, se busca qué escribe y dónde, se desvía a la carpeta de la tanda con su variable, y se
+repite. Las dudas de partida: dotnet y el registro de usuario, npm y `%APPDATA%\npm`, y el estado
+del bash de Git.
+
+**Paso 6 — escribir fuera falla, y el árbol muere entero.** Con una ficha de prueba, que solo
+existe para esta aceptación:
+
+- una orden que crea un fichero en `%USERPROFILE%` y otro en `C:\` tiene que fallar las dos veces;
+- una orden que deja un hijo colgado (`sleep 600 &` y luego `sleep 600`), con un
+  `tiempo_maximo_comprobacion_segundos` corto: al vencer no queda ningún proceso de ese árbol en el
+  Administrador de tareas.
+
+**Paso 7 — un intento de red hace fallar el paso.** Una comprobación con
+`curl https://example.com`, otra que lo hace sin proxy (`curl --noproxy '*' https://example.com`)
+y otra con `python -c "import urllib.request; urllib.request.urlopen('https://example.com')"`. Las
+tres cuentan como fallidas aunque salieran con 0. La terminal lo dice al terminar la semilla, con
+el encargo y la semilla, una vez y sin repetir destinos, y el informe añade «cuenta como
+fallida». En la misma tanda, E04 y E06 tienen que descargar en `[preparar]` sin que nada salga
+anotado: sus notas, como en Linux.
+
+**Paso 8 — Linux, sin red.** En una máquina Linux de pruebas, con `[comprobacion_local]`: las 51 notas, y una orden con `curl` que no llega a la red. Si la máquina prohíbe los
+espacios de nombres de usuario, el mensaje tiene que explicarlo y decir que existe
+`aislamiento = "ninguno"`.
+
+---
+
+## Prueba K — la revisión de modelos, autónoma, de la búsqueda al informe
+
+**Por qué existe.** Las pruebas automáticas de la revisión usan un catálogo falso, un taller falso
+y una mesa falsa. Solo esta prueba habla con Hugging Face de verdad, baja un modelo entero, suelta
+el motor, pasa el banco, cambia (o no) el modelo por defecto y lo retira. Sigue
+`plantillas/revision-mensual.md`.
+
+**En el portable de uso real, y sin pedir permisos.** Quien dirige abre los dos y lee el
+informe. Las pruebas ocultas de las tandas se ejecutan en ese mismo equipo, el único
+que usa Programator, sin autorización de ninguna clase.
+
+**Paso 0 — lo que hay.** Copiar el ejecutable nuevo al portable. En el
+`programator.toml` del portable, `buzones_que_ordenan = ["claude"]`; en `banco/banco.toml`,
+`[comprobacion_local]`. Si el `programator.toml` aún trae `maquina_autorizada` u otra clave de la
+máquina en `[revision]`, Programator arranca igual y avisa de cada una. Anotar el modelo en uso y
+qué hay en `modelos/`.
+
+**Paso 1 — quien dirige abre los dos.** Programator sobre la carpeta del portable y el modelo de
+pago sobre la misma carpeta. Le pide al de pago que mire si hay modelos mejores.
+
+**Paso 2 — buscar.** El de pago deja `revisión: buscar`. Programator, sin cargar el motor, publica
+cuántos candidatos hay y dónde está `candidatos.md`. Un `revisión: buscar` desde otro buzón se
+rechaza con su motivo.
+
+**Paso 3 — probar.** El de pago elige y pide `revisión: probar`. Tiene que:
+
+- soltar el motor propio antes del banco (en el administrador de tareas, un solo
+  `llama-server`, el del banco);
+- negarse con un candidato que no está en la lista, y seguir con el siguiente;
+- si las pruebas ocultas de un candidato fallan, dejarlo «sin comprobar» con su motivo, sin
+  esperar ni reintentar, para que el `cerrar` lo vuelva a intentar;
+- publicar cómo quedó cada candidato y las rúbricas que puntuar;
+- con un encargo normal después, arrancar otra vez el motor con el modelo por defecto.
+
+**Paso 4 — puntuar y cerrar.** Un `revisión: cerrar` con rúbricas sin nota no hace nada y las
+lista. Puntuadas, el cierre anota el registro, aplica la regla y lo publica. Si el modelo por
+defecto no gana nada, `programator.toml` cambia `[motor] modelo` y conserva los comentarios, el
+ciclo lo dice en la terminal, y el siguiente encargo arranca el nuevo.
+
+**Paso 5 — la retirada.** Para verla sin tocar los modelos de verdad: un `.gguf` falso dentro de
+`modelos/`, con una entrada de registro que no gane nada. El cierre lo anota con su motivo y lo
+borra.
+
+**Paso 6 — el informe.** El de pago deja `revisiones/AAAA-MM/informe.md` y lo resume en su buzón.
+Quien dirige lo lee y no ha tenido que autorizar nada.
+
+
+---
+
+### Aviso: el cierre con Ctrl+C puede no bastar
+
+`ServidorLocal` (`src/motor/proceso.rs`) mata a `llama-server` en su `Drop`, pero **`Drop`
 solo se ejecuta si el proceso termina de forma ordenada** (la función `main` devuelve, o hay un
 `panic!` con *unwind*). En Windows, si se detiene un programa de consola con **Ctrl+C** y el
 programa no ha registrado su propio manejador de consola, el comportamiento por defecto del sistema
@@ -340,4 +570,4 @@ manejador de Ctrl+C (ni la crate `ctrlc` ni un manejador de consola propio) — 
 `Cargo.toml` y todo `src/`, no aparece ninguno —, así que **cerrar Programator con Ctrl+C podría
 dejar `llama-server` huérfano** en cuanto exista esa integración. La Prueba 1 de arriba debe
 repetirse cerrando específicamente con Ctrl+C, no solo cerrando la ventana de la consola, antes de
-dar la Tarea 16 por buena.
+darla por buena.

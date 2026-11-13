@@ -317,6 +317,67 @@ fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio) {
 }
 
 #[test]
+fn la_verificacion_trabaja_dentro_de_la_carpeta_del_proyecto_y_no_deja_nada() {
+    // Nada fuera de la carpeta de trabajo. Hasta el 12/11/2026 el
+    // comprobador corría en el temporal del sistema, y sus propios temporales también iban allí.
+    let (dir, repertorio) = repertorio_de_prueba();
+    let mut comprobadores = Comprobadores::new();
+    comprobadores.insert(
+        "rs".to_string(),
+        crate::plataforma::ordenes_de_prueba::donde_trabaja_y_sus_temporales(),
+    );
+    let mut r = repertorio.con_verificacion(comprobadores, Duration::from_secs(10));
+
+    let decision = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "a.rs", "contenido": "fn a() {}"}),
+    ));
+
+    let Decision::Concedida(texto) = decision else {
+        panic!("{decision:?}");
+    };
+    let espacio = crate::plataforma::sin_prefijo_extendido(&dir.path().canonicalize().unwrap())
+        .join(".gestor")
+        .join("programator");
+    let lineas: Vec<&str> = texto
+        .lines()
+        .filter(|l| l.contains("verificacion-"))
+        .collect();
+    assert_eq!(
+        lineas.len(),
+        3,
+        "el directorio de trabajo y las dos variables de temporales: {texto}"
+    );
+    for linea in lineas {
+        let ruta = std::path::Path::new(linea.trim());
+        assert!(
+            ruta.starts_with(&espacio),
+            "{} no está en {}",
+            ruta.display(),
+            espacio.display()
+        );
+    }
+    let restos = std::fs::read_dir(&espacio)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("verificacion-"))
+        .count();
+    assert_eq!(restos, 0, "la carpeta de verificación se borra al terminar");
+}
+
+#[test]
+fn sin_prefijo_extendido_deja_la_ruta_absoluta_y_quita_solo_el_prefijo() {
+    assert_eq!(
+        crate::plataforma::sin_prefijo_extendido(std::path::Path::new(r"\\?\C:\proyecto")),
+        std::path::PathBuf::from(r"C:\proyecto")
+    );
+    assert_eq!(
+        crate::plataforma::sin_prefijo_extendido(std::path::Path::new("/home/x")),
+        std::path::PathBuf::from("/home/x")
+    );
+}
+
+#[test]
 fn una_propuesta_que_no_compila_se_escribe_igual_pero_se_dice() {
     // El defecto que esta puerta cierra: en la evaluación del 22/09/2026 el modelo publicó dos
     // veces que había entregado la solución y las dos veces el fichero no ejecutaba.
@@ -464,6 +525,21 @@ fn publicar_no_escribe_todavia_sino_que_deja_el_cuerpo_pendiente() {
     ));
 
     assert_eq!(r.pendiente_de_publicar(), Some("el cuerpo"));
+}
+
+#[test]
+fn tomar_el_cuerpo_pendiente_lo_deja_vacio() {
+    let (_dir, mut r) = repertorio_de_prueba();
+    r.atender(&solicitar(
+        "publicar",
+        serde_json::json!({"texto": "el cuerpo"}),
+    ));
+
+    assert_eq!(
+        r.tomar_pendiente_de_publicar().as_deref(),
+        Some("el cuerpo")
+    );
+    assert_eq!(r.pendiente_de_publicar(), None);
 }
 
 #[test]
@@ -636,6 +712,31 @@ fn reservar_dentro_del_ambito_anota_la_ruta_relativa_no_la_absoluta() {
 }
 
 #[test]
+fn reservar_escribe_la_linea_del_canal_con_la_hora_del_sistema() {
+    let (dir, mut r) = repertorio_de_prueba();
+
+    r.atender(&solicitar(
+        "reservar",
+        serde_json::json!({"ruta": "src/main.rs", "motivo": "voy a tocarlo"}),
+    ));
+
+    let contenido = std::fs::read_to_string(dir.path().join(".gestor/canal/estado.md")).unwrap();
+    let linea = contenido
+        .lines()
+        .find(|l| l.contains("src/main.rs"))
+        .expect("la reserva debe estar en estado.md");
+    let resto = linea
+        .strip_prefix("- Programator, ")
+        .expect("empieza por el agente y una coma");
+    let (cuando, tras_la_hora) = resto.split_at("AAAA-MM-DD HH:MM".len());
+    assert!(
+        chrono::NaiveDateTime::parse_from_str(cuando, "%Y-%m-%d %H:%M").is_ok(),
+        "la hora va como AAAA-MM-DD HH:MM: {linea}"
+    );
+    assert_eq!(tras_la_hora, ": src/main.rs — voy a tocarlo");
+}
+
+#[test]
 fn reservar_un_fichero_que_todavia_no_existe_dentro_del_ambito_se_concede() {
     let (_dir, mut r) = repertorio_de_prueba();
 
@@ -649,7 +750,7 @@ fn reservar_un_fichero_que_todavia_no_existe_dentro_del_ambito_se_concede() {
 
 #[test]
 fn escribir_propuesta_publica_entrega_inmediatamente_en_buzon() {
-    // Incidencia C2 de NatureLand: el buzón no puede quedarse mudo mientras la propuesta
+    // Visto en uso real: el buzón no puede quedarse mudo mientras la propuesta
     // ya está en disco y comprobada. Debe quedar publicada de inmediato.
     let (dir, mut r) = repertorio_de_prueba();
     let ruta_buzon = dir.path().join(".gestor/canal/programator.md");

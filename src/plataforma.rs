@@ -34,6 +34,21 @@ pub const EJEMPLO_DE_RUTA: &str = "C:/ruta/a/tu/proyecto";
 #[cfg(not(windows))]
 pub const EJEMPLO_DE_RUTA: &str = "/ruta/a/tu/proyecto";
 
+/// El prefijo con que `canonicalize` marca en Windows las rutas extendidas.
+const PREFIJO_EXTENDIDO: &str = r"\\?\";
+
+/// Una ruta sin el prefijo extendido `\\?\` que añade `canonicalize` en Windows.
+///
+/// Sigue siendo absoluta y válida sin él, y muchos programas no lo digieren: `cmd` no acepta un
+/// directorio de trabajo así, y hay compiladores que no encuentran un fichero escrito de esa forma.
+pub fn sin_prefijo_extendido(ruta: &std::path::Path) -> std::path::PathBuf {
+    let texto = ruta.to_string_lossy();
+    match texto.strip_prefix(PREFIJO_EXTENDIDO) {
+        Some(resto) => std::path::PathBuf::from(resto),
+        None => ruta.to_path_buf(),
+    }
+}
+
 /// Órdenes de consola equivalentes en cada sistema, para las pruebas que necesitan un
 /// comprobador de mentira.
 ///
@@ -66,6 +81,39 @@ pub mod ordenes_de_prueba {
                 "sh".into(),
                 "-c".into(),
                 format!("echo '{texto}'; exit {codigo}"),
+            ]
+        }
+    }
+
+    /// Una orden que escribe el valor de una variable de entorno y termina con 0.
+    pub fn eco_de_variable(nombre: &str) -> Vec<String> {
+        #[cfg(windows)]
+        {
+            vec!["cmd".into(), "/C".into(), format!("echo %{nombre}%")]
+        }
+        #[cfg(not(windows))]
+        {
+            vec!["sh".into(), "-c".into(), format!("echo \"${nombre}\"")]
+        }
+    }
+
+    /// Una orden que escribe su directorio de trabajo y su carpeta de temporales, y falla para que
+    /// la puerta devuelva esa salida.
+    pub fn donde_trabaja_y_sus_temporales() -> Vec<String> {
+        #[cfg(windows)]
+        {
+            vec![
+                "cmd".into(),
+                "/C".into(),
+                "cd & echo %TEMP% & echo %TMP% & exit 1".into(),
+            ]
+        }
+        #[cfg(not(windows))]
+        {
+            vec![
+                "sh".into(),
+                "-c".into(),
+                "pwd; echo \"$TMPDIR\"; echo \"$TMPDIR\"; exit 1".into(),
             ]
         }
     }

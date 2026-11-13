@@ -5,13 +5,17 @@
 //! para firmar, aprobar o aceptar: el §1.1 del protocolo dice que nada se da por bueno porque lo
 //! diga quien lo hizo, y Programator no puede violarlo porque no dispone del verbo.
 
-mod auditoria;
+pub mod auditoria;
 mod candidatos;
 mod error;
 mod lectura;
 
 use self::auditoria::corregir_lineas_de_auditoria;
 use self::candidatos::siguiente_libre;
+
+/// Donde quedan las entregas de `escribir_propuesta`, relativo a la carpeta de trabajo. Lo usan
+/// también quienes recogen esas entregas, como el banco de modelos.
+pub const CARPETA_DE_CANDIDATOS: &str = ".gestor/candidatos/programator";
 use self::error::motivo_para_el_modelo;
 use self::lectura::preparar_lectura;
 use super::verificacion::{verificar, Comprobadores, Veredicto};
@@ -102,6 +106,10 @@ pub struct Repertorio {
     leido: ResumenLeido,
     /// Cuántos veredictos ya han sido publicados inmediatamente al entregar propuesta.
     veredictos_publicados: usize,
+    /// Las líneas de reserva que el modelo anotó en `estado.md` y siguen puestas. Se quitan al
+    /// cerrar el encargo, publique o no (las reservas del canal se
+    /// borran al terminar la tarea).
+    reservas: Vec<String>,
 }
 
 /// Lo que se espera a un comprobador si el TOML no dice otra cosa.
@@ -123,6 +131,7 @@ impl Repertorio {
             tope_lectura: TOPE_LECTURA_POR_DEFECTO,
             leido: ResumenLeido::vacio(),
             veredictos_publicados: 0,
+            reservas: Vec::new(),
         }
     }
 
@@ -199,6 +208,19 @@ impl Repertorio {
         self.pendiente_de_publicar.as_deref()
     }
 
+    /// Se lleva el cuerpo pendiente para publicarlo, y lo deja vacío.
+    ///
+    /// El repertorio dura toda la pasada. Si el cuerpo se quedara, el encargo siguiente cerraría
+    /// con el `publicar` del anterior en cuanto se le concediera la primera herramienta.
+    /// Las reservas anotadas desde la última vez, que deja de llevar: quien las toma las quita.
+    pub fn tomar_reservas(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.reservas)
+    }
+
+    pub fn tomar_pendiente_de_publicar(&mut self) -> Option<String> {
+        self.pendiente_de_publicar.take()
+    }
+
     /// Atiende una solicitud del modelo.
     pub fn atender(&mut self, solicitud: &SolicitudHerramienta) -> Decision {
         if !nombres_reconocidos().contains(&solicitud.nombre.as_str()) {
@@ -258,10 +280,7 @@ impl Repertorio {
                 if let Some(u) = n.as_u64() {
                     Ok(Some(u as usize))
                 } else {
-                    Err(Decision::Denegada(format!(
-                        "el argumento «{clave}» debe ser un entero positivo. {}",
-                        Self::recordatorio_de_firma(&s.nombre)
-                    )))
+                    Err(Self::no_es_entero_positivo(s, clave))
                 }
             }
             Some(serde_json::Value::String(s_val)) => {
@@ -271,17 +290,19 @@ impl Repertorio {
                 } else if let Ok(u) = limpio.parse::<usize>() {
                     Ok(Some(u))
                 } else {
-                    Err(Decision::Denegada(format!(
-                        "el argumento «{clave}» debe ser un entero positivo. {}",
-                        Self::recordatorio_de_firma(&s.nombre)
-                    )))
+                    Err(Self::no_es_entero_positivo(s, clave))
                 }
             }
-            Some(_) => Err(Decision::Denegada(format!(
-                "el argumento «{clave}» debe ser un entero positivo. {}",
-                Self::recordatorio_de_firma(&s.nombre)
-            ))),
+            Some(_) => Err(Self::no_es_entero_positivo(s, clave)),
         }
+    }
+
+    /// La denegación de un argumento de línea que no es un entero positivo, con la firma del verbo.
+    fn no_es_entero_positivo(s: &SolicitudHerramienta, clave: &str) -> Decision {
+        Decision::Denegada(format!(
+            "el argumento «{clave}» debe ser un entero positivo. {}",
+            Self::recordatorio_de_firma(&s.nombre)
+        ))
     }
 
     /// La firma del verbo y para qué sirve cada argumento, en una frase.
@@ -387,7 +408,7 @@ impl Repertorio {
             Err(d) => return d,
         };
         // Corrige, línea a línea, la cita de un hallazgo de auditoría contra el fichero real
-        // (INC-N08 e INC-N10 de NatureLand). No toca nada que no tenga la forma exacta del
+        // (visto en uso real). No toca nada que no tenga la forma exacta del
         // formato formal: un texto sin auditorías sale idéntico.
         let texto = corregir_lineas_de_auditoria(&texto, &self.ambito);
         self.pendiente_de_publicar = Some(texto);
@@ -404,26 +425,19 @@ impl Repertorio {
             Err(d) => return d,
         };
 
-        let relativa = format!(".gestor/candidatos/programator/{nombre}");
+        let relativa = format!("{CARPETA_DE_CANDIDATOS}/{nombre}");
         let resuelta = match self.ambito.resolver(&relativa) {
             Ok(r) => r,
             Err(e) => return Decision::Denegada(motivo_para_el_modelo(nombre, &e)),
         };
 
         // Doble cinturón: además del ámbito, la ruta debe seguir bajo el directorio de candidatos.
-        let permitido = match self.ambito.resolver(".gestor/candidatos/programator") {
+        let permitido = match self.ambito.resolver(CARPETA_DE_CANDIDATOS) {
             Ok(p) => p,
-            Err(e) => {
-                return Decision::Denegada(motivo_para_el_modelo(
-                    ".gestor/candidatos/programator",
-                    &e,
-                ))
-            }
+            Err(e) => return Decision::Denegada(motivo_para_el_modelo(CARPETA_DE_CANDIDATOS, &e)),
         };
         if !resuelta.starts_with(&permitido) {
-            return Decision::Denegada(format!(
-                "«{nombre}» saldría de .gestor/candidatos/programator/"
-            ));
+            return Decision::Denegada(format!("«{nombre}» saldría de {CARPETA_DE_CANDIDATOS}/"));
         }
 
         // **Nunca se borra una entrega anterior.** Si el nombre ya está ocupado se busca el
@@ -459,8 +473,8 @@ impl Repertorio {
         self.propuestas.push(nombre_real.clone());
         self.veredictos.push(veredicto_canal.clone());
 
-        // Publicar de inmediato en el buzón al entregar la propuesta (incidencia C2 de NatureLand)
-        let ahora = crate::protocolo::marca_de_tiempo_actual();
+        // Publicar de inmediato en el buzón al entregar la propuesta (visto en uso real)
+        let ahora = crate::protocolo::marca_del_latido();
         if let Err(e) =
             self.canal
                 .publicar_entrega(&nombre_real, &veredicto_canal, &self.leido, &ahora)
@@ -481,9 +495,11 @@ impl Repertorio {
 
     /// Pasa la propuesta por el comprobador de su extensión, si hay alguno configurado.
     ///
-    /// El trabajo se hace en un directorio temporal: comprobadores como `rustc --emit=metadata`
-    /// dejan artefactos, y el canal no es sitio para ellos. Si ni siquiera se puede crear ese
-    /// directorio, no se verifica y se dice: **quedarse sin comprobar nunca puede tumbar un
+    /// El trabajo se hace en una carpeta propia y vacía, `.gestor/<agente>/verificacion-<marca>/`,
+    /// que se borra al terminar: comprobadores como `rustc --emit=metadata` dejan artefactos, y el
+    /// canal no es sitio para ellos. Va dentro de la carpeta de trabajo, y no en el temporal del
+    /// sistema, porque Programator no escribe fuera del proyecto en el que trabaja. Si ni siquiera
+    /// se puede crear, no se verifica y se dice: **quedarse sin comprobar nunca puede tumbar un
     /// encargo**.
     fn verificar_propuesta(&self, fichero: &Path) -> Veredicto {
         if self.comprobadores.is_empty() {
@@ -498,14 +514,19 @@ impl Repertorio {
         // Directorio temporal propio en vez de `tempfile`: esa crate está en las dependencias de
         // desarrollo y meterla en producción por esto no compensa, cuando lo que hace falta es una
         // carpeta vacía con nombre único.
-        let temporal = std::env::temp_dir().join(format!(
-            "programator-verificacion-{}-{}",
+        let marca = format!(
+            "{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or_default()
-        ));
+        );
+        let temporal = crate::arnes::espacio::carpeta_de_verificacion(
+            &crate::plataforma::sin_prefijo_extendido(self.ambito.raiz()),
+            self.canal.yo(),
+            &marca,
+        );
         if let Err(e) = std::fs::create_dir_all(&temporal) {
             return Veredicto::NoSePudo {
                 motivo: format!("no se pudo preparar un directorio de trabajo: {e}"),
@@ -525,7 +546,7 @@ impl Repertorio {
         veredicto
     }
 
-    fn reservar(&self, s: &SolicitudHerramienta) -> Decision {
+    fn reservar(&mut self, s: &SolicitudHerramienta) -> Decision {
         let ruta = match self.argumento(s, "ruta") {
             Ok(r) => r,
             Err(d) => return d,
@@ -544,13 +565,22 @@ impl Repertorio {
             return Decision::Denegada(motivo_para_el_modelo(ruta, &e));
         }
 
-        match crate::protocolo::anotar_reserva(
-            &self.canal.ruta_estado(),
-            "Programator",
+        let cuando = crate::protocolo::marca_de_tiempo_actual();
+        let reserva = crate::protocolo::estado::Reserva {
+            agente: self.canal.yo(),
+            cuando: &cuando,
             ruta,
             motivo,
-        ) {
-            Ok(()) => Decision::Concedida("reserva anotada en estado.md".to_string()),
+        };
+        match crate::protocolo::anotar_reserva(&self.canal.ruta_estado(), &reserva) {
+            Ok(linea) => {
+                if !self.reservas.contains(&linea) {
+                    self.reservas.push(linea);
+                }
+                Decision::Concedida(
+                    "reserva anotada en estado.md; se quita sola al cerrar el encargo".to_string(),
+                )
+            }
             // Por la misma razón que arriba: el error lleva la ruta absoluta de `estado.md` y esa
             // ruta no puede acabar en el canal si el modelo cita la denegación.
             Err(e) => Decision::Denegada(motivo_para_el_modelo(ruta, &e)),

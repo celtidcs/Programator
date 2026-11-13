@@ -6,11 +6,13 @@ use crate::error::{Error, Resultado};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub mod modelo_por_defecto;
+
 /// Cuántas capas del modelo se piden a la GPU.
 ///
 /// `"auto"` deja que Programator lo calcule a partir de la VRAM libre y del peso real del modelo;
-/// un número se transcribe a `--n-gpu-layers` **sin discutir**. El Director pidió máximo control
-/// sobre el motor, y eso incluye el derecho a equivocarse a sabiendas sobre su propia tarjeta: lo
+/// un número se transcribe a `--n-gpu-layers` **sin discutir**. Quien lo configura tiene el máximo
+/// control sobre el motor, y eso incluye el derecho a equivocarse a sabiendas sobre su propia tarjeta: lo
 /// que está escrito en el TOML es lo que recibe `llama-server`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CapasGpu {
@@ -50,7 +52,10 @@ impl<'de> Deserialize<'de> for CapasGpu {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// El fichero de configuración, que vive junto al ejecutable.
+pub const NOMBRE_DEL_FICHERO_DE_CONFIGURACION: &str = "programator.toml";
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub carpeta: Carpeta,
@@ -67,11 +72,17 @@ pub struct Config {
     pub muestreo: Muestreo,
     #[serde(default)]
     pub actualizaciones: Actualizaciones,
+    /// La revisión mensual de modelos.
+    #[serde(default)]
+    pub revision: crate::revision::config::ConfigRevision,
     #[serde(skip)]
     base: PathBuf,
+    /// Lo que conviene decir al arrancar sobre el propio fichero: claves que ya no valen.
+    #[serde(skip)]
+    avisos: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Carpeta {
     /// Si falta, Programator la pide al arrancar con un diálogo nativo.
     pub ruta: Option<String>,
@@ -101,7 +112,7 @@ pub(crate) const fn preguntar_siempre_por_defecto() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Agente {
     pub nombre: String,
     pub buzon: String,
@@ -135,28 +146,23 @@ pub struct Agente {
     /// sus límites, no sería fiable, que es justo lo que se necesita de un aviso de límites.
     #[serde(default = "guia_por_defecto")]
     pub guia: String,
-    /// El fragmento con las cifras de desempeño medidas que se interpola en la guía. Por defecto:
-    /// "plantillas/desempeno-medido.md".
-    #[serde(default = "desempeno_por_defecto")]
-    pub desempeno: String,
-    /// Prefijos de ficheros del canal que no son buzones de nadie: los históricos que genera este
-    /// proyecto al archivar. Vacío deja los de por defecto de Programator: `"historico-"` y
-    /// `"histórico-"`.
-    ///
-    /// **Va a configuración y no incrustado porque el nombre del histórico lo elige el proyecto
-    /// anfitrión, no el arnés.** Medido el 23/09/2026: sin este filtro, archivar un encargo lo
-    /// vuelve a encargar, porque el histórico se queda dentro de la carpeta que el arnés sondea y
-    /// conserva su encabezado `## Para Programator`.
+    /// El registro de modelos: lo que el banco midió de cada modelo, que la guía cuenta al agente
+    /// de pago. Lo escribe `--registro-anotar`. Por defecto: "registro-de-modelos.toml".
+    #[serde(default = "registro_de_modelos_por_defecto")]
+    pub registro_de_modelos: String,
+    /// Si cada encargo deja en `.gestor/<agente>/` la conversación con el modelo, vuelta a vuelta.
+    /// Por defecto, no: lleva el contenido de los ficheros del proyecto. El banco de modelos lo
+    /// activa siempre, porque sin él no se puede saber por qué un modelo hizo lo que hizo.
     #[serde(default)]
-    pub prefijos_ignorados: Vec<String>,
+    pub registro_de_conversacion: bool,
 }
 
 fn guia_por_defecto() -> String {
     "plantillas/como-encargar-a-programator.md".to_string()
 }
 
-fn desempeno_por_defecto() -> String {
-    "plantillas/desempeno-medido.md".to_string()
+fn registro_de_modelos_por_defecto() -> String {
+    "registro-de-modelos.toml".to_string()
 }
 
 fn recordatorio_por_defecto() -> String {
@@ -176,8 +182,8 @@ impl Default for Agente {
             preambulo: preambulo_por_defecto(),
             recordatorio: recordatorio_por_defecto(),
             guia: guia_por_defecto(),
-            desempeno: desempeno_por_defecto(),
-            prefijos_ignorados: Vec::new(),
+            registro_de_modelos: registro_de_modelos_por_defecto(),
+            registro_de_conversacion: false,
         }
     }
 }
@@ -193,7 +199,7 @@ impl Default for Agente {
 /// confinado.
 ///
 /// Sin esta sección no se verifica nada y el comportamiento es el de siempre.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Verificacion {
     /// Extensión (sin punto) → la orden que la comprueba. `{fichero}` se sustituye por la ruta.
     ///
@@ -225,7 +231,7 @@ impl Default for Verificacion {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MotorConfig {
     pub binario: Option<String>,
     pub modelo: Option<String>,
@@ -235,9 +241,9 @@ pub struct MotorConfig {
     pub contexto: u32,
     #[serde(default)]
     pub capas_gpu: CapasGpu,
-    /// VRAM que **no** se reparte en capas: cubre el contexto de CUDA, los búferes de cómputo y el
-    /// desfase entre el presupuesto que ve Programator y el que verá `llama-server`, que es otro
-    /// proceso. Conservador a propósito: quedarse corto cuesta unas capas en CPU, que se nota como
+    /// VRAM que **no** se reparte en capas: cubre el contexto de CUDA, los búferes de cómputo y lo
+    /// que cambie en la tarjeta entre la medida y la carga. Por defecto,
+    /// [`MARGEN_VRAM_POR_DEFECTO_MIB`]. Quedarse corto cuesta unas capas en CPU, que se nota como
     /// lentitud; pasarse cuesta un arranque abortado o una paginación de VRAM que parece un cuelgue.
     #[serde(default = "margen_por_defecto")]
     pub margen_vram_mib: u64,
@@ -253,6 +259,11 @@ pub struct MotorConfig {
     /// una.
     #[serde(default = "paralelo_por_defecto")]
     pub paralelo: u32,
+    /// Si cada conversación nueva se calcula sin la caché de prefijos de `llama-server`. Con la
+    /// caché, la respuesta depende de lo que se le pidió antes al servidor, y la misma petición deja
+    /// de dar lo mismo (`motor::continuidad`). Dentro de una conversación se sigue aprovechando.
+    #[serde(default = "empezar_en_frio_por_defecto")]
+    pub empezar_en_frio: bool,
     /// A partir de qué porcentaje de la ventana se avisa de que la conversación va justa. Por
     /// defecto: 70.
     #[serde(default = "umbral_contexto_por_defecto")]
@@ -271,6 +282,17 @@ pub struct MotorConfig {
     pub tiempo_escritura_segundos: u64,
 }
 
+impl MotorConfig {
+    /// El nombre del modelo configurado: el de su fichero sin carpeta ni extensión, que es como
+    /// lo nombran la tanda y el registro.
+    pub fn nombre_del_modelo(&self) -> Option<String> {
+        self.modelo
+            .as_deref()
+            .and_then(|ruta| Path::new(ruta).file_stem())
+            .map(|nombre| nombre.to_string_lossy().into_owned())
+    }
+}
+
 fn puerto_por_defecto() -> u16 {
     8080
 }
@@ -284,8 +306,18 @@ fn contexto_por_defecto() -> u32 {
 fn paralelo_por_defecto() -> u32 {
     1
 }
+/// Activado: es lo que hace que la misma prueba dé el mismo resultado. Cuesta reprocesar las instrucciones y el encargo una vez por conversación.
+pub fn empezar_en_frio_por_defecto() -> bool {
+    true
+}
+/// Margen de VRAM por defecto, en MiB. Fue 1024 mientras la medida de Windows (DXGI) exageraba la
+/// memoria libre en alrededor de 1 GiB. Desde el 12/11/2026 se mide toda la tarjeta, y el encaje
+/// queda solo entre 100 y 170 MiB por debajo de lo que ocupa de verdad `llama-server` (tanda del
+/// banco 2026-11-12-1219). Por eso se bajó a 512 ese mismo día.
+pub const MARGEN_VRAM_POR_DEFECTO_MIB: u64 = 512;
+
 fn margen_por_defecto() -> u64 {
-    1024
+    MARGEN_VRAM_POR_DEFECTO_MIB
 }
 fn cache_por_defecto() -> String {
     "q8_0".to_string()
@@ -305,7 +337,7 @@ pub(crate) const fn tiempo_escritura_motor_segundos_por_defecto() -> u64 {
     60
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Ciclo {
     #[serde(default = "intervalo_por_defecto")]
     pub intervalo_segundos: u64,
@@ -395,7 +427,7 @@ impl Default for Ciclo {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Poda {
     /// A partir de cuántas líneas activas conviene proponer la poda de un buzón.
     ///
@@ -421,8 +453,8 @@ impl Default for Poda {
 /// Parámetros de muestreo que se mandan al modelo en cada petición.
 ///
 /// Lo que figura aquí es lo que recibe el modelo: no se omite ninguno, para que no queden
-/// valores ocultos decididos por el servidor. La semilla es la excepción, y su ausencia
-/// significa «que el servidor elija una al azar».
+/// valores ocultos decididos por el servidor. Tampoco la semilla: va siempre fija, y por eso la
+/// misma petición da siempre la misma respuesta.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Muestreo {
     #[serde(default = "temperatura_por_defecto")]
@@ -435,9 +467,11 @@ pub struct Muestreo {
     pub min_p: f32,
     #[serde(default = "penalizacion_repeticion_por_defecto")]
     pub penalizacion_repeticion: f32,
-    /// Semilla fija, para respuestas reproducibles. Ausente: la elige el servidor.
-    #[serde(default)]
-    pub semilla: Option<i64>,
+    /// Semilla del sorteo de tokens. **Siempre fija**: sin ella, el servidor elige una al azar en
+    /// cada petición y pedir dos veces lo mismo da dos respuestas distintas.
+    /// La variación solo entra cuando alguien la pide, cambiando este número.
+    #[serde(default = "semilla_por_defecto")]
+    pub semilla: i64,
 }
 
 fn temperatura_por_defecto() -> f32 {
@@ -456,6 +490,14 @@ fn penalizacion_repeticion_por_defecto() -> f32 {
     1.0
 }
 
+/// La semilla de la evaluación del 22/09/2026, que es también la primera del banco: así una
+/// tanda con la semilla por defecto se puede comparar con el uso normal.
+pub const SEMILLA_POR_DEFECTO: i64 = 42;
+
+fn semilla_por_defecto() -> i64 {
+    SEMILLA_POR_DEFECTO
+}
+
 impl Default for Muestreo {
     fn default() -> Self {
         Self {
@@ -464,7 +506,7 @@ impl Default for Muestreo {
             top_p: top_p_por_defecto(),
             min_p: min_p_por_defecto(),
             penalizacion_repeticion: penalizacion_repeticion_por_defecto(),
-            semilla: None,
+            semilla: semilla_por_defecto(),
         }
     }
 }
@@ -472,8 +514,8 @@ impl Default for Muestreo {
 /// Comprobación, puramente informativa, de si hay una versión más nueva publicada en GitHub.
 ///
 /// No descarga nada, no actualiza nada y no puede fallar el arranque: solo avisa en consola si hay
-/// una versión más nueva que la instalada (INC-N05 del Director, 2026-10-01).
-#[derive(Debug, Deserialize)]
+/// una versión más nueva que la instalada.
+#[derive(Debug, Clone, Deserialize)]
 pub struct Actualizaciones {
     /// Si Programator comprueba, al arrancar, si hay una versión más nueva en GitHub. Por
     /// defecto: `true`.
@@ -511,6 +553,94 @@ impl Default for Actualizaciones {
     }
 }
 
+/// Una clave que `programator.toml` admitía y ya no vale. Si el fichero la trae, no se lee: se
+/// quita antes de interpretarlo y se avisa al arrancar. Un TOML con una clave que nadie lee se
+/// cargaría sin decir nada, y quien la puso creería que vale; y en una sección que rechaza las
+/// claves desconocidas, el programa no arrancaría por una línea que ya no significa nada.
+struct ClaveRetirada {
+    seccion: &'static str,
+    clave: &'static str,
+    /// Por qué ya no vale y qué pasa ahora en su lugar.
+    porque: &'static str,
+    que_hacer: &'static str,
+}
+
+/// Las claves retiradas, cada una con la orden que la quitó.
+const CLAVES_RETIRADAS: [ClaveRetirada; 4] = [
+    // Retirada el 13/11/2026: los históricos del canal son dos prefijos fijos.
+    ClaveRetirada {
+        seccion: "agente",
+        clave: "prefijos_ignorados",
+        porque: "Los históricos del canal son los ficheros que empiezan por «historico-» o \
+                 «histórico-», y ningún otro.",
+        que_hacer: "quita esa línea; si tu proyecto archiva con otro prefijo, renómbralo a uno de \
+                    esos dos.",
+    },
+    // Retirada el 13/11/2026: Programator nunca usa otra máquina, solo la GPU del
+    // equipo donde corre, y ejecutar ahí no necesita autorización.
+    ClaveRetirada {
+        seccion: "revision",
+        clave: "maquina_autorizada",
+        porque: "Programator ya no usa otra máquina: las tandas de la revisión se comprueban en \
+                 este equipo, sin autorización, salvo que el banco.toml de la carpeta del banco \
+                 apague las pruebas ocultas con «activa = false» en [comprobacion_local].",
+        que_hacer: "quita esa línea; las tandas se comprueban solas en este equipo.",
+    },
+    ClaveRetirada {
+        seccion: "revision",
+        clave: "reintentar_maquina_cada_segundos",
+        porque: "Ya no hay una máquina de comprobación a la que esperar: se comprueba en este \
+                 equipo.",
+        que_hacer: "quita esa línea.",
+    },
+    ClaveRetirada {
+        seccion: "revision",
+        clave: "esperar_maquina_como_mucho_minutos",
+        porque: "Ya no hay una máquina de comprobación a la que esperar: se comprueba en este \
+                 equipo.",
+        que_hacer: "quita esa línea.",
+    },
+];
+
+/// Quita de `tabla` las claves retiradas que traiga y devuelve un aviso por cada una.
+fn quitar_claves_retiradas(tabla: &mut toml::Table) -> Vec<String> {
+    CLAVES_RETIRADAS
+        .iter()
+        .filter(|retirada| {
+            tabla
+                .get_mut(retirada.seccion)
+                .and_then(toml::Value::as_table_mut)
+                .and_then(|seccion| seccion.remove(retirada.clave))
+                .is_some()
+        })
+        .map(aviso_de_clave_retirada)
+        .collect()
+}
+
+fn aviso_de_clave_retirada(retirada: &ClaveRetirada) -> String {
+    format!(
+        "⚠️ programator.toml trae «[{}] {}», que ya no vale.\n\
+         Consecuencia: no se tiene en cuenta. {}\n\
+         Qué hacer: {}",
+        retirada.seccion, retirada.clave, retirada.porque, retirada.que_hacer
+    )
+}
+
+/// Interpreta el texto de `programator.toml` sin las claves retiradas, con sus avisos.
+///
+/// Sin claves retiradas se interpreta el texto tal cual, que es lo que da los errores con su línea;
+/// solo si hay alguna se interpreta la tabla ya sin ella.
+fn interpretar_sin_claves_retiradas(texto: &str) -> Result<(Config, Vec<String>), toml::de::Error> {
+    let mut tabla: toml::Table = texto.parse()?;
+    let avisos = quitar_claves_retiradas(&mut tabla);
+    let config = if avisos.is_empty() {
+        toml::from_str(texto)?
+    } else {
+        toml::Value::Table(tabla).try_into()?
+    };
+    Ok((config, avisos))
+}
+
 impl Config {
     /// Carga la configuración y valida que estén los campos sin valor razonable por defecto.
     pub fn cargar(ruta: &Path) -> Resultado<Self> {
@@ -519,7 +649,7 @@ impl Config {
             causa,
         })?;
 
-        let mut config: Config = toml::from_str(&texto)
+        let (mut config, avisos) = interpretar_sin_claves_retiradas(&texto)
             .map_err(|e| Error::Configuracion(format!("{ruta:?} no se pudo interpretar: {e}")))?;
 
         if config.motor.modelo.is_none() {
@@ -531,7 +661,7 @@ impl Config {
 
         // Suelo del intervalo de sondeo. Un `0` explícito en el TOML pasaría la carga sin quejarse
         // y el bucle de `main` giraría a máxima velocidad: un núcleo al 100% releyendo el canal
-        // entero sin pausa, sobre una unidad de Google Drive. El fichero lo edita el Director a
+        // entero sin pausa, sobre una unidad de Google Drive. El fichero lo edita el usuario a
         // mano, así que el error es plausible y el arnés no puede permitirse confiar en que no
         // ocurra. Un segundo es tan absurdamente corto como se quiera, pero no quema la máquina.
         if config.ciclo.intervalo_segundos < INTERVALO_MINIMO_SEGUNDOS {
@@ -545,12 +675,29 @@ impl Config {
             config.motor.paralelo = 1;
         }
 
+        config.avisos = avisos;
+
         config.base = ruta
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
 
         Ok(config)
+    }
+
+    /// Lo que conviene decir al arrancar sobre el fichero: claves que ya no valen.
+    pub fn avisos(&self) -> &[String] {
+        &self.avisos
+    }
+
+    /// La misma configuración con `modelo` en lugar de `[motor] modelo`, si se pide alguno. Es lo
+    /// que hace `--modelo`: cambia el modelo de una ejecución sin tocar el TOML, y se resuelve
+    /// igual que el del TOML, contra la carpeta de este.
+    pub fn con_modelo(mut self, modelo: Option<&str>) -> Self {
+        if let Some(modelo) = modelo {
+            self.motor.modelo = Some(modelo.to_string());
+        }
+        self
     }
 
     /// Resuelve una ruta relativa contra el directorio del fichero de configuración.
@@ -583,7 +730,7 @@ mod pruebas {
             dir.path(),
             r#"
 [carpeta]
-ruta = "C:/proyectos/mmcelt"
+ruta = "C:/proyectos/mi-proyecto"
 
 [agente]
 nombre = "Programator"
@@ -618,6 +765,60 @@ modelo = "modelos/devstral.gguf"
         assert_eq!(config.ciclo.espera_reintento_motor_segundos, 5);
         assert_eq!(config.ciclo.max_denegaciones_seguidas, 2);
         assert_eq!(config.poda.umbral_lineas, 80);
+    }
+
+    #[test]
+    fn la_revision_del_ejemplo_es_la_de_por_defecto() {
+        let ejemplo: Config = toml::from_str(include_str!("../programator.ejemplo.toml")).unwrap();
+        assert_eq!(
+            ejemplo.revision,
+            crate::revision::config::ConfigRevision::default()
+        );
+    }
+
+    #[test]
+    fn sin_seccion_de_revision_valen_los_valores_por_defecto() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"m.gguf\"\n");
+        let config = Config::cargar(&ruta).unwrap();
+        assert_eq!(
+            config.revision,
+            crate::revision::config::ConfigRevision::default()
+        );
+    }
+
+    #[test]
+    fn el_modelo_pedido_sustituye_al_del_toml_y_se_resuelve_igual() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"m.gguf\"\n");
+        let config = Config::cargar(&ruta).unwrap();
+
+        let igual = config.clone().con_modelo(None);
+        assert_eq!(igual.motor.modelo.as_deref(), Some("m.gguf"));
+
+        let otra = config.con_modelo(Some("otros/n.gguf"));
+        assert_eq!(otra.motor.modelo.as_deref(), Some("otros/n.gguf"));
+        assert_eq!(
+            otra.resolver("otros/n.gguf"),
+            dir.path().join("otros/n.gguf")
+        );
+    }
+
+    #[test]
+    fn el_nombre_del_modelo_es_el_del_fichero_sin_carpeta_ni_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\nmodelo = \"modelos/devstral-Q4_K_M.gguf\"\n",
+        );
+        let config = Config::cargar(&ruta).unwrap();
+        assert_eq!(
+            config.motor.nombre_del_modelo().as_deref(),
+            Some("devstral-Q4_K_M")
+        );
+        let mut sin_modelo = config.motor.clone();
+        sin_modelo.modelo = None;
+        assert_eq!(sin_modelo.nombre_del_modelo(), None);
     }
 
     #[test]
@@ -771,7 +972,7 @@ paralelo = 0
 
         assert_eq!(
             config.ciclo.intervalo_segundos, 5,
-            "el suelo no puede pisar un valor que el Director eligió a conciencia"
+            "el suelo no puede pisar un valor que el usuario eligió a conciencia"
         );
     }
 
@@ -811,7 +1012,6 @@ paralelo = 0
         assert!((config.muestreo.top_p - 0.95).abs() < f32::EPSILON);
         assert!((config.muestreo.min_p - 0.05).abs() < f32::EPSILON);
         assert!((config.muestreo.penalizacion_repeticion - 1.0).abs() < f32::EPSILON);
-        assert_eq!(config.muestreo.semilla, None);
     }
 
     #[test]
@@ -826,7 +1026,7 @@ modelo = "modelos/x.gguf"
 [muestreo]
 temperatura = 0.7
 top_k = 64
-semilla = 42
+semilla = 7
 "#,
         );
 
@@ -834,10 +1034,58 @@ semilla = 42
 
         assert!((config.muestreo.temperatura - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.muestreo.top_k, 64);
-        assert_eq!(config.muestreo.semilla, Some(42));
+        assert_eq!(config.muestreo.semilla, 7);
         assert!((config.muestreo.top_p - 0.95).abs() < f32::EPSILON);
         assert!((config.muestreo.min_p - 0.05).abs() < f32::EPSILON);
         assert!((config.muestreo.penalizacion_repeticion - 1.0).abs() < f32::EPSILON);
+    }
+
+    // Sustituye a la aserción `semilla == None` del contrato anterior, retirado el
+    // 12/11/2026: sin semilla en el TOML ya no decide el servidor, se usa la fija.
+    #[test]
+    fn sin_semilla_en_el_toml_se_usa_la_semilla_por_defecto() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\n\
+             modelo = \"modelos/x.gguf\"\n\
+             [muestreo]\n",
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.muestreo.semilla, SEMILLA_POR_DEFECTO);
+    }
+
+    #[test]
+    fn sin_ruta_del_registro_se_usa_la_de_junto_al_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\n\
+             modelo = \"modelos/x.gguf\"\n",
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(
+            config.agente.registro_de_modelos,
+            "registro-de-modelos.toml"
+        );
+    }
+
+    #[test]
+    fn una_semilla_que_no_es_entera_no_se_acepta() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\n\
+             modelo = \"modelos/x.gguf\"\n\
+             [muestreo]\n\
+             semilla = \"aleatoria\"\n",
+        );
+
+        assert!(Config::cargar(&ruta).is_err());
     }
 
     #[test]
@@ -855,7 +1103,10 @@ capas_gpu = "auto"
         let config = Config::cargar(&ruta).unwrap();
 
         assert_eq!(config.motor.capas_gpu, CapasGpu::Auto);
-        assert_eq!(config.motor.margen_vram_mib, 1024, "margen por defecto");
+        assert_eq!(
+            config.motor.margen_vram_mib, MARGEN_VRAM_POR_DEFECTO_MIB,
+            "margen por defecto"
+        );
     }
 
     #[test]
@@ -928,7 +1179,7 @@ capas_gpu = "maximas"
         // Un decimal no es ni número entero (Crudo::Numero) ni cadena (Crudo::Palabra): serde
         // agota las variantes de Crudo antes de llegar a nuestro match, así que sin intercepción
         // el mensaje sería el genérico de serde con el nombre del enum interno («Crudo») en
-        // inglés, en un fichero que el Director edita a mano.
+        // inglés, en un fichero que el usuario edita a mano.
         let dir = tempfile::tempdir().unwrap();
         let ruta = escribir(
             dir.path(),
@@ -999,5 +1250,81 @@ fichero_latido = "estado_arnes.json"
             config_personalizada.ciclo.fichero_latido,
             "estado_arnes.json"
         );
+    }
+
+    const MINIMA: &str = r#"
+[carpeta]
+ruta = "C:/proyectos/mi-proyecto"
+
+[agente]
+nombre = "Programator"
+buzon = ".gestor/canal/programator.md"
+plantilla_normas = "plantillas/instrucciones-del-proyecto.md"
+
+[motor]
+binario = "herramientas/llama-server.exe"
+modelo = "modelos/devstral.gguf"
+"#;
+
+    #[test]
+    fn la_clave_de_los_prefijos_ya_no_vale_y_lo_avisa() {
+        let dir = tempfile::tempdir().unwrap();
+        let con_la_clave = MINIMA.replace(
+            "nombre = \"Programator\"",
+            "nombre = \"Programator\"\nprefijos_ignorados = [\"archivado-\"]",
+        );
+        let ruta = escribir(dir.path(), &con_la_clave);
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.avisos().len(), 1);
+        assert!(config.avisos()[0].contains("[agente] prefijos_ignorados"));
+        assert!(config.avisos()[0].contains("historico-"));
+    }
+
+    #[test]
+    fn las_claves_de_la_maquina_de_la_revision_ya_no_valen_y_no_impiden_arrancar() {
+        // [revision] rechaza las claves desconocidas: sin quitarlas antes, un programator.toml
+        // de antes del 13/11/2026 no arrancaría.
+        let dir = tempfile::tempdir().unwrap();
+        let con_las_claves = format!(
+            "{MINIMA}\n[revision]\nmaquina_autorizada = \"maquina-linux\"\n\
+             reintentar_maquina_cada_segundos = 300\n\
+             esperar_maquina_como_mucho_minutos = 480\ncandidatos_por_revision = 2\n"
+        );
+        let ruta = escribir(dir.path(), &con_las_claves);
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.revision.candidatos_por_revision, 2);
+        let avisos = config.avisos().join("\n");
+        assert_eq!(config.avisos().len(), 3, "{avisos}");
+        for clave in [
+            "[revision] maquina_autorizada",
+            "[revision] reintentar_maquina_cada_segundos",
+            "[revision] esperar_maquina_como_mucho_minutos",
+        ] {
+            assert!(avisos.contains(clave), "falta «{clave}»:\n{avisos}");
+        }
+        assert!(avisos.contains("[comprobacion_local]"), "{avisos}");
+    }
+
+    #[test]
+    fn una_clave_desconocida_de_la_revision_sigue_siendo_un_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            &format!("{MINIMA}\n[revision]\nmaquina = \"x\"\n"),
+        );
+
+        assert!(Config::cargar(&ruta).is_err());
+    }
+
+    #[test]
+    fn sin_claves_retiradas_no_hay_avisos() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(dir.path(), MINIMA);
+
+        assert!(Config::cargar(&ruta).unwrap().avisos().is_empty());
     }
 }

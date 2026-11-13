@@ -2,7 +2,7 @@
 //! GPU, sin red y en milisegundos.
 
 use super::proceso::EstadoServidor;
-use super::{Mensaje, Motor, Respuesta};
+use super::{Consumo, Mensaje, Motor, Respuesta};
 use crate::error::{Error, Resultado};
 use std::collections::VecDeque;
 
@@ -11,6 +11,8 @@ pub struct MotorDoble {
     ultima: Vec<Mensaje>,
     salud: VecDeque<EstadoServidor>,
     salud_por_defecto: EstadoServidor,
+    consumos: VecDeque<Option<Consumo>>,
+    ultimo_consumo: Option<Consumo>,
 }
 
 impl MotorDoble {
@@ -20,6 +22,8 @@ impl MotorDoble {
             ultima: Vec::new(),
             salud: VecDeque::new(),
             salud_por_defecto: EstadoServidor::Listo,
+            consumos: VecDeque::new(),
+            ultimo_consumo: None,
         }
     }
 
@@ -30,6 +34,8 @@ impl MotorDoble {
             ultima: Vec::new(),
             salud: VecDeque::new(),
             salud_por_defecto: EstadoServidor::Listo,
+            consumos: VecDeque::new(),
+            ultimo_consumo: None,
         }
     }
 
@@ -45,6 +51,12 @@ impl MotorDoble {
         self
     }
 
+    /// Fija el consumo que se da por cada respuesta, en orden. Agotada la lista, `None`.
+    pub fn con_consumos(mut self, consumos: Vec<Option<Consumo>>) -> Self {
+        self.consumos = consumos.into();
+        self
+    }
+
     /// La última conversación que recibió, para comprobar qué se le enseñó al modelo.
     pub fn ultima_conversacion(&self) -> &[Mensaje] {
         &self.ultima
@@ -54,6 +66,7 @@ impl MotorDoble {
 impl Motor for MotorDoble {
     fn responder(&mut self, conversacion: &[Mensaje]) -> Resultado<Respuesta> {
         self.ultima = conversacion.to_vec();
+        self.ultimo_consumo = self.consumos.pop_front().flatten();
         self.guion.pop_front().unwrap_or_else(|| {
             Err(Error::MotorSinRespuesta(
                 "el guion del motor doble se agotó".to_string(),
@@ -63,6 +76,10 @@ impl Motor for MotorDoble {
 
     fn comprobar_salud(&mut self) -> EstadoServidor {
         self.salud.pop_front().unwrap_or(self.salud_por_defecto)
+    }
+
+    fn ultimo_consumo(&self) -> Option<Consumo> {
+        self.ultimo_consumo
     }
 }
 
@@ -83,6 +100,7 @@ mod pruebas {
         let conversacion = vec![Mensaje {
             papel: Papel::Usuario,
             contenido: "Lee src/main.rs".to_string(),
+            llamada: None,
         }];
 
         let primera = motor.responder(&conversacion).unwrap();
@@ -90,6 +108,25 @@ mod pruebas {
 
         assert!(matches!(primera, Respuesta::Herramienta(ref s) if s.nombre == "leer_fichero"));
         assert!(matches!(segunda, Respuesta::Texto(ref t) if t.contains("He leído")));
+    }
+
+    #[test]
+    fn el_consumo_fijado_se_da_respuesta_a_respuesta() {
+        let gasto = Consumo {
+            tokens_generados: Some(5),
+            ..Consumo::default()
+        };
+        let mut motor = MotorDoble::con_guion(vec![
+            Respuesta::Texto("uno".to_string()),
+            Respuesta::Texto("dos".to_string()),
+        ])
+        .con_consumos(vec![Some(gasto)]);
+
+        assert_eq!(motor.ultimo_consumo(), None);
+        motor.responder(&[]).unwrap();
+        assert_eq!(motor.ultimo_consumo(), Some(gasto));
+        motor.responder(&[]).unwrap();
+        assert_eq!(motor.ultimo_consumo(), None);
     }
 
     #[test]
@@ -109,6 +146,7 @@ mod pruebas {
             .responder(&[Mensaje {
                 papel: Papel::Sistema,
                 contenido: "normas de la casa".to_string(),
+                llamada: None,
             }])
             .unwrap();
 

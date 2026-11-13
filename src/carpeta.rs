@@ -41,7 +41,7 @@ impl Origen {
 /// diálogo.
 ///
 /// **Sobre `preguntar_siempre`.** La memoria de la última carpeta se añadió en la 0.9.0 para que el
-/// arnés pudiera reiniciarse sin nadie delante: en NatureLand, el agente que lo dirigía no pudo
+/// arnés pudiera reiniciarse sin nadie delante: en uso real, el agente que lo dirigía no pudo
 /// levantarlo tras un fallo porque el programa se quedaba esperando a que una persona pulsara en una
 /// ventana. Resolvió eso y creó otra molestia, la de no poder cambiar de proyecto sin borrar un
 /// fichero. Esta bandera deja elegir: con ella puesta, la memoria no decide y se pregunta.
@@ -164,7 +164,7 @@ mod pruebas {
 
     #[test]
     fn preguntar_siempre_deja_sin_valor_la_carpeta_recordada() {
-        // La memoria existe y es válida, pero el Director ha pedido que se le pregunte.
+        // La memoria existe y es válida, pero el usuario ha pedido que se le pregunte.
         let decidida = decidir(None, None, Some(Path::new("/memoria")), true);
         assert_eq!(decidida, None);
     }

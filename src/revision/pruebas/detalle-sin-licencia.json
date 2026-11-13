@@ -1,0 +1,41 @@
+{
+  "_id": "66d86db29e955e0e5dedfad5",
+  "id": "MaziyarPanahi/Yi-Coder-1.5B-Chat-GGUF",
+  "lastModified": "2024-09-04T14:38:02.000Z",
+  "downloads": 20223,
+  "tags": [
+    "gguf",
+    "mistral",
+    "quantized",
+    "2-bit",
+    "3-bit",
+    "4-bit",
+    "5-bit",
+    "6-bit",
+    "8-bit",
+    "GGUF",
+    "text-generation",
+    "base_model:01-ai/Yi-Coder-1.5B-Chat",
+    "base_model:quantized:01-ai/Yi-Coder-1.5B-Chat",
+    "region:us",
+    "conversational"
+  ],
+  "cardData": {},
+  "siblings": [
+    {
+      "rfilename": "README.md",
+      "blobId": "13b041642ac031b7422b31029f89a0ba235c5ab4",
+      "size": 2937
+    },
+    {
+      "rfilename": "Yi-Coder-1.5B-Chat.Q4_K_M.gguf",
+      "blobId": "d95ecb83f989265f236e6fa696b069f44f3c1861",
+      "size": 963674304,
+      "lfs": {
+        "sha256": "e2e8fa659cd75c828d7783b5c2fb60d220e08836065901fad8edb48e537c1cec",
+        "size": 963674304,
+        "pointerSize": 134
+      }
+    }
+  ]
+}

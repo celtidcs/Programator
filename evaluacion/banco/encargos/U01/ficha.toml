@@ -1,0 +1,39 @@
+id = "U01"
+titulo = "Auditar formas en un servicio de pedidos de C#"
+familia = "uso"
+clase = "formas"
+auditado = "Pedidos.cs"
+
+# Seis defectos sembrados. Todo lo demás del fichero está limpio a propósito: los demás números
+# tienen nombre en Tarifas y los demás métodos son cortos, para que un hallazgo bien fundado no
+# pueda contar como inventado. Si se toca el fichero, hay que volver a medir estas líneas.
+
+[[defectos]]
+lineas = [44]
+tipo = "HARDCODEO"
+descripcion = "el 0.21m del IVA, suelto"
+
+[[defectos]]
+lineas = [50]
+tipo = "HARDCODEO"
+descripcion = "el umbral de 50m para el envío gratis, suelto"
+
+[[defectos]]
+lineas = [54]
+tipo = "HARDCODEO"
+descripcion = "las tarifas de envío 3.95m y 9.95m y el país \"ES\", sueltos"
+
+[[defectos]]
+lineas = [41, 62]
+tipo = "DUPLICADO"
+descripcion = "el descuento de socio, copiado en TotalConImpuestos y en TotalUrgente"
+
+[[defectos]]
+lineas = [68]
+tipo = "TAMAÑO"
+descripcion = "Validar mezcla validaciones del pedido y de cada línea en un método de más de cincuenta líneas"
+
+[[defectos]]
+lineas = [21, 123]
+tipo = "SOLID"
+descripcion = "ServicioPedidos calcula importes y además escribe un informe en disco"

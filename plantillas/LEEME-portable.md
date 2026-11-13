@@ -104,14 +104,27 @@ Además de las opciones básicas de rutas y modelo, el archivo `programator.toml
 
 - `motor.bytes_por_token`: Número estimado de bytes por cada token de texto, cuyo valor por defecto es 4. Se utiliza para calcular de forma preventiva el espacio ocupado en la ventana de contexto antes de enviar la conversación al motor.
 - `motor.umbral_aviso_contexto`: Porcentaje de la ventana de contexto a partir del cual el arnés emite una advertencia preventiva, establecido por defecto en el 70 por ciento. Permite anticipar un posible desbordamiento de memoria antes de que el motor rechace la petición.
-- `agente.prefijos_ignorados`: Lista de prefijos de archivos dentro del canal que deben descartarse como buzones de entrada, con el valor por defecto de `["historico-", "histórico-"]`. Evita que documentos archivados que contienen encargos antiguos vuelvan a ejecutarse.
-- `agente.desempeno`: Ruta al documento con las cifras de rendimiento medido que se incorporan en la guía de agentes, por defecto `plantillas/desempeno-medido.md`.
+- Los históricos del canal: los archivos que empiezan por `historico-` o `histórico-` no son buzones de nadie, y lo archivado en ellos no se vuelve a atender. Son los del protocolo del canal y no se pueden cambiar; la antigua clave `agente.prefijos_ignorados` ya no vale y, si sigue en tu `programator.toml`, Programator lo avisa al arrancar.
+- `agente.registro_de_modelos`: Ruta al registro de modelos, con lo que el banco midió de cada modelo; la guía de agentes saca de ahí su tabla de lo que el modelo hace bien y mal. Lo escribe `programator --registro-anotar <tanda>`. Por defecto `registro-de-modelos.toml`, junto a `programator.toml`.
 - `ciclo.max_reintentos_motor`: Cantidad máxima de reintentos ante un fallo transitorio de respuesta del motor cuando la comprobación de salud confirma que el proceso sigue vivo, fijada por defecto en 2 reintentos.
 - `ciclo.espera_reintento_motor_segundos`: Tiempo de espera en segundos entre reintentos sucesivos ante sobrecarga de la tarjeta gráfica, por defecto 5 segundos.
 - `ciclo.max_denegaciones_seguidas`: Número máximo de insistencias consecutivas permitidas al modelo en una herramienta denegada antes de abortar el encargo, establecido por defecto en 2 (regla de los dos intentos).
 - `ciclo.tope_lectura_bytes`: Límite máximo de bytes entregados al modelo en una sola operación de lectura de archivo, establecido por defecto en 16.384 bytes para proteger la ventana de contexto.
 - `motor.tiempo_lectura_segundos`: Plazo máximo de espera en segundos para recibir la respuesta del motor, fijado por defecto en 600 segundos (diez minutos).
 - `motor.tiempo_escritura_segundos`: Plazo máximo de espera en segundos para transmitir la solicitud al motor, por defecto 60 segundos.
+
+## El banco de modelos: tus lenguajes y las pruebas ocultas
+
+`programator --banco <carpeta>` mide un modelo local con una colección de encargos. Puedes añadir los lenguajes que te interesen, por ejemplo PHP, sin tocar Programator: se declaran en el `banco.toml` de esa carpeta y se escriben sus encargos. Lo explica, con un ejemplo completo, `Como adaptar el banco de modelos.md`, junto a este LEEME (en el repositorio, en `docs/`).
+
+Para ver si el código del modelo funciona, el banco lo ejecuta en este equipo: son las *pruebas ocultas*, encendidas por defecto, y necesitan los lenguajes de los encargos instalados. Si no lo quieres, apágalas en `banco.toml`:
+
+```toml
+[comprobacion_local]
+activa = false
+```
+
+El modelo escribe igual y su código queda guardado; solo sale «no evaluado» lo que había que ejecutar.
 
 ## Componentes necesarios si la instalación viene sin binarios pesados
 
@@ -139,7 +152,7 @@ Si la aplicación encuentra dificultades durante la ejecución, revisa las sigui
 - El informe inicial muestra la palabra FALTA en el motor o el modelo: Los archivos requeridos no están en `herramientas/` o `modelos/`, o sus nombres no coinciden con los declarados en `programator.toml`.
 - La consola señala SIN CUDA (solo CPU): La versión de `llama-server.exe` instalada carece de la biblioteca `ggml-cuda.dll`. Sin aceleración por hardware, la inferencia se ejecutará en el procesador central con un rendimiento sumamente bajo.
 - Se asignan menos capas a la tarjeta gráfica de las previstas: Reduce el tamaño del parámetro `contexto` en `programator.toml`. La memoria necesaria para retener la conversación compite directamente por la misma VRAM que las capas del modelo.
-- Publicas un encargo en el canal y Programator no responde: Asegúrate de que el encargo está redactado bajo un encabezado formal que comience por `## Para Programator` en el buzón de otro participante. Comprueba asimismo que la publicación se realizó después de que Programator mostrara su aviso de disponibilidad en la terminal o que `latido.json` refleje el estado de reposo.
+- Publicas un encargo en el canal y Programator no responde: Asegúrate de que el encargo está en el buzón de otro participante, en una línea que empiece por `Para Programator` (o bajo un encabezado `## Para Programator`, la forma antigua), y no con Programator solo en copia ni nombrado en medio de una frase. Comprueba asimismo que la publicación se realizó después de que Programator mostrara su aviso de disponibilidad en la terminal o que `latido.json` refleje el estado de reposo.
 - Se notifica que la carpeta de trabajo no existe: Verifica la ruta asignada en el parámetro `--ruta`, en la clave `ruta` del archivo de configuración o en `ultima-carpeta.txt`.
 - Una propuesta de código aparece calificada como SIN COMPROBAR: No se ha configurado ninguna orden de validación para esa extensión en la sección `[verificacion.comprobadores]`. Esto indica que el arnés no ha podido evaluar la sintaxis del archivo, por lo que su validez debe ser comprobada manualmente por el desarrollador.
 - La velocidad de generación es inferior a 12 tokens por segundo: Examina el registro del motor para verificar que el parámetro `n_slots` tiene valor 1. Si se configuran secuencias paralelas innecesarias, la tarjeta consume memoria adicional y fuerza el traslado de capas del modelo a la CPU.

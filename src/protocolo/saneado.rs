@@ -5,6 +5,25 @@
 //! 1. Líneas que pretenden ser marcas del arnés (`**LATIDO:**`, `**LEÍDO:**`)
 //! 2. Saltos de línea que podrían crear líneas adicionales de aspecto legítimo
 
+/// La marca con que empieza cada intervención en un buzón (formato del canal, sin negrita).
+pub const MARCA_DE_LATIDO: &str = "LATIDO:";
+/// La marca de la línea que dice qué se leyó de los demás.
+pub const MARCA_DE_LEIDO: &str = "LEÍDO:";
+/// La forma con negrita que se usaba antes de adoptar el formato actual del canal. Se sigue
+/// reconociendo al leer buzones ajenos y al rotar el propio.
+pub const MARCA_DE_LATIDO_ANTIGUA: &str = "**LATIDO:**";
+/// La forma antigua de la marca de lo leído.
+const MARCA_DE_LEIDO_ANTIGUA: &str = "**LEÍDO:**";
+
+/// Las marcas con que el arnés empieza sus líneas en el buzón, en las dos formas. Ninguna línea
+/// del modelo puede empezar por ellas.
+const MARCAS_DEL_ARNES: [&str; 4] = [
+    MARCA_DE_LATIDO,
+    MARCA_DE_LEIDO,
+    MARCA_DE_LATIDO_ANTIGUA,
+    MARCA_DE_LEIDO_ANTIGUA,
+];
+
 /// Neutraliza saltos de línea y caracteres de retorno, sustituyéndolos por espacios.
 ///
 /// Se aplica a cualquier texto que provenga del modelo y pueda acabar interpolado en una línea
@@ -26,7 +45,10 @@ pub fn neutralizar_marcas(texto: &str) -> String {
         .lines()
         .map(|linea| {
             let recortada = linea.trim();
-            if recortada.starts_with("**LATIDO:**") || recortada.starts_with("**LEÍDO:**") {
+            if MARCAS_DEL_ARNES
+                .iter()
+                .any(|marca| recortada.starts_with(marca))
+            {
                 format!("> {linea}")
             } else {
                 linea.to_string()

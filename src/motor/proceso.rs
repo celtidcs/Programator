@@ -1,7 +1,7 @@
 //! Ciclo de vida de `llama-server`.
 //!
 //! Si ya hay un servidor escuchando en el puerto, se reutiliza y no se mata al terminar: puede ser
-//! del Director. El que arranca Programator sí es suyo, y lo cierra al salir.
+//! del usuario. El que arranca Programator sí es suyo, y lo cierra al salir.
 
 use crate::config::MotorConfig;
 use crate::error::{Error, Resultado};
@@ -267,12 +267,16 @@ fn manejar_cierre_ordenado() {
 /// caminos el servidor arrancado por Programator seguiría sobreviviendo con el modelo cargado en
 /// VRAM. Queda dicho aquí y en el informe de la tarea: esta solución cierra el camino más común
 /// (Ctrl+C en la terminal), no todos los caminos posibles.
+/// El código con que sale Programator tras Ctrl+C: 128 + 2 (SIGINT), la convención de las shells
+/// para «terminado por una interrupción», que es como lo leen los guiones que lo lanzan.
+const CODIGO_DE_SALIDA_POR_CTRL_C: i32 = 130;
+
 pub fn registrar_cierre_ordenado() -> Resultado<()> {
     ctrlc::set_handler(|| {
         manejar_cierre_ordenado();
         // El manejador de `ctrlc` sustituye al de Windows, que por defecto sí termina el proceso;
         // sin esta llamada, Ctrl+C dejaría de cerrar Programator y solo correría esta limpieza.
-        std::process::exit(130);
+        std::process::exit(CODIGO_DE_SALIDA_POR_CTRL_C);
     })
     .map_err(|causa| {
         Error::Configuracion(format!(
@@ -337,6 +341,7 @@ pub fn revisar_motor(binario: &Path) -> MotorInstalado {
 #[derive(Debug)]
 pub struct ServidorLocal {
     hijo: Compartido,
+    capas_gpu: u32,
 }
 
 impl ServidorLocal {
@@ -368,7 +373,15 @@ impl ServidorLocal {
         let compartido: Compartido = Arc::new(Mutex::new(Some(hijo)));
         registrar_para_cierre_ordenado(&compartido);
 
-        Ok(Self { hijo: compartido })
+        Ok(Self {
+            hijo: compartido,
+            capas_gpu,
+        })
+    }
+
+    /// Las capas que se pidieron a la GPU al lanzarlo.
+    pub fn capas_gpu(&self) -> u32 {
+        self.capas_gpu
     }
 }
 
@@ -466,6 +479,7 @@ mod pruebas {
             margen_vram_mib: 1024,
             cache_kv: "q8_0".into(),
             paralelo: 1,
+            empezar_en_frio: true,
             umbral_aviso_contexto: 70,
             bytes_por_token: 4,
             tiempo_lectura_segundos: crate::config::tiempo_lectura_motor_segundos_por_defecto(),

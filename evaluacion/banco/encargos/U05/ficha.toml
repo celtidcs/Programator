@@ -1,0 +1,10 @@
+id = "U05"
+titulo = "Auditar un fichero limpio de Rust"
+familia = "uso"
+clase = "fichero_limpio"
+auditado = "texto.rs"
+
+# Sin defectos sembrados: todo hallazgo cuenta como inventado. El fichero no tiene números, las
+# funciones son cortas y cada una hace una cosa. Antes de cada cambio se comprueba que compila y
+# que clippy no da ningún aviso (cargo clippy -- -D warnings en un paquete con este fichero como
+# lib.rs), porque un aviso real sería un defecto que el modelo tendría razón en señalar.

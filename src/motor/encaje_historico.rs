@@ -1,7 +1,7 @@
 //! El historial acumulativo de cómo se repartió el modelo entre GPU y CPU en cada arranque.
 //!
 //! **Por qué existe.** Cada arranque calcula el encaje y lo imprime una vez en consola, pero hasta
-//! ahora no quedaba registrado en ningún sitio consultable después (INC-N07 de NatureLand). Si un
+//! ahora no quedaba registrado en ningún sitio consultable después (visto en uso real). Si un
 //! arranque reparte peor que el anterior —menos capas en GPU, por ejemplo—, no había forma de saber
 //! si cambió algo real (el contexto configurado, la versión, el margen de seguridad) o si solo
 //! había menos VRAM libre en ese instante por otra razón externa. Una línea por arranque convierte

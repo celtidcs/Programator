@@ -10,14 +10,14 @@
 
 use crate::arnes::herramientas::Repertorio;
 use crate::arnes::sesion::EstadoMotor;
-use crate::config::Config;
+use crate::config::{Config, Muestreo};
 use crate::error::{Error, Resultado};
 use crate::motor::{encaje, hardware, proceso, MotorLlama};
 
 /// Prepara el motor de inferencia para una pasada que ya sabe que tiene al menos un encargo que
-/// atender. Consulta el estado real del puerto configurado y decide, según la Tarea 16.2:
+/// atender. Consulta el estado real del puerto configurado y decide:
 /// - **Listo**: se reutiliza tal cual. No se arranca nada, y no se cierra nunca al terminar: puede
-///   ser del Director.
+///   ser del usuario.
 /// - **Cargando**: se espera al ciclo siguiente. Arrancar otro fallaría contra un puerto ocupado.
 /// - **NoDisponible**: si la configuración trae `motor.binario` y `motor.modelo`, se arranca el
 ///   propio y se conserva vivo en `servidor_local` mientras dure el programa; si no, es un error
@@ -26,10 +26,20 @@ pub fn asegurar_motor_local(
     config: &Config,
     servidor_local: &mut Option<proceso::ServidorLocal>,
 ) -> Resultado<EstadoMotor> {
+    asegurar_motor_con_muestreo(config, &config.muestreo, servidor_local)
+}
+
+/// Igual que [`asegurar_motor_local`], pero con un muestreo dado en vez del de la configuración:
+/// el banco de modelos fija la semilla y la temperatura de cada tanda sin tocar la `Config`.
+pub fn asegurar_motor_con_muestreo(
+    config: &Config,
+    muestreo: &Muestreo,
+    servidor_local: &mut Option<proceso::ServidorLocal>,
+) -> Resultado<EstadoMotor> {
     match proceso::hay_servidor(config.motor.puerto) {
-        proceso::EstadoServidor::Listo => {
-            Ok(EstadoMotor::Disponible(Box::new(construir_motor(config))))
-        }
+        proceso::EstadoServidor::Listo => Ok(EstadoMotor::Disponible(Box::new(construir_motor(
+            config, muestreo,
+        )))),
         proceso::EstadoServidor::Cargando => Ok(EstadoMotor::Esperando),
         proceso::EstadoServidor::NoDisponible => {
             let (Some(binario), Some(modelo)) = (&config.motor.binario, &config.motor.modelo)
@@ -75,7 +85,7 @@ pub fn mensaje_arranque_motor(aviso_encaje: &str) -> String {
     format!("Arrancando el motor — encaje: {aviso_encaje}")
 }
 
-fn construir_motor(config: &Config) -> MotorLlama {
+fn construir_motor(config: &Config, muestreo: &Muestreo) -> MotorLlama {
     let base_url = format!("http://{}:{}", super::HOST_LOCAL, config.motor.puerto);
     let modelo = config.motor.modelo.as_deref().unwrap_or("");
     MotorLlama::nuevo(&base_url, modelo)
@@ -84,7 +94,8 @@ fn construir_motor(config: &Config) -> MotorLlama {
             std::time::Duration::from_secs(config.motor.tiempo_escritura_segundos),
         )
         .con_herramientas(Repertorio::nombres_concedibles())
-        .con_muestreo(config.muestreo.clone())
+        .con_muestreo(muestreo.clone())
+        .con_empezar_en_frio(config.motor.empezar_en_frio)
 }
 
 #[cfg(test)]

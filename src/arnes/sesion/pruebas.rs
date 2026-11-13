@@ -487,7 +487,7 @@ fn un_encargo_abortado_escribe_latido_de_error() {
 
 #[test]
 fn entrega_de_propuesta_publica_en_buzon_antes_de_cerrar_y_no_duplica_al_cierre() {
-    // Criterios Tarea 4 (Incidencia C2 de NatureLand):
+    // Criterios (visto en uso real):
     // 1. Escribir una propuesta deja rastro en el buzón antes de cerrar el encargo.
     // 2. El cierre del encargo sigue publicando su cuerpo.
     // 3. No se duplica el contenido ni los veredictos entre las dos escrituras.
@@ -608,7 +608,7 @@ fn multiples_propuestas_se_publican_al_entregar_y_cierre_no_duplica() {
 }
 
 #[test]
-fn al_cerrar_encargo_se_genera_propuesta_de_poda_y_reserva_en_estado() {
+fn al_cerrar_encargo_se_genera_propuesta_de_poda_sin_dejar_reserva() {
     let (_dir, carpeta) = carpeta_de_prueba();
     sembrar_registro_no_vacio(&carpeta);
     escribir_buzon(
@@ -650,11 +650,12 @@ fn al_cerrar_encargo_se_genera_propuesta_de_poda_y_reserva_en_estado() {
 
     assert!(texto_archivo.contains("Implementa el validador"));
 
-    // 2. Verificar reserva anotada en estado.md
-    let estado = std::fs::read_to_string(carpeta.join(".gestor/canal/estado.md")).unwrap();
+    // 2. La poda no deja reserva: se anotaría y se quitaría en el mismo cierre.
+    let estado =
+        std::fs::read_to_string(carpeta.join(".gestor/canal/estado.md")).unwrap_or_default();
     assert!(
-        estado.contains("- **Programator**: `.gestor/candidatos/poda/claude.md` — propuesta de poda tras cerrar encargo"),
-        "la reserva debe constar en estado.md: {estado}"
+        !estado.contains("Programator"),
+        "no debe quedar ninguna reserva de Programator: {estado}"
     );
 
     // 3. Verificar aviso de poda en la respuesta en el buzón
@@ -733,4 +734,356 @@ fn nueva_pasada_rota_buzon_propio_a_historico_manteniendo_solo_ultimo_latido() {
         texto_hist.contains("Primera tarea completada."),
         "el historial previo debe conservarse en el archivo histórico"
     );
+}
+
+/// Los ficheros de conversación que dejó la pasada en el espacio del agente.
+fn conversaciones_registradas(carpeta: &Path) -> Vec<std::path::PathBuf> {
+    let espacio = crate::arnes::espacio::carpeta_del_agente(carpeta, "Programator");
+    let Ok(entradas) = std::fs::read_dir(espacio) else {
+        return Vec::new();
+    };
+    entradas
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            let nombre = p.file_name().unwrap().to_string_lossy();
+            nombre.starts_with("conversacion-") && nombre.ends_with(".jsonl")
+        })
+        .collect()
+}
+
+fn atender_un_encargo(carpeta: &Path, registro_de_conversacion: bool) {
+    sembrar_registro_no_vacio(carpeta);
+    escribir_buzon(
+        carpeta,
+        "codex.md",
+        "## Para Programator\n\nRevisa las puertas.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Puertas revisadas."}),
+        ),
+        Respuesta::Texto("Listo.".to_string()),
+    ]);
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes {
+        registro_de_conversacion,
+        ..Ajustes::con_limites(&limites, &verificacion)
+    };
+    ejecutar_pasada(carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+}
+
+#[test]
+fn sin_registro_de_conversacion_no_queda_ningun_fichero_de_conversacion() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    atender_un_encargo(&carpeta, false);
+    assert!(conversaciones_registradas(&carpeta).is_empty());
+}
+
+#[test]
+fn con_registro_de_conversacion_queda_cada_vuelta_con_su_respuesta() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    atender_un_encargo(&carpeta, true);
+
+    let ficheros = conversaciones_registradas(&carpeta);
+    assert_eq!(ficheros.len(), 1, "{ficheros:?}");
+    let texto = std::fs::read_to_string(&ficheros[0]).unwrap();
+    let respuestas: Vec<serde_json::Value> = texto
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .filter(|l| l["papel"] == "respuesta")
+        .collect();
+    // `publicar` cierra el encargo: la respuesta «Listo.» del guion no llega a pedirse.
+    assert_eq!(respuestas.len(), 1, "{texto}");
+    assert_eq!(respuestas[0]["herramienta"], "publicar");
+    assert!(
+        texto.contains("Revisa las puertas."),
+        "el encargo debe constar: {texto}"
+    );
+}
+
+/// Un revisor que atiende lo que empieza por «revisión:» y apunta lo que se le pidió.
+#[derive(Default)]
+struct RevisorFalso {
+    atendidos: Vec<(String, String)>,
+}
+
+impl Revisor for RevisorFalso {
+    fn es_suyo(&self, texto: &str) -> bool {
+        texto.trim_start().starts_with("revisión:")
+    }
+    fn atender(&mut self, de: &str, texto: &str) -> String {
+        self.atendidos
+            .push((de.to_string(), texto.trim().to_string()));
+        "Revisión atendida por el arnés.".to_string()
+    }
+}
+
+fn buzon_propio(carpeta: &Path) -> String {
+    std::fs::read_to_string(carpeta.join(".gestor/canal/programator.md")).unwrap()
+}
+
+#[test]
+fn un_encargo_de_revision_no_llega_al_modelo_ni_prepara_el_motor() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "## Para Programator\n\nrevisión: buscar\n",
+    );
+    let llamadas = std::cell::Cell::new(0u32);
+    let mut asegurar_motor = || -> Resultado<EstadoMotor> {
+        llamadas.set(llamadas.get() + 1);
+        Err(Error::Configuracion(
+            "no debía llamarse al motor".to_string(),
+        ))
+    };
+    let mut revisor = RevisorFalso::default();
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion);
+
+    let desenlace = ejecutar_pasada_con_revisor(
+        &carpeta,
+        "Programator",
+        &ajustes,
+        &mut asegurar_motor,
+        &mut revisor,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        desenlace,
+        DesenlacePasada::Atendidos(ResumenPasada { atendidos: 1, .. })
+    ));
+    assert_eq!(llamadas.get(), 0);
+    assert_eq!(
+        revisor.atendidos,
+        [("claude.md".to_string(), "revisión: buscar".to_string())]
+    );
+    assert!(buzon_propio(&carpeta).contains("Revisión atendida por el arnés."));
+
+    let otra = ejecutar_pasada_con_revisor(
+        &carpeta,
+        "Programator",
+        &ajustes,
+        &mut asegurar_motor,
+        &mut revisor,
+    )
+    .unwrap();
+    assert!(
+        matches!(otra, DesenlacePasada::SinEncargos),
+        "el registro avanzó: la revisión no se repite"
+    );
+    assert_eq!(revisor.atendidos.len(), 1);
+}
+
+#[test]
+fn con_un_encargo_normal_y_uno_de_revision_el_modelo_va_primero() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "## Para Programator\n\nrevisión: cerrar\n",
+    );
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nRevisa las puertas.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![pedir(
+        "publicar",
+        serde_json::json!({"texto": "Puertas revisadas por el modelo."}),
+    )]);
+    let mut revisor = RevisorFalso::default();
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+
+    let desenlace = ejecutar_pasada_con_revisor(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&limites, &verificacion),
+        &mut asegurar_motor,
+        &mut revisor,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        desenlace,
+        DesenlacePasada::Atendidos(ResumenPasada { atendidos: 2, .. })
+    ));
+    let buzon = buzon_propio(&carpeta);
+    let del_modelo = buzon.find("Puertas revisadas por el modelo.").unwrap();
+    let de_la_revision = buzon.find("Revisión atendida por el arnés.").unwrap();
+    assert!(del_modelo < de_la_revision, "{buzon}");
+    assert_eq!(revisor.atendidos.len(), 1);
+}
+
+/// `estado.md` con la plantilla del canal y una reserva ajena.
+const ESTADO_CON_RESERVA_AJENA: &str = "# Estado\n\n## Reservas activas\n\n\
+    - Codex, 2026-11-13 10:00: otro.rs — lo suyo\n\n## Mutaciones vivas\n\nNinguna.\n";
+
+/// Atiende un encargo en el que el modelo reserva `src/main.rs` y luego hace lo que diga el resto
+/// del guion; devuelve `estado.md` al acabar la pasada.
+fn estado_tras_un_encargo_que_reserva(resto_del_guion: Vec<Respuesta>) -> String {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    let ruta_estado = carpeta.join(".gestor/canal/estado.md");
+    std::fs::write(&ruta_estado, ESTADO_CON_RESERVA_AJENA).unwrap();
+    escribir_buzon(&carpeta, "codex.md", "## Para Programator\n\nToca main.\n");
+    let mut guion = vec![pedir(
+        "reservar",
+        serde_json::json!({"ruta": "src/main.rs", "motivo": "voy a tocarlo"}),
+    )];
+    guion.extend(resto_del_guion);
+    let mut asegurar_motor = motor_con_guion(guion);
+
+    let desenlace = ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    assert!(matches!(desenlace, DesenlacePasada::Atendidos(_)));
+    std::fs::read_to_string(&ruta_estado).unwrap()
+}
+
+#[test]
+fn la_reserva_de_un_encargo_se_quita_al_cerrarlo_publicando() {
+    let estado = estado_tras_un_encargo_que_reserva(vec![
+        pedir("publicar", serde_json::json!({"texto": "Hecho."})),
+        Respuesta::Texto("Fin.".to_string()),
+    ]);
+
+    assert_eq!(
+        estado, ESTADO_CON_RESERVA_AJENA,
+        "solo se quita la suya; la ajena se queda"
+    );
+}
+
+#[test]
+fn la_reserva_de_un_encargo_se_quita_aunque_se_cierre_sin_publicar() {
+    let estado =
+        estado_tras_un_encargo_que_reserva(vec![Respuesta::Texto("Sin publicar.".to_string())]);
+
+    assert_eq!(estado, ESTADO_CON_RESERVA_AJENA);
+}
+
+#[test]
+fn la_reserva_de_un_encargo_se_quita_aunque_se_aborte() {
+    let estado = estado_tras_un_encargo_que_reserva(vec![
+        pedir("leer_fichero", serde_json::json!({"ruta": "../fuera.txt"})),
+        pedir(
+            "leer_fichero",
+            serde_json::json!({"ruta": "../../otra.txt"}),
+        ),
+    ]);
+
+    assert_eq!(estado, ESTADO_CON_RESERVA_AJENA);
+}
+
+#[test]
+fn mientras_dura_el_encargo_la_reserva_esta_anotada() {
+    // Lo que se quita al cerrar tiene que haber estado puesto: si `reservar` no anotara nada, las
+    // pruebas de arriba pasarían igual.
+    let (dir, carpeta) = carpeta_de_prueba();
+    let ruta_estado = carpeta.join(".gestor/canal/estado.md");
+    std::fs::write(&ruta_estado, ESTADO_CON_RESERVA_AJENA).unwrap();
+    let canal = Canal::nuevo(&carpeta, "Programator").unwrap();
+    let mut repertorio = crate::arnes::herramientas::Repertorio::nuevo(
+        crate::arnes::Ambito::nuevo(&carpeta).unwrap(),
+        canal,
+    );
+
+    repertorio.atender(&SolicitudHerramienta {
+        nombre: "reservar".to_string(),
+        argumentos: serde_json::json!({"ruta": "src/main.rs", "motivo": "voy a tocarlo"}),
+    });
+
+    let durante = std::fs::read_to_string(&ruta_estado).unwrap();
+    let reservas = repertorio.tomar_reservas();
+    assert_eq!(reservas.len(), 1);
+    assert!(durante.lines().any(|l| l == reservas[0]));
+    assert!(
+        repertorio.tomar_reservas().is_empty(),
+        "quien las toma las quita"
+    );
+    drop(dir);
+}
+
+#[test]
+fn un_encargo_en_una_linea_para_programator_se_atiende_y_una_mencion_no() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "# Claude\n\nLATIDO: 2026-11-13 16:00:00\n\n\
+         Hablé con el Director. Para Programator no hay nada todavía.\n\n\
+         LATIDO: 2026-11-13 16:05:00\n\n\
+         Para Programator: revisa las puertas.\n\n\
+         Para Gemini 1: verifica después.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Puertas revisadas."}),
+        ),
+        Respuesta::Texto("Fin.".to_string()),
+    ]);
+
+    let desenlace = ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    match desenlace {
+        DesenlacePasada::Atendidos(resumen) => assert_eq!(
+            resumen.atendidos, 1,
+            "solo la línea que empieza por «Para Programator» es un encargo"
+        ),
+        otro => panic!("se esperaba Atendidos: {otro:?}"),
+    }
+    let buzon = std::fs::read_to_string(carpeta.join(".gestor/canal/programator.md")).unwrap();
+    assert!(buzon.contains("Puertas revisadas."));
+    assert!(
+        buzon.contains("hasta su latido 2026-11-13 16:05:00"),
+        "{buzon}"
+    );
+}
+
+#[test]
+fn un_encargo_en_linea_no_propone_podar_el_buzon_de_origen() {
+    // La poda trocea por `---` y un buzón del gestor de agentes no lo usa: el bloque «superado» sería
+    // el buzón entero, con el encargo de Gemini dentro.
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "# Claude\n\nLATIDO: 2026-11-13 16:05:00\n\n\
+         Para Programator: revisa las puertas.\n\nPara Gemini 1: verifica después.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir("publicar", serde_json::json!({"texto": "Hecho."})),
+        Respuesta::Texto("Fin.".to_string()),
+    ]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(&Limites::default(), &Verificacion::default()),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    assert!(!carpeta.join(".gestor/candidatos/poda").exists());
 }

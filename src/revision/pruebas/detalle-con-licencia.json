@@ -1,0 +1,46 @@
+{
+  "_id": "6938533da5908f1f41488ce5",
+  "id": "bartowski/mistralai_Devstral-Small-2-24B-Instruct-2512-GGUF",
+  "lastModified": "2025-12-09T21:25:08.000Z",
+  "downloads": 31173,
+  "tags": [
+    "gguf",
+    "mistral-common",
+    "text-generation",
+    "base_model:mistralai/Devstral-Small-2-24B-Instruct-2512",
+    "base_model:quantized:mistralai/Devstral-Small-2-24B-Instruct-2512",
+    "license:apache-2.0",
+    "region:us",
+    "conversational"
+  ],
+  "cardData": {
+    "license": "apache-2.0"
+  },
+  "siblings": [
+    {
+      "rfilename": ".gitattributes",
+      "blobId": "03ae10e893a8c0be8ddb89a874c4eff59ecb57fe",
+      "size": 4112
+    },
+    {
+      "rfilename": "mistralai_Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
+      "blobId": "fddda1166d96543fbc091b8ba47ab1d90f17bac5",
+      "size": 14334438272,
+      "lfs": {
+        "sha256": "bfd11c8679c6b81eb43763505465d7dcfa72e460ab1c220ecc235a3efadd7f7f",
+        "size": 14334438272,
+        "pointerSize": 136
+      }
+    },
+    {
+      "rfilename": "mistralai_Devstral-Small-2-24B-Instruct-2512-Q5_K_M.gguf",
+      "blobId": "3c5ec4d8518852ee5b281a32f1f3bd91cc18ec50",
+      "size": 16764513152,
+      "lfs": {
+        "sha256": "e1a2d4b849f12a0efe6a92bb93d33e27ef5fddf859da7bfdbc7cc5bc58cf42ff",
+        "size": 16764513152,
+        "pointerSize": 136
+      }
+    }
+  ]
+}

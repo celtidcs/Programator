@@ -8,12 +8,18 @@
 
 ## Qué es
 
-Un modelo local —**Devstral Small 2 24B**, cuantizado a Q4_K_M— corriendo en la tarjeta del
-Director bajo un arnés que lo confina. No es un agente autónomo y no conviene tratarlo como tal.
-
-Va a unos **18 tokens por segundo**. Una respuesta de código tarda entre uno y tres minutos.
+Un modelo local corriendo en la tarjeta gráfica de esta máquina, bajo un arnés que lo confina. No
+es un agente autónomo y no conviene tratarlo como tal. Qué modelo es, a qué velocidad va y en qué
+acierta lo dice la tabla de abajo, que sale del registro de modelos. Con más capas en la GPU va más
+rápido, y con más contexto, más lento.
 
 {desempeno}
+
+**Repetir un encargo da lo mismo.** El mismo encargo, sobre la misma carpeta y con la misma
+configuración, da la misma respuesta: la semilla va fija y cada encargo empieza sin la caché del
+motor. Si la respuesta no vale, mandarlo otra vez tal cual no sirve de nada. Cambia el encargo
+(más acotado, con el fragmento pegado y numerado) o pide al Director otro intento con otra semilla,
+que es configuración de Programator y no algo que se pida en el encargo.
 
 ## Lo que sí puede hacer por su cuenta
 
@@ -25,7 +31,7 @@ lea solo el tramo que necesita acotando el rango de líneas. Para una consulta p
 ya esta constante?») es la vía más barata.
 
 Pero si el encargo es una auditoría o necesita varios tramos de un fichero grande, medido en
-NatureLand: pegar el fragmento exacto en el propio encargo, **numerado con su línea real**, entrega
+uso real: pegar el fragmento exacto en el propio encargo, **numerado con su línea real**, entrega
 con más fiabilidad que pedirle que lea — tanto en si entrega algo (encadenar varias lecturas en el
 mismo encargo ha hecho que el modelo confunda el rótulo `[solicito leer_fichero]` que ve en su
 propio historial con una respuesta de texto normal y la repita, perdiendo el encargo entero) como en
@@ -90,19 +96,33 @@ biblioteca.
 
 ### 1. Dirígelo bien o no lo verá
 
-Se publica en **tu propio buzón** del canal, con un encabezado nuevo:
+Se publica en **tu propio buzón** del canal, como cualquier otro encargo del canal: en una
+intervención nueva, con una línea que **empieza** por `Para Programator`:
 
 ```markdown
-## Para Programator: nombre corto del encargo
+LATIDO: 2026-11-13 16:05:00
 
-Lo que le pides.
+Para Programator: nombre corto del encargo.
+Lo que le pides, en las líneas que hagan falta.
 ```
+
+El encargo llega hasta la siguiente línea `LATIDO:`, la siguiente línea `Para …` (sea para quien
+sea), un encabezado `## ` o una línea `---`. Así puedes dejar en la misma intervención un encargo
+para Programator y otro para otro agente, cada uno en su línea `Para …`.
+
+- Vale con número de instancia (`Para Programator 1`) y entre varios destinatarios
+  (`Para Claude 1 y Programator: …`). `Para Programator 2` es para la segunda instancia, no para la
+  primera.
+- **No es un encargo** si Programator solo va con copia (`Para Gemini 1, con copia a Programator.`),
+  si la línea va citada (`> Para Programator…`) o si lo nombras en medio de una frase.
+- Se sigue atendiendo la forma antigua, un encabezado `## Para Programator: …` con el encargo
+  debajo hasta el siguiente encabezado. Úsala solo si tu canal todavía trabaja así.
 
 **Tres situaciones en las que un encargo no se atiende:**
 
 - **Publicar antes de que Programator avise de que está listo.** La primera vez que Programator se ejecuta en un proyecto nuevo, toma una instantánea inicial del canal para fijar el punto de partida y no atiende textos anteriores. En todos los arranques posteriores, Programator ya conserva su registro y atiende cualquier novedad publicada desde la última lectura. Para no tener que recordar esta distinción, basta con mirar la terminal: Programator anuncia de forma explícita cuándo comienza a escuchar y con qué cadencia de sondeo. Además, escribe su estado en `.gestor/<agente>/latido.json`. Espera a ver ese aviso de listo antes de publicar el encargo.
-- **Añadir texto a un encargo anterior.** Programator solo procesa las secciones nuevas. Una línea añadida al final de un encargo antiguo o sin un encabezado propio no se interpreta como una petición de trabajo. Si necesitas corregir o ampliar algo, crea una sección nueva con su propio encabezado.
-- **Mencionar a Programator sin un encabezado propio.** Nombrar al agente dentro de un párrafo en el buzón no genera ninguna acción. El arnés requiere un encabezado formal para iniciar la atención del encargo.
+- **Añadir texto a un encargo anterior.** Programator solo procesa lo nuevo. Una línea añadida a un encargo que ya atendió no se interpreta como una petición de trabajo. Si necesitas corregir o ampliar algo, escribe un encargo nuevo con su propia línea `Para Programator`.
+- **Mencionar a Programator sin que la línea empiece por `Para Programator`.** Nombrar al agente dentro de un párrafo no genera ninguna acción.
 
 ### 2. Dile los requisitos, uno por línea
 
@@ -111,8 +131,7 @@ los requisitos escritos como lista dentro del propio encargo, pasó de 1 a 5 com
 mecánicas sobre 6. Y pidiéndole además que declarara cómo cumplió cada punto, 6 de 6.
 
 ```markdown
-## Para Programator: parseador de rangos
-
+Para Programator: parseador de rangos.
 Escribe en Python una función expandir(entrada: str) -> list[int] que convierta
 '1-3,7' en [1,2,3,7].
 
@@ -143,8 +162,11 @@ encargo. Recordárselo en el encargo evita ese viaje en balde.
 
 ## Qué te va a devolver
 
-Publica en `.gestor/canal/programator.md`. Debajo de lo que él escriba, **el arnés añade el
-resultado de compilar sus propuestas**:
+Publica en `.gestor/canal/programator.md`, con el formato del canal: cada intervención
+empieza con `LATIDO: AAAA-MM-DD HH:MM:SS`, y debajo van su resumen y `LEÍDO:`, lo que leyó de cada
+buzón. Si reserva un fichero, lo anota en `## Reservas activas` de `estado.md`
+(`- Programator, AAAA-MM-DD HH:MM: ruta — motivo`) y lo quita al cerrar el encargo, publique o no.
+Debajo de lo que él escriba, **el arnés añade el resultado de compilar sus propuestas**:
 
 ```
 **Comprobación de las propuestas** (la hace el arnés, no el modelo):

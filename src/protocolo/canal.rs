@@ -1,20 +1,16 @@
 //! Acceso al canal `.gestor/canal/`. Este módulo sabe qué ficheros existen y de quién es cada uno;
 //! no decide qué escribir en ellos.
 
-use super::saneado::{neutralizar_marcas, sanear_saltos};
+use super::carpetas::{carpeta_del_canal, NOMBRE_DE_LA_GUIA};
+use super::saneado::{
+    neutralizar_marcas, sanear_saltos, MARCA_DE_LATIDO, MARCA_DE_LATIDO_ANTIGUA, MARCA_DE_LEIDO,
+};
 use crate::error::{Error, Resultado};
 use std::path::{Path, PathBuf};
 
 /// Nombres reservados del canal: ficheros de infraestructura que existen en `.gestor/canal/` pero no
 /// son buzones de ningún agente. Se descartan de forma insensible a mayúsculas.
-const NOMBRES_RESERVADOS: &[&str] = &[
-    "estado.md",
-    "readme.md",
-    "indice.md",
-    // La guía que el arnés publica para los demás agentes. Sin esto, Programator leería su propia
-    // guía como si fuera el buzón de un compañero y se la metería en el contexto en cada pasada.
-    "como-encargar-a-programator.md",
-];
+const NOMBRES_RESERVADOS: &[&str] = &["estado.md", "readme.md", "indice.md"];
 
 /// Prefijos de ficheros que están en el canal pero **no son buzones de nadie**: los históricos que
 /// se generan al archivar.
@@ -23,8 +19,10 @@ const NOMBRES_RESERVADOS: &[&str] = &[
 /// que el arnés sondea, y el texto archivado conserva su encabezado `## Para Programator`. Medido
 /// el 23/09/2026: el encargo 009 se archivó a las 20:44 y se entregó a las 20:47.
 ///
-/// Va por prefijo y no por nombre exacto porque el nombre del histórico lo elige el proyecto
-/// anfitrión, no el arnés.
+/// Va por prefijo y no por nombre exacto porque cada agente nombra el suyo
+/// (`historico-programator.md`, `histórico-claude.md`). Son los dos del canal y ninguno
+/// más: un prefijo nuevo tiene que incorporarlo también el gestor de agentes que lleve el canal.
+/// Antes eran configurables (`[agente] prefijos_ignorados`).
 const PREFIJOS_IGNORADOS: &[&str] = &["historico-", "histórico-"];
 
 /// Hasta dónde se ha leído cada buzón ajeno, en forma legible para los compañeros.
@@ -56,34 +54,29 @@ const ENCABEZADO: &str = "\
 /// El canal de un proyecto, visto desde un agente concreto.
 pub struct Canal {
     directorio: PathBuf,
+    /// El nombre del agente que mira el canal, tal como está configurado.
+    yo: String,
     fichero_propio: String,
-    /// Prefijos que este proyecto usa para sus históricos. Vacío significa los de por defecto.
-    prefijos_ignorados: Vec<String>,
 }
 
 impl Canal {
     /// Abre el canal de una carpeta de trabajo, creando la estructura si no existe.
     pub fn nuevo(carpeta: &Path, yo: &str) -> Resultado<Self> {
-        let directorio = carpeta.join(".gestor").join("canal");
+        let directorio = carpeta_del_canal(carpeta);
         std::fs::create_dir_all(&directorio).map_err(|causa| Error::Escritura {
             ruta: directorio.clone(),
             causa,
         })?;
         Ok(Self {
             directorio,
+            yo: yo.to_string(),
             fichero_propio: format!("{}.md", yo.to_lowercase()),
-            prefijos_ignorados: PREFIJOS_IGNORADOS.iter().map(|p| p.to_string()).collect(),
         })
     }
 
-    /// Cambia los prefijos que no son buzones por los que declare el proyecto anfitrión.
-    ///
-    /// Una lista vacía deja los de por defecto: quien no configure nada no se queda sin defensa.
-    pub fn con_prefijos_ignorados(mut self, prefijos: Vec<String>) -> Self {
-        if !prefijos.is_empty() {
-            self.prefijos_ignorados = prefijos.iter().map(|p| p.to_lowercase()).collect();
-        }
-        self
+    /// El nombre del agente que mira el canal.
+    pub fn yo(&self) -> &str {
+        &self.yo
     }
 
     /// Ruta del buzón de un agente.
@@ -111,8 +104,11 @@ impl Canal {
                 nombre_lower.ends_with(".md")
                     && nombre_lower != self.fichero_propio
                     && !NOMBRES_RESERVADOS.contains(&nombre_lower.as_str())
-                    && !self
-                        .prefijos_ignorados
+                    // La guía que el arnés publica para los demás agentes. Sin esto, Programator
+                    // leería su propia guía como si fuera el buzón de un compañero y se la
+                    // metería en el contexto en cada pasada.
+                    && !nombre_lower.eq_ignore_ascii_case(NOMBRE_DE_LA_GUIA)
+                    && !PREFIJOS_IGNORADOS
                         .iter()
                         .any(|prefijo| nombre_lower.starts_with(prefijo))
             })
@@ -193,8 +189,11 @@ impl Canal {
                 .join(" · ")
         };
 
+        // Como en el resto del canal: cada intervención empieza con `LATIDO: <AAAA-MM-DD HH:MM:SS>`, sin
+        // negrita y sola en su línea, que es lo que lee su revisión del canal. El resumen y el
+        // `LEÍDO:` van en las siguientes.
         contenido.push_str(&format!(
-            "\n**LATIDO:** {ahora} — {resumen_corto}\n**LEÍDO:** {resumen}\n\n---\n\n{cuerpo_saneado}\n",
+            "\n{MARCA_DE_LATIDO} {ahora}\n{resumen_corto}\n{MARCA_DE_LEIDO} {resumen}\n\n---\n\n{cuerpo_saneado}\n",
             resumen_corto = primera_linea(&cuerpo_saneado),
         ));
 
@@ -259,8 +258,41 @@ impl Canal {
 }
 
 /// La marca de tiempo actual local en el formato que exige el protocolo (§3.2): `2026-09-13 08:30`.
+/// Es la de las reservas.
 pub fn marca_de_tiempo_actual() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
+    chrono::Local::now()
+        .format(FORMATO_DE_LA_MARCA_DE_TIEMPO)
+        .to_string()
+}
+
+/// La marca de tiempo del latido, con segundos, como la escriben los demás agentes del canal:
+/// `2026-11-13 15:40:07`.
+pub fn marca_del_latido() -> String {
+    chrono::Local::now()
+        .format(FORMATO_DE_LA_HORA_DEL_LATIDO)
+        .to_string()
+}
+
+/// Cómo va la hora de una reserva y de las demás marcas del protocolo (§3.2), sin segundos.
+const FORMATO_DE_LA_MARCA_DE_TIEMPO: &str = "%Y-%m-%d %H:%M";
+
+/// Cómo va la hora tras `LATIDO:`. El canal acepta también sin segundos; con ellos se
+/// distinguen dos intervenciones del mismo minuto. También la usa el latido del arnés en
+/// `latido.json`, para que las dos horas se lean igual.
+pub(crate) const FORMATO_DE_LA_HORA_DEL_LATIDO: &str = "%Y-%m-%d %H:%M:%S";
+
+/// Si la línea, tal cual (sin quitarle una cita delante), empieza un latido en cualquiera de las
+/// dos formas.
+pub fn es_linea_de_latido(linea: &str) -> bool {
+    linea.starts_with(MARCA_DE_LATIDO) || linea.starts_with(MARCA_DE_LATIDO_ANTIGUA)
+}
+
+/// Lo que va tras la marca de latido de una línea que lo es.
+pub fn tras_la_marca_de_latido(linea: &str) -> Option<&str> {
+    linea
+        .strip_prefix(MARCA_DE_LATIDO_ANTIGUA)
+        .or_else(|| linea.strip_prefix(MARCA_DE_LATIDO))
+        .map(str::trim)
 }
 
 /// Longitud máxima de la primera línea en el latido antes de recortarla con elipsis (§4.3).
@@ -282,9 +314,21 @@ fn primera_linea(cuerpo: &str) -> String {
     }
 }
 
+/// Dónde empieza la primera línea de latido del buzón, en cualquiera de las dos formas.
+fn inicio_del_primer_latido(contenido: &str) -> Option<usize> {
+    let mut desplazamiento = 0;
+    for linea in contenido.split_inclusive('\n') {
+        if es_linea_de_latido(linea) {
+            return Some(desplazamiento);
+        }
+        desplazamiento += linea.len();
+    }
+    None
+}
+
 /// Extrae el contenido de mensajes o latidos previos de un buzón para su rotación a histórico.
 fn extraer_contenido_rotar(contenido: &str) -> &str {
-    if let Some(pos) = contenido.find("**LATIDO:**") {
+    if let Some(pos) = inicio_del_primer_latido(contenido) {
         &contenido[pos..]
     } else if let Some(resto) = contenido.strip_prefix(ENCABEZADO) {
         resto
@@ -463,91 +507,38 @@ mod pruebas {
     }
 
     #[test]
-    fn con_prefijos_ignorados_vacio_conserva_los_prefijos_por_defecto() {
-        // Si una lista vacía dejara al arnés sin prefijos que ignorar, un proyecto sin
-        // `prefijos_historico` en el TOML volvería a atender lo ya archivado: el mismo fallo que
-        // costó el encargo 009 el 23/09/2026.
+    fn otro_prefijo_de_archivo_si_es_un_buzon() {
+        // Los históricos son los del canal, `historico-` e `histórico-`, y ningún otro. Un proyecto que archive con otro prefijo tiene que
+        // renombrar: si no, sus ficheros se leen como buzones.
         let dir = tempfile::tempdir().unwrap();
         let canal_dir = dir.path().join(".gestor/canal");
         std::fs::create_dir_all(&canal_dir).unwrap();
         std::fs::write(canal_dir.join("claude.md"), "## Para Programator\n\nvivo").unwrap();
-        std::fs::write(
-            canal_dir.join("historico-actas.md"),
-            "## Para Programator\n\nya cerrado",
-        )
-        .unwrap();
+        std::fs::write(canal_dir.join("historico-actas.md"), "ya cerrado").unwrap();
+        std::fs::write(canal_dir.join("histórico-claude.md"), "ya cerrado").unwrap();
+        std::fs::write(canal_dir.join("archivado-actas.md"), "otro prefijo").unwrap();
 
-        let canal = Canal::nuevo(dir.path(), "Programator")
-            .unwrap()
-            .con_prefijos_ignorados(Vec::new());
+        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
         let buzones = canal.buzones_ajenos().unwrap();
 
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(
-            nombres,
-            vec!["claude.md"],
-            "una lista vacía debe conservar los prefijos por defecto: {nombres:?}"
-        );
+        assert_eq!(nombres, vec!["archivado-actas.md", "claude.md"]);
     }
 
     #[test]
-    fn con_prefijos_ignorados_personalizados_sustituye_a_los_de_por_defecto() {
+    fn el_prefijo_del_historico_no_distingue_mayusculas() {
         let dir = tempfile::tempdir().unwrap();
         let canal_dir = dir.path().join(".gestor/canal");
         std::fs::create_dir_all(&canal_dir).unwrap();
         std::fs::write(canal_dir.join("claude.md"), "## Para Programator\n\nvivo").unwrap();
-        std::fs::write(
-            canal_dir.join("historico-actas.md"),
-            "## Para Programator\n\nya cerrado, con el prefijo por defecto",
-        )
-        .unwrap();
-        std::fs::write(
-            canal_dir.join("archivado-actas.md"),
-            "## Para Programator\n\nya cerrado, con el prefijo del proyecto",
-        )
-        .unwrap();
+        std::fs::write(canal_dir.join("Historico-Actas.md"), "ya cerrado").unwrap();
+        std::fs::write(canal_dir.join("Histórico-Claude.md"), "ya cerrado").unwrap();
 
-        let canal = Canal::nuevo(dir.path(), "Programator")
-            .unwrap()
-            .con_prefijos_ignorados(vec!["archivado-".to_string()]);
+        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
         let buzones = canal.buzones_ajenos().unwrap();
 
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(
-            nombres.contains(&"historico-actas.md"),
-            "el prefijo por defecto ya no debe aplicar: la lista personalizada lo sustituye, \
-             no lo añade: {nombres:?}"
-        );
-        assert!(
-            !nombres.contains(&"archivado-actas.md"),
-            "el prefijo personalizado sí debe descartarlo: {nombres:?}"
-        );
-    }
-
-    #[test]
-    fn con_prefijos_ignorados_compara_insensible_a_mayusculas() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor/canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
-        std::fs::write(canal_dir.join("claude.md"), "## Para Programator\n\nvivo").unwrap();
-        std::fs::write(
-            canal_dir.join("Historico-Actas.md"),
-            "## Para Programator\n\nya cerrado, con mayúsculas en el nombre",
-        )
-        .unwrap();
-
-        let canal = Canal::nuevo(dir.path(), "Programator")
-            .unwrap()
-            .con_prefijos_ignorados(vec!["HISTORICO-".to_string()]);
-        let buzones = canal.buzones_ajenos().unwrap();
-
-        let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(
-            nombres,
-            vec!["claude.md"],
-            "un prefijo en mayúsculas debe descartar un fichero cuyo nombre también lleva \
-             mayúsculas: {nombres:?}"
-        );
+        assert_eq!(nombres, vec!["claude.md"]);
     }
 
     #[test]
@@ -570,8 +561,15 @@ mod pruebas {
 
         let buzon =
             std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
-        assert!(buzon.contains("**LATIDO:** 2026-09-13 16:20"));
-        assert!(buzon.contains("**LEÍDO:**"));
+        assert!(buzon.contains(
+            "
+LATIDO: 2026-09-13 16:20
+"
+        ));
+        assert!(buzon.contains(
+            "
+LEÍDO: "
+        ));
         assert!(buzon.contains("`claude.md` hasta su latido 14:00"));
         assert!(buzon.contains("446 en verde"));
     }
@@ -746,7 +744,7 @@ mod pruebas {
         // La línea LEÍDO: debe ser una sola línea
         let leido_linea = buzon
             .lines()
-            .find(|l| l.starts_with("**LEÍDO:**"))
+            .find(|l| l.starts_with("LEÍDO:"))
             .expect("debe haber una línea LEÍDO:");
         assert!(
             !leido_linea.contains('\n'),
@@ -756,7 +754,7 @@ mod pruebas {
         // No debe contener literalmente **LATIDO: en posición de marca
         let has_fake_mark = buzon
             .lines()
-            .any(|l| l.starts_with("**LATIDO:**") && !l.contains("2026-09-13 16:20"));
+            .any(|l| es_linea_de_latido(l) && !l.contains("2026-09-13 16:20"));
         assert!(!has_fake_mark, "no debe haber marca LATIDO: falsificada");
     }
 
@@ -770,8 +768,95 @@ mod pruebas {
         let buzon =
             std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(
-            buzon.contains("**LATIDO:** 2026-09-13 16:20 — sin novedad"),
+            buzon.contains(
+                "LATIDO: 2026-09-13 16:20
+sin novedad
+"
+            ),
             "cuerpo solo espacios debe usar sin novedad"
         );
+    }
+
+    /// El bloque exacto: lo que lee la revisión del canal del gestor de agentes es la línea
+    /// `LATIDO: <fecha hora>`, sin negrita y con nada más detrás.
+    #[test]
+    fn la_intervencion_empieza_con_el_latido_del_canal() {
+        let (dir, canal) = canal_de_prueba();
+        let leido = ResumenLeido {
+            entradas: vec![(
+                "claude.md".to_string(),
+                "hasta su latido 2026-11-13 15:00:00".to_string(),
+            )],
+        };
+
+        canal
+            .publicar("Hecho el encargo.\nDetalle.", &leido, "2026-11-13 15:40:07")
+            .unwrap();
+
+        let buzon =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+        assert!(
+            buzon.ends_with(
+                "\nLATIDO: 2026-11-13 15:40:07\nHecho el encargo.\n\
+                 LEÍDO: `claude.md` hasta su latido 2026-11-13 15:00:00\n\n---\n\n\
+                 Hecho el encargo.\nDetalle.\n"
+            ),
+            "{buzon}"
+        );
+    }
+
+    #[test]
+    fn neutraliza_el_latido_sin_negrita_falsificado_en_el_cuerpo() {
+        let (dir, canal) = canal_de_prueba();
+
+        canal
+            .publicar(
+                "Hecho.\nLATIDO: 2099-01-01 00:00:00\n  LEÍDO: nada",
+                &ResumenLeido::vacio(),
+                "2026-11-13 15:40:07",
+            )
+            .unwrap();
+
+        let buzon =
+            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+        let latidos: Vec<&str> = buzon.lines().filter(|l| es_linea_de_latido(l)).collect();
+        assert_eq!(latidos, ["LATIDO: 2026-11-13 15:40:07"], "{buzon}");
+        assert!(buzon.contains("> LATIDO: 2099-01-01 00:00:00"));
+        assert!(buzon.contains(">   LEÍDO: nada"));
+    }
+
+    #[test]
+    fn la_hora_del_latido_lleva_segundos() {
+        let marca = marca_del_latido();
+
+        assert!(
+            chrono::NaiveDateTime::parse_from_str(&marca, "%Y-%m-%d %H:%M:%S").is_ok(),
+            "{marca}"
+        );
+    }
+
+    #[test]
+    fn la_rotacion_reconoce_el_latido_sin_negrita() {
+        let contenido = format!(
+            "{ENCABEZADO}\nLATIDO: 2026-11-13 15:40:07\nHecho.\nLEÍDO: nada nuevo\n\n---\n\nHecho.\n"
+        );
+
+        assert_eq!(
+            extraer_contenido_rotar(&contenido),
+            "LATIDO: 2026-11-13 15:40:07\nHecho.\nLEÍDO: nada nuevo\n\n---\n\nHecho.\n"
+        );
+    }
+
+    #[test]
+    fn tras_la_marca_lee_las_dos_formas_y_no_las_citadas() {
+        assert_eq!(
+            tras_la_marca_de_latido("LATIDO: 2026-11-13 15:40:07"),
+            Some("2026-11-13 15:40:07")
+        );
+        assert_eq!(
+            tras_la_marca_de_latido("**LATIDO:** 2026-09-01 10:00 — algo"),
+            Some("2026-09-01 10:00 — algo")
+        );
+        assert_eq!(tras_la_marca_de_latido("> LATIDO: 2099-01-01"), None);
     }
 }

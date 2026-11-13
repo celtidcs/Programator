@@ -2,10 +2,12 @@
 //! aquí, y quien decide qué hacer con esos números vive en `motor::encaje`, que no incluye este
 //! módulo: así la política se prueba sin tarjeta y la medición se puede cambiar sin tocarla.
 //!
-//! **Hay una forma de medir por plataforma, y este módulo solo elige.** En Windows la cifra sale
-//! de DXGI; en Linux, de preguntarle a `nvidia-smi`. Cada una vive en su submódulo, porque son dos
-//! mecanismos distintos para responder la misma pregunta y mezclarlos aquí haría que ninguno se
-//! pudiera leer entero. Lo común —el tipo `Gpu` y el contrato de abajo— se queda en este fichero.
+//! **Hay dos formas de medir, y este módulo solo elige.** La buena es `nvidia-smi`, que ve toda la
+//! tarjeta, y es la que se usa en Linux y en Windows. En Windows, si no contesta (una tarjeta que
+//! no es de NVIDIA), queda DXGI, que solo ve el presupuesto del proceso que pregunta: sirve para
+//! decidir capas con la tarjeta vacía, pero no ve lo que ocupan otros programas. Cada medidor vive
+//! en su submódulo, porque son dos mecanismos distintos para responder la misma pregunta. Lo común
+//! —el tipo `Gpu`, el contrato de abajo y el orden de preferencia— se queda en este fichero.
 //!
 //! **`None` no es un error, es «no lo sé».** Una máquina sin GPU dedicada, un controlador que no
 //! contesta o una plataforma sin forma de medir devuelven `None`, y quien llama tiene que poder
@@ -29,17 +31,21 @@ pub struct Gpu {
 
 #[cfg(windows)]
 mod dxgi;
-#[cfg(windows)]
-pub use dxgi::describir_gpu;
 
 // El submódulo se compila donde se usa —Linux— y además siempre que se compilan las pruebas, en
 // cualquier plataforma. Así su análisis de texto, que es la parte que puede equivocarse, se
 // verifica en cada tanda aunque la tanda se haga desde Windows, y no queda código muerto en el
 // binario de quien no lo necesita.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", windows, test))]
 mod nvidia_smi;
 #[cfg(target_os = "linux")]
 pub use nvidia_smi::describir_gpu;
+
+/// En Windows, primero `nvidia-smi`, que ve toda la tarjeta, y DXGI solo si no contesta.
+#[cfg(windows)]
+pub fn describir_gpu() -> Option<Gpu> {
+    nvidia_smi::describir_gpu().or_else(dxgi::describir_gpu)
+}
 
 /// En una plataforma sin forma de medir, la respuesta honesta es «no lo sé».
 ///
@@ -78,7 +84,7 @@ mod pruebas {
     }
 
     /// Prueba manual, no de humo: imprime lo que ve `describir_gpu()` en esta máquina para
-    /// compararlo a mano con la salida de la sonda desechable que verificó la Tarea 5. No se afirma
+    /// compararlo a mano con la salida de una sonda desechable. No se afirma
     /// nada por assert porque el resultado depende del hardware; el valor de esta prueba es la
     /// inspección visual con `--nocapture`, y se deja puesta para el futuro.
     #[test]

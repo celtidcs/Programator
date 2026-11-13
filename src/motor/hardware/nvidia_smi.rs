@@ -1,33 +1,37 @@
-//! La medición de la GPU en Linux, preguntándole a `nvidia-smi`.
+//! La medición de una GPU de NVIDIA, preguntándole a `nvidia-smi`, en Linux y en Windows.
 //!
-//! **Por qué `nvidia-smi` y no una biblioteca.** En Windows la cifra la da DXGI, que forma parte
-//! del sistema. En Linux el equivalente sería NVML, que es una biblioteca de NVIDIA a la que hay
-//! que llamar por FFI. `nvidia-smi` es un programa que ya viene con el controlador, se invoca
-//! como cualquier otro, devuelve texto y no añade ni una dependencia al proyecto. Si el
-//! controlador está instalado, el programa está; y si no lo está, tampoco habría GPU que medir.
+//! **Por qué `nvidia-smi` y no una biblioteca.** Lo que da es la memoria de **toda la tarjeta**,
+//! que es lo que hace falta: quien la ocupa es `llama-server`, que es otro proceso. La alternativa
+//! sería NVML, una biblioteca de NVIDIA a la que hay que llamar por FFI. `nvidia-smi` es un
+//! programa que ya viene con el controlador, en Linux y en Windows, se invoca como cualquier otro,
+//! devuelve texto y no añade ni una dependencia al proyecto. Si el controlador está instalado, el
+//! programa está; y si no lo está, tampoco habría GPU de NVIDIA que medir.
+//!
+//! **Por qué también en Windows (12/11/2026).** Hasta entonces Windows medía con DXGI, que solo ve
+//! el presupuesto del proceso que pregunta. Con el modelo cargado, `nvidia-smi` daba 14 195 MiB
+//! ocupados y DXGI 344.
 //!
 //! **Lo que decide está separado de lo que ejecuta.** `describir_gpu` lanza el proceso y no
 //! interpreta nada; `interpretar` recibe texto y no toca el sistema. Así la parte que puede
 //! equivocarse se prueba entera sin tarjeta, que es lo que exige la norma de la casa.
 //!
-//! **Y por eso el análisis se compila en todas las plataformas, no solo en Linux.** Lo que lanza
-//! el proceso sí es de Linux y va marcado como tal, pero si el análisis solo existiera allí, sus
-//! pruebas solo correrían allí: se escribiría a ciegas desde Windows y nadie lo vería fallar hasta
-//! tener la máquina delante. Compilándolo siempre, la suite lo verifica en cada tanda.
+//! **Y por eso el análisis se compila en todas las plataformas.** Lo que lanza el proceso va
+//! marcado para Linux y Windows, que son donde hay forma de lanzarlo; el análisis se compila
+//! siempre, y la suite lo verifica en cada tanda, en cualquier máquina.
 
 use super::Gpu;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use std::process::Command;
 
 /// El programa que trae el controlador de NVIDIA, y que se busca en el `PATH`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 const PROGRAMA: &str = "nvidia-smi";
 
 /// Lo que se le pide: nombre, memoria total y memoria libre, en ese orden.
 ///
 /// `csv,noheader,nounits` deja la salida en la forma más simple que admite: una línea por tarjeta,
 /// tres campos separados por comas y las cifras desnudas, sin la coletilla « MiB» detrás.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 const CONSULTA: [&str; 2] = [
     "--query-gpu=name,memory.total,memory.free",
     "--format=csv,noheader,nounits",
@@ -43,10 +47,9 @@ const BYTES_POR_MIB: u64 = 1024 * 1024;
 /// idéntica y separarlos solo añadiría ramas que nadie mira.
 ///
 /// **Limitación declarada:** la memoria libre que informa `nvidia-smi` es la del momento de la
-/// consulta, y quien va a ocuparla es `llama-server`, que arranca después. Es la misma distancia
-/// que hay en Windows entre el presupuesto medido y el que verá el motor, y la cubre el mismo
-/// margen de seguridad de `motor::encaje`.
-#[cfg(target_os = "linux")]
+/// consulta, y quien va a ocuparla es `llama-server`, que arranca después. Esa distancia la cubre
+/// el margen de seguridad de `motor::encaje`.
+#[cfg(any(target_os = "linux", windows))]
 pub fn describir_gpu() -> Option<Gpu> {
     let salida = Command::new(PROGRAMA).args(CONSULTA).output().ok()?;
     if !salida.status.success() {

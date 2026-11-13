@@ -15,6 +15,14 @@
 # «programator.ejemplo.toml», sí se versiona; la copia de trabajo no.
 /programator.toml
 
+# Lo mismo para el banco de modelos: «banco.ejemplo.toml» se versiona, «banco.toml» no. De cada
+# tanda se versionan los resultados y el informe; las carpetas de trabajo, con una copia del canal
+# por encargo y semilla, no.
+/evaluacion/banco/banco.toml
+/evaluacion/banco/resultados/*/trabajo/
+# La copia de Git con que se comprueba aislado en Windows.
+/evaluacion/banco/interprete-aislado/
+
 # Carpeta portable de distribución: se monta desde target/release y no se versiona.
 portable/
 
@@ -38,3 +46,11 @@ portable/
 # junto al fichero fuente, no en el directorio de trabajo.
 __pycache__/
 *.pyc
+
+# Árbol curado que se publica en GitHub (celtidcs/Programator). Es un repositorio git propio que
+# genera «.gestor/preparar-publicacion.ps1»; vive aquí dentro desde el 10/11/2026 y no se versiona
+# en este repositorio.
+/Programator-publico/
+
+# Experimento suelto de septiembre (capas_gpu = "auto"), ya incorporado al código
+/pruebas_externas/

@@ -16,8 +16,9 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::orden_acotada::{ejecutar_con_tope_y_temporales_dentro, DesenlaceDeOrden};
 
 /// Marcador que se sustituye por la ruta de la propuesta en los argumentos del comprobador.
 const MARCADOR_FICHERO: &str = "{fichero}";
@@ -25,9 +26,6 @@ const MARCADOR_FICHERO: &str = "{fichero}";
 /// Cuánta salida del comprobador se le pasa al modelo. Un error de `rustc` puede ocupar pantallas
 /// enteras y el contexto es finito: con esto sobra para saber qué falló y dónde.
 const MAXIMO_SALIDA: usize = 1200;
-
-/// Cada cuánto se comprueba si el comprobador ya terminó, mientras se espera su tiempo máximo.
-const LATIDO_ESPERA: Duration = Duration::from_millis(50);
 
 /// Qué se sabe de una propuesta después de intentar comprobarla.
 ///
@@ -74,7 +72,7 @@ impl Veredicto {
     /// escribe el modelo; el veredicto, no.
     pub fn para_el_canal(&self, nombre: &str) -> String {
         match self {
-            // No dice «sin verificar»: en NatureLand esa frase se leyó como «verificada sin
+            // No dice «sin verificar»: en uso real esa frase se leyó como «verificada sin
             // hallazgos» durante cuatro entregas seguidas, y en el único lenguaje de aquel
             // proyecto. Lo que falta es un comprobador, y quien lea el canal tiene que saberlo.
             Veredicto::SinComprobador { extension } => format!(
@@ -115,17 +113,15 @@ pub fn verificar(
         };
     };
 
-    // La ruta se pasa absoluta siempre. El comprobador se ejecuta en un directorio temporal, así
-    // que una ruta relativa se resolvería contra ese directorio y el comprobador diría que el
+    // La ruta se pasa absoluta siempre. El comprobador se ejecuta en su propia carpeta de trabajo,
+    // así que una ruta relativa se resolvería contra ese directorio y el comprobador diría que el
     // fichero no existe. En producción llega absoluta desde `Ambito::resolver`, pero depender de
     // eso sería una trampa esperando a quien llame de otro sitio.
-    let ruta = std::fs::canonicalize(fichero)
-        .unwrap_or_else(|_| fichero.to_path_buf())
-        .display()
-        .to_string();
-    // `canonicalize` devuelve en Windows el prefijo extendido `\\?\`, que algunos programas no
-    // digieren. Se quita: la ruta sigue siendo absoluta y válida sin él.
-    let ruta = ruta.strip_prefix(r"\\?\").unwrap_or(&ruta).to_string();
+    let ruta = crate::plataforma::sin_prefijo_extendido(
+        &std::fs::canonicalize(fichero).unwrap_or_else(|_| fichero.to_path_buf()),
+    )
+    .display()
+    .to_string();
 
     let argumentos: Vec<String> = resto
         .iter()
@@ -135,71 +131,56 @@ pub fn verificar(
 
     // Sin shell: el programa y sus argumentos van por separado, así que nada de lo que venga en un
     // nombre de fichero puede convertirse en otra orden.
-    let hijo = Command::new(programa)
-        .args(&argumentos)
-        .current_dir(directorio_de_trabajo)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-
-    let mut hijo = match hijo {
-        Ok(h) => h,
-        Err(e) => {
+    let (exito, estado, salida, errores) = match ejecutar_con_tope_y_temporales_dentro(
+        programa,
+        &argumentos,
+        directorio_de_trabajo,
+        tiempo_maximo,
+    ) {
+        DesenlaceDeOrden::Terminada {
+            exito,
+            estado,
+            salida,
+            errores,
+            ..
+        } => (exito, estado, salida, errores),
+        DesenlaceDeOrden::NoSeLanzo(e) => {
             return Veredicto::NoSePudo {
                 motivo: format!("no se pudo lanzar «{programa}»: {e}"),
             }
         }
-    };
-
-    // Espera con tope. `Child` no sabe esperar con límite por sí solo, y un comprobador colgado no
-    // puede colgar un arnés pensado para vivir días.
-    let limite = Instant::now() + tiempo_maximo;
-    loop {
-        match hijo.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if Instant::now() >= limite {
-                    let _ = hijo.kill();
-                    let _ = hijo.wait();
-                    return Veredicto::NoSePudo {
-                        motivo: format!(
-                            "«{programa}» seguía trabajando tras {} segundos y se ha cortado",
-                            tiempo_maximo.as_secs()
-                        ),
-                    };
-                }
-                std::thread::sleep(LATIDO_ESPERA);
-            }
-            Err(e) => {
-                return Veredicto::NoSePudo {
-                    motivo: format!("no se pudo esperar a «{programa}»: {e}"),
-                }
+        DesenlaceDeOrden::Agotada => {
+            return Veredicto::NoSePudo {
+                motivo: format!(
+                    "«{programa}» seguía trabajando tras {} segundos y se ha cortado",
+                    tiempo_maximo.as_secs()
+                ),
             }
         }
-    }
-
-    let salida = match hijo.wait_with_output() {
-        Ok(s) => s,
-        Err(e) => {
+        DesenlaceDeOrden::NoSePudoEsperar(e) => {
+            return Veredicto::NoSePudo {
+                motivo: format!("no se pudo esperar a «{programa}»: {e}"),
+            }
+        }
+        DesenlaceDeOrden::SalidaIlegible(e) => {
             return Veredicto::NoSePudo {
                 motivo: format!("no se pudo leer la salida de «{programa}»: {e}"),
             }
         }
     };
 
-    if salida.status.success() {
+    if exito {
         return Veredicto::Pasa { orden: descripcion };
     }
 
     // Los comprobadores escriben sus errores por stderr, pero no todos: se juntan las dos salidas
     // para no perder el motivo del rechazo por una cuestión de canal.
-    let mut texto = String::from_utf8_lossy(&salida.stderr).trim().to_string();
+    let mut texto = errores.trim().to_string();
     if texto.is_empty() {
-        texto = String::from_utf8_lossy(&salida.stdout).trim().to_string();
+        texto = salida.trim().to_string();
     }
     if texto.is_empty() {
-        texto = format!("terminó con {} y sin decir nada", salida.status);
+        texto = format!("terminó con {estado} y sin decir nada");
     }
 
     Veredicto::NoPasa {
@@ -221,10 +202,11 @@ fn recortar(texto: &str, maximo: usize) -> String {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn sin_comprobador_el_canal_lo_dice_y_nombra_la_extension() {
-        // «sin verificar» se leyó en NatureLand como «verificada sin hallazgos», durante cuatro
+        // «sin verificar» se leyó en uso real como «verificada sin hallazgos», durante cuatro
         // entregas seguidas y en el único lenguaje de aquel proyecto.
         let veredicto = Veredicto::SinComprobador {
             extension: "cs".to_string(),

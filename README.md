@@ -28,7 +28,7 @@ El cuarto es probar otros modelos. Programator no está casado con el modelo con
 
 ## Para qué no sirve
 
-Contar solo lo que hace bien sería venderlo por encima de lo que da, así que aquí va la otra mitad. Todo lo que sigue está medido, y el detalle está en `evaluacion/desempeno-uso-real-natureland.md`.
+Contar solo lo que hace bien sería venderlo por encima de lo que da, así que aquí va la otra mitad. Todo lo que sigue está medido en una prueba de uso real, con catorce encargos sobre un proyecto de verdad, todos verificados contra el código.
 
 No le pidas que diagnostique la causa de un fallo. Es lo que peor hace con diferencia: en la prueba real acertó cero de doce, y las doce explicaciones sonaban plausibles. Si necesitas saber por qué algo se comporta como se comporta, mide tú; un modelo local no sustituye una medición.
 
@@ -116,8 +116,6 @@ El directorio `docs/` contiene lo que hace falta saber para usar el programa y p
 - `docs/instalacion-paso-a-paso.md`: Qué descarga el script de instalación, de dónde lo saca, cómo comprueba que es lo que debía ser, y qué hacer a mano si alguna de esas descargas falla o deja de estar disponible.
 - `docs/defectos-conocidos.md`: Documento de obligada consulta que detalla las limitaciones vigentes, las pruebas que requieren hardware real y los aspectos estructurales pospuestos.
 - `docs/pruebas-manuales.md`: Procedimientos de verificación sobre tarjeta gráfica y modelo real. Ninguna prueba automática enciende la tarjeta, así que esta es la única comprobación de la junta entre el arnés y el motor.
-- `docs/hoja-de-ruta.md`: Qué trae cada versión y qué está previsto a continuación, con el criterio que ordena las prioridades.
-- `docs/decisiones/`: Decisiones de arquitectura en vigor, con las alternativas que se descartaron y por qué.
 
 ## Sobre Celtilander
 

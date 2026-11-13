@@ -25,7 +25,7 @@ use std::path::Path;
 /// `PROGRAMATOR.md`, que ya sale compuesto de `normas_en_uso` (se instala así en el arranque), a
 /// este camino no lo compone nadie más. Componerlo en los dos sitios dejaría el marcador
 /// sustituido dos veces si algún día ambos textos compartieran uno; componerlo en ninguno es lo
-/// que le hizo prometer al modelo, en NatureLand, una compilación de `.cs` que no iba a ocurrir
+/// que le hizo prometer al modelo, en uso real, una compilación de `.cs` que no iba a ocurrir
 /// porque esa extensión no tenía comprobador configurado.
 pub(super) fn leer_instrucciones(
     carpeta: &Path,

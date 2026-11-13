@@ -1,0 +1,38 @@
+id = "E08"
+titulo = "SQL: los tres mejores clientes por país con funciones de ventana"
+familia = "oficio"
+entrega = "ventas.sql"
+colocar_en = "ventas.sql"
+herramientas = ["sqlite"]
+
+# Ejecuta la consulta sobre los datos básicos: si SQLite la rechaza, la entrega no compila.
+[compilar]
+orden = "bash probar.sh ejecuta"
+
+[[comprobaciones]]
+nombre = "resultado_con_datos_basicos"
+orden = "bash probar.sh resultado_con_datos_basicos"
+
+[[comprobaciones]]
+nombre = "solo_cuenta_las_ventas_de_2025"
+orden = "bash probar.sh solo_cuenta_las_ventas_de_2025"
+
+[[comprobaciones]]
+nombre = "un_pais_con_menos_de_tres_clientes"
+orden = "bash probar.sh un_pais_con_menos_de_tres_clientes"
+
+[[comprobaciones]]
+nombre = "el_porcentaje_es_sobre_el_total_del_pais"
+orden = "bash probar.sh el_porcentaje_es_sobre_el_total_del_pais"
+
+[[texto]]
+nombre = "usa funciones de ventana"
+patron = "OVER"
+minimo = 1
+ignorar_mayusculas = true
+
+[[texto]]
+nombre = "propone un indice"
+patron = "CREATE INDEX"
+minimo = 1
+ignorar_mayusculas = true

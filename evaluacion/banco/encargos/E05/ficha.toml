@@ -1,0 +1,50 @@
+id = "E05"
+titulo = "Python: decorador de reintentos con espera exponencial"
+familia = "oficio"
+entrega = "reintentos.py"
+colocar_en = "reintentos.py"
+herramientas = ["python"]
+
+[compilar]
+orden = "python3 -m py_compile reintentos.py"
+
+[[comprobaciones]]
+nombre = "conserva_nombre_y_docstring"
+orden = "python3 adversarias.py conserva_nombre_y_docstring"
+
+[[comprobaciones]]
+nombre = "devuelve_el_valor_tras_fallar"
+orden = "python3 adversarias.py devuelve_el_valor_tras_fallar"
+
+[[comprobaciones]]
+nombre = "funciona_sin_valor_de_retorno"
+orden = "python3 adversarias.py funciona_sin_valor_de_retorno"
+
+[[comprobaciones]]
+nombre = "relanza_la_ultima_excepcion"
+orden = "python3 adversarias.py relanza_la_ultima_excepcion"
+
+[[comprobaciones]]
+nombre = "no_reintenta_excepciones_no_listadas"
+orden = "python3 adversarias.py no_reintenta_excepciones_no_listadas"
+
+[[comprobaciones]]
+nombre = "la_espera_es_exponencial_sin_jitter"
+orden = "python3 adversarias.py la_espera_es_exponencial_sin_jitter"
+
+[[comprobaciones]]
+nombre = "el_jitter_cambia_las_esperas"
+orden = "python3 adversarias.py el_jitter_cambia_las_esperas"
+
+[[comprobaciones]]
+nombre = "intentos_cero_no_produce_un_typeerror"
+orden = "python3 adversarias.py intentos_cero_no_produce_un_typeerror"
+
+[[comprobaciones]]
+nombre = "sus_pruebas_pasan_sin_dormir"
+orden = "python3 adversarias.py sus_pruebas_pasan_sin_dormir"
+
+[[texto]]
+nombre = "tiene pruebas con unittest"
+patron = "unittest"
+minimo = 1

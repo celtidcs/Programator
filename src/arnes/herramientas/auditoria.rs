@@ -1,5 +1,5 @@
 //! Corrige, en el texto que el modelo publica, la línea citada en un hallazgo de auditoría contra
-//! la línea real del fichero (INC-N08 e INC-N10 de NatureLand).
+//! la línea real del fichero (visto en uso real).
 //!
 //! **Lo que arregla y lo que no.** El modelo entiende mal SOLID y cuenta mal las líneas; eso es
 //! comprensión suya y aquí no se toca. Lo que sí se puede hacer, sin entender nada de lo que dice
@@ -29,13 +29,17 @@ use super::super::Ambito;
 const TIPOS_RECONOCIDOS: &[&str] = &["HARDCODEO", "DUPLICADO", "TAMAÑO", "SOLID"];
 
 /// Un hallazgo de auditoría ya separado en sus campos, antes de verificar nada.
-struct Hallazgo<'a> {
-    tipo: &'a str,
-    fichero: &'a str,
-    miembro: &'a str,
-    linea_citada: usize,
-    literal: &'a str,
-    consecuencia: &'a str,
+///
+/// Público porque, además del arnés, lo usa el banco de modelos para contar aciertos e inventados
+/// en una auditoría.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hallazgo<'a> {
+    pub tipo: &'a str,
+    pub fichero: &'a str,
+    pub miembro: &'a str,
+    pub linea_citada: usize,
+    pub literal: &'a str,
+    pub consecuencia: &'a str,
 }
 
 /// Qué salió de buscar el literal de un hallazgo dentro del fichero real.
@@ -50,6 +54,37 @@ enum Verificacion {
     FicheroIlegible,
 }
 
+/// Los seis campos de una línea con la forma del formato formal, como texto y sin interpretar.
+///
+/// Es solo el corte por `|`: no mira si el tipo es reconocido ni si la línea es un número. Lo usa
+/// [`separar_hallazgo`], que añade las reglas del arnés, y el banco de modelos, que acepta
+/// cualquier tipo y lee la línea aunque el arnés ya la haya anotado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CamposDeHallazgo<'a> {
+    pub tipo: &'a str,
+    pub fichero: &'a str,
+    pub miembro: &'a str,
+    pub linea: &'a str,
+    pub literal: &'a str,
+    pub consecuencia: &'a str,
+}
+
+/// Corta una línea en exactamente seis campos separados por `|`, recortados; `None` si no son seis.
+pub fn separar_campos(linea: &str) -> Option<CamposDeHallazgo<'_>> {
+    let campos: Vec<&str> = linea.split('|').map(str::trim).collect();
+    let [tipo, fichero, miembro, linea, literal, consecuencia] = campos[..] else {
+        return None;
+    };
+    Some(CamposDeHallazgo {
+        tipo,
+        fichero,
+        miembro,
+        linea,
+        literal,
+        consecuencia,
+    })
+}
+
 /// Separa una línea en los seis campos del formato formal, si tiene esa forma exacta.
 ///
 /// `None` para cualquier cosa que no encaje: exactamente seis campos separados por `|`, con el
@@ -57,22 +92,22 @@ enum Verificacion {
 /// vacío. Una línea de prosa normal, o un hallazgo con un literal que contenga su propio `|` (un
 /// fragmento de SQL, por ejemplo), no encaja y se deja tal cual: es una limitación conocida, no un
 /// fallo silencioso, porque la línea nunca se toca.
-fn separar_hallazgo(linea: &str) -> Option<Hallazgo<'_>> {
-    let campos: Vec<&str> = linea.split('|').map(str::trim).collect();
-    let [tipo, fichero, miembro, linea_citada, literal, consecuencia] = campos[..] else {
-        return None;
-    };
-    if !TIPOS_RECONOCIDOS.contains(&tipo) || fichero.is_empty() || literal.is_empty() {
+pub fn separar_hallazgo(linea: &str) -> Option<Hallazgo<'_>> {
+    let campos = separar_campos(linea)?;
+    if !TIPOS_RECONOCIDOS.contains(&campos.tipo)
+        || campos.fichero.is_empty()
+        || campos.literal.is_empty()
+    {
         return None;
     }
-    let linea_citada = linea_citada.parse::<usize>().ok()?;
+    let linea_citada = campos.linea.parse::<usize>().ok()?;
     Some(Hallazgo {
-        tipo,
-        fichero,
-        miembro,
+        tipo: campos.tipo,
+        fichero: campos.fichero,
+        miembro: campos.miembro,
         linea_citada,
-        literal,
-        consecuencia,
+        literal: campos.literal,
+        consecuencia: campos.consecuencia,
     })
 }
 
@@ -165,6 +200,40 @@ mod pruebas {
         }
         let ambito = Ambito::nuevo(dir.path()).unwrap();
         (dir, ambito)
+    }
+
+    #[test]
+    fn separar_hallazgo_devuelve_los_seis_campos_recortados() {
+        let hallazgo = separar_hallazgo(" SOLID | f.cs | Clase | 12 | class X | partirla ");
+
+        assert_eq!(
+            hallazgo,
+            Some(Hallazgo {
+                tipo: "SOLID",
+                fichero: "f.cs",
+                miembro: "Clase",
+                linea_citada: 12,
+                literal: "class X",
+                consecuencia: "partirla",
+            })
+        );
+    }
+
+    #[test]
+    fn separar_campos_no_interpreta_el_tipo_ni_la_linea() {
+        let campos =
+            separar_campos("VALIDACION | r.rs | f | 9 (corregida; el modelo dijo 3) | x | y");
+
+        assert_eq!(
+            campos.map(|c| (c.tipo, c.linea)),
+            Some(("VALIDACION", "9 (corregida; el modelo dijo 3)"))
+        );
+        assert_eq!(separar_campos("a | b | c"), None);
+    }
+
+    #[test]
+    fn separar_hallazgo_rechaza_una_linea_de_prosa() {
+        assert_eq!(separar_hallazgo("No hay hallazgos."), None);
     }
 
     #[test]

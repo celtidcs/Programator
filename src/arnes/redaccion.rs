@@ -90,6 +90,11 @@ pub fn tabla_de_herramientas() -> String {
 mod pruebas {
     use super::*;
 
+    /// La huella SHA-256, en minúsculas, del nombre del proyecto privado en que se midió al
+    /// principio.
+    const HUELLA_DEL_PROYECTO_PRIVADO: &str =
+        "3142c9009eac67fbc0354e37317b3ab3af42a3c01a5b9a315595989fddda539d";
+
     #[test]
     fn la_tabla_trae_los_concedibles_con_sus_argumentos_exactos() {
         let tabla = tabla_de_herramientas();
@@ -159,40 +164,34 @@ mod pruebas {
     }
 
     #[test]
-    fn ninguna_fila_de_desempeno_puede_ir_sin_cifra_y_sin_fecha() {
-        // La regla dura del §6 de la especificación. Es lo que habría impedido que la fila de
-        // «diagnosticar» —«lo mejor que hace»— sobreviviera a la medición que la desmentía: 0 de 12.
-        let fragmento = std::fs::read_to_string("plantillas/desempeno-medido.md")
-            .expect("el fragmento de desempeño está en el repositorio");
+    fn la_guia_no_nombra_el_proyecto_privado_en_que_se_midio_al_principio() {
+        // El proyecto privado en que se midió al principio sirvió para desarrollar Programator,
+        // no para los usuarios. La guía es lo que llega a los proyectos de otros, y no lo nombra.
+        let guia = std::fs::read_to_string("plantillas/como-encargar-a-programator.md")
+            .expect("la guía está en el repositorio");
 
-        let filas: Vec<&str> = fragmento
-            .lines()
-            .filter(|l| l.starts_with('|') && !l.contains("---") && !l.contains("Medida"))
-            .collect();
-        assert!(!filas.is_empty(), "el fragmento no tiene ninguna fila");
+        // Su nombre tampoco se escribe aquí: va su huella SHA-256 en minúsculas.
+        assert!(!crate::ficheros::nombra_alguna_huella(
+            &guia,
+            &[HUELLA_DEL_PROYECTO_PRIVADO]
+        ));
+    }
 
-        for fila in filas {
-            // Una fila es «| clase | medida | fecha |», así que al partir por la barra quedan
-            // cinco trozos y los útiles son el segundo y el tercero. Se miran por separado a
-            // propósito: comprobar «hay algún dígito en la fila» dejaría pasar una fila cuya
-            // única cifra fuera la de la fecha, que es exactamente la forma que tenía la frase
-            // que costó una tarde: «diagnosticar, lo mejor que hace», con su fecha detrás.
-            let celdas: Vec<&str> = fila.split('|').collect();
-            assert_eq!(
-                celdas.len(),
-                5,
-                "la fila no tiene las tres columnas de la tabla: {fila}"
-            );
+    #[test]
+    fn la_guia_explica_el_encargo_en_una_linea_del_canal() {
+        // La guía que Programator publica explica el encargo con la forma del resto de agentes, una línea que empieza por `Para Programator`,
+        // y el encabezado solo como forma antigua.
+        let guia = std::fs::read_to_string("plantillas/como-encargar-a-programator.md")
+            .expect("la guía está en el repositorio");
 
-            assert!(
-                celdas[2].chars().any(|c| c.is_ascii_digit()),
-                "la columna de medida no trae ninguna cifra: {fila}"
-            );
-            assert!(
-                celdas[3].contains("/2026") || celdas[3].contains("/2027"),
-                "la columna de fecha no trae ninguna fecha: {fila}"
-            );
-        }
+        assert!(guia.contains("\nPara Programator: nombre corto del encargo.\n"));
+        assert!(guia.contains("LATIDO: 2026-11-13 16:05:00"));
+        assert!(guia.contains("con copia a Programator"));
+        assert!(guia.contains("la forma antigua"));
+        assert!(
+            !guia.contains("```markdown\n## Para Programator"),
+            "ningún ejemplo enseña ya el encabezado"
+        );
     }
 
     #[test]

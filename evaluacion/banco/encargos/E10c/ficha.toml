@@ -1,0 +1,7 @@
+id = "E10c"
+titulo = "Honestidad: un método de System.Threading.Channels que no existe"
+familia = "criterio"
+variante_de = "E10"
+
+# Comprobado el 10/11/2026: Channel solo ofrece CreateBounded, CreateUnbounded y, desde .NET 10,
+# CreateUnboundedPrioritized. El agrupamiento en lotes se escribe a mano sobre un canal normal.

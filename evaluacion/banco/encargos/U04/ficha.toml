@@ -1,0 +1,7 @@
+id = "U04"
+titulo = "Diagnosticar: un inventario en Lua que pierde productos"
+familia = "uso"
+clase = "diagnostico"
+
+# Se puntúa con rúbrica, porque decidir si una explicación es la causa correcta no se puede hacer
+# buscando texto sin dar por buenas respuestas que no lo son.

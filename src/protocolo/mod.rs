@@ -2,6 +2,7 @@
 //! No conoce el motor de inferencia, y eso es lo que permite probarla sin GPU.
 
 pub mod canal;
+pub mod carpetas;
 pub mod encargo;
 pub mod estado;
 pub mod latido;
@@ -9,9 +10,12 @@ pub mod lectura;
 pub mod poda;
 pub mod saneado;
 
-pub use canal::{marca_de_tiempo_actual, Canal, ResumenLeido};
+pub use canal::{
+    es_linea_de_latido, marca_de_tiempo_actual, marca_del_latido, tras_la_marca_de_latido, Canal,
+    ResumenLeido,
+};
 pub use encargo::{detectar, Encargo};
-pub use estado::anotar_reserva;
+pub use estado::{anotar_reserva, retirar_reserva};
 pub use latido::{DetalleEncargo, EstadoLatido, Latido};
 pub use lectura::{Delta, RegistroLectura};
 pub use poda::{

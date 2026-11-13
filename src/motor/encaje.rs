@@ -116,8 +116,8 @@ pub fn decidir(pesos: &PesoDelModelo, kv_por_capa: u64, libre: u64, margen: u64)
     // Todas las capas caben, pero no junto con `fuera_de_capa`: es el desenlace `Parcial { en_gpu:
     // total, .. }`, el único que el bucle de más abajo no puede alcanzar porque `(1..total)`
     // excluye `n == total` por construcción. Se prueba aquí, entre descartar el modelo entero y
-    // bajar a `total - 1`, porque es exactamente ese paso el que faltaba: en la tarjeta del
-    // Director es el desenlace más probable —cuarenta capas que caben pero no junto a `token_embd`
+    // bajar a `total - 1`, porque es exactamente ese paso el que faltaba: en la tarjeta en
+    // que se midió es el desenlace más probable —cuarenta capas que caben pero no junto a `token_embd`
     // y `output`— y sin este caso se contestaría 39 en vez de 40.
     if coste_de_las_ultimas(pesos, total, kv_por_capa).is_some_and(|c| c <= disponible) {
         return Encaje::Parcial {
@@ -349,7 +349,7 @@ fn redactar_aviso(encaje: &Encaje, coste: Option<u64>, gpu: Option<&Gpu>) -> Str
         Encaje::Parcial { en_gpu, total } => {
             let fuera = total - en_gpu;
             // Concordancia: con una sola capa fuera, «las 1 restantes irán» es exactamente lo que
-            // el Director vio impreso el 22/09/2026 al bajar el contexto a 16k. Un informe que se
+            // se vio impreso el 22/09/2026 al bajar el contexto a 16k. Un informe que se
             // lee en cada arranque no puede estar mal escrito.
             let cola = if fuera == 1 {
                 "la restante irá por CPU".to_string()
@@ -372,7 +372,7 @@ fn redactar_aviso(encaje: &Encaje, coste: Option<u64>, gpu: Option<&Gpu>) -> Str
 }
 
 /// Factor de conversión de mebibytes a bytes (§4.3).
-const BYTES_POR_MIB: u64 = 1024 * 1024;
+pub const BYTES_POR_MIB: u64 = 1024 * 1024;
 
 /// Factor de conversión de bytes a gibibytes en coma flotante (§4.3).
 const BYTES_POR_GIB_F64: f64 = 1024.0 * 1024.0 * 1024.0;
@@ -535,7 +535,7 @@ mod pruebas {
         // libres caben todas, pero el modelo entero —que sí suma esos 50— no (440 + 50 = 490 >
         // 440). El bucle `(1..total).rev()` excluye `n == total` por construcción, así que sin
         // este caso el resultado sería `Parcial { en_gpu: 3, .. }`, una capa menos de las que en
-        // realidad caben: es la tarjeta del Director, donde las 40 capas de Devstral caben pero
+        // realidad caben: es la tarjeta en que se midió, donde las 40 capas de Devstral caben pero
         // sumarles `token_embd` y `output` ya no.
         let encaje = decidir(&pesos_de_juguete(), 10, 440, 0);
         assert_eq!(
@@ -591,7 +591,7 @@ mod pruebas {
     fn el_caso_real_de_devstral_en_una_4070_ti_super() {
         // 40 capas de 350 MiB, 1,2 GiB fuera de capa, 85 MiB de caché por capa y 14,93 GiB de
         // presupuesto menos 1 GiB de margen. Comprueba que la decisión es parcial y razonable, no un
-        // número exacto: los pesos reales los dará el GGUF cuando el Director lo descargue.
+        // número exacto: los pesos reales los dará el GGUF cuando se descargue.
         let pesos = PesoDelModelo {
             por_capa: vec![350 * 1024 * 1024; 40],
             fuera_de_capa: 1_200 * 1024 * 1024,
@@ -630,6 +630,7 @@ mod pruebas_resolver {
             capas_gpu,
             cache_kv: "q8_0".to_string(),
             paralelo: 1,
+            empezar_en_frio: true,
             margen_vram_mib: 0,
             umbral_aviso_contexto: 70,
             bytes_por_token: 4,

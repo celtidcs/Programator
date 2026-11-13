@@ -83,7 +83,7 @@ pub fn componer_informe(datos: &DatosDeArranque) -> String {
     // Última a propósito: si no está fijada, `main` imprime justo debajo, sin nada entre medias,
     // la línea que confirma qué carpeta se usó de verdad (recordada o elegida en el diálogo). Antes
     // iba primera y las cuatro filas de hardware se interponían entre las dos líneas de carpeta,
-    // que el Director encontró confuso al leerlas separadas (2026-10-01).
+    // lo que resultaba confuso al leerlas separadas.
     lineas.push(fila(
         "Carpeta de trabajo:",
         &describir_carpeta(datos.carpeta, datos.preguntar_siempre),
@@ -105,9 +105,8 @@ fn describir_carpeta(carpeta: Option<&Path>, preguntar_siempre: bool) -> String 
 
 /// La línea del informe cuando no hay carpeta fijada y `preguntar_siempre` está puesto.
 ///
-/// «NO FIJA» y no «no fijada»: el Director señaló que «no fijada» se lee como si el arnés hubiera
-/// fallado al intentar fijarla, cuando en realidad es que `[carpeta] ruta` no está en el TOML
-/// (2026-10-01).
+/// «NO FIJA» y no «no fijada»: «no fijada» se lee como si el arnés hubiera
+/// fallado al intentar fijarla, cuando en realidad es que `[carpeta] ruta` no está en el TOML.
 const SIN_CARPETA_PREGUNTANDO: &str =
     "NO FIJA (elige la carpeta de trabajo en la ventana emergente)";
 
@@ -179,7 +178,8 @@ const BYTES_POR_GIB_F64: f64 = 1024.0 * 1024.0 * 1024.0;
 ///
 /// Deliberadamente distinta de la `en_gib` de `motor::encaje`, que usa punto: aquella cifra la lee
 /// una máquina (se compara con otras cifras internas) y esta la lee una persona. No se unifican.
-fn en_gib(bytes: u64) -> String {
+/// `pub(crate)` porque la revisión de modelos dice con ella el tamaño de cada fichero.
+pub(crate) fn en_gib(bytes: u64) -> String {
     let gib = bytes as f64 / BYTES_POR_GIB_F64;
     format!("{gib:.1} GiB").replace('.', ",")
 }
@@ -255,7 +255,7 @@ mod pruebas {
         // `main` imprime justo después de este informe la línea que confirma la carpeta resuelta
         // (recordada o elegida en el diálogo). Si «Carpeta de trabajo» no fuera la última fila de
         // aquí, las de GPU/Motor/Modelo/Encaje quedarían metidas entre las dos líneas de carpeta,
-        // que es la confusión que el Director señaló el 2026-10-01.
+        // que es la confusión que se quiere evitar.
         let texto = componer_informe(&datos_completos());
         let posicion_carpeta = texto.find("Carpeta de trabajo:").expect("falta la fila");
         let posicion_encaje = texto.find("Encaje:").expect("falta la fila");

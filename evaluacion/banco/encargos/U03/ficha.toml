@@ -1,0 +1,55 @@
+id = "U03"
+titulo = "Función acotada: cuota mensual de un préstamo"
+familia = "uso"
+clase = "funcion_acotada"
+entrega = "cuota.py"
+colocar_en = "cuota.py"
+herramientas = ["python"]
+
+# Los valores esperados se calcularon aparte el 10/11/2026 con la fórmula del enunciado. Uno de
+# ellos, el de 10000 al 5 % en 12 meses, va en el propio enunciado como referencia.
+
+[compilar]
+orden = "python3 -m py_compile cuota.py"
+
+[[comprobaciones]]
+nombre = "el_valor_del_enunciado"
+orden = "python3 comprobar.py el_valor_del_enunciado"
+
+[[comprobaciones]]
+nombre = "una_hipoteca_a_treinta_anos"
+orden = "python3 comprobar.py una_hipoteca_a_treinta_anos"
+
+[[comprobaciones]]
+nombre = "sin_intereses"
+orden = "python3 comprobar.py sin_intereses"
+
+[[comprobaciones]]
+nombre = "interes_con_decimales"
+orden = "python3 comprobar.py interes_con_decimales"
+
+[[comprobaciones]]
+nombre = "un_solo_mes"
+orden = "python3 comprobar.py un_solo_mes"
+
+[[comprobaciones]]
+nombre = "rechaza_capital_no_positivo"
+orden = "python3 comprobar.py rechaza_capital_no_positivo"
+
+[[comprobaciones]]
+nombre = "rechaza_meses_no_positivos"
+orden = "python3 comprobar.py rechaza_meses_no_positivos"
+
+[[comprobaciones]]
+nombre = "rechaza_interes_negativo"
+orden = "python3 comprobar.py rechaza_interes_negativo"
+
+[[texto]]
+nombre = "solo biblioteca estándar: sin numpy"
+patron = "numpy"
+maximo = 0
+
+[[texto]]
+nombre = "la firma exacta"
+patron = "def cuota_mensual("
+minimo = 1

@@ -11,11 +11,13 @@ pub use self::guia::{instalar_normas, publicar_guia};
 pub use self::mensajes::{
     cadencia_sondeo, hay_registro_previo, mensaje_argumento_falta_valor,
     mensaje_argumento_no_entendido, mensaje_canal_parcialmente_ilegible,
-    mensaje_carpeta_de_trabajo, mensaje_desenlace_atendidos, mensaje_desenlace_motor_cargando,
-    mensaje_desenlace_sin_encargos, mensaje_fallo_arranque, mensaje_fallo_pasada_ciclo,
-    mensaje_fallo_publicar_guia, mensaje_fallo_sondeo_canal, mensaje_guia_publicada,
-    mensaje_instrucciones_instaladas, mensaje_listo_primer_arranque, mensaje_listo_reinicio,
-    mensaje_novedades_atendiendo, mensaje_orientacion_modelo_pago,
-    mensaje_reanudacion_encargo_esperando_motor, mensaje_version,
+    mensaje_carpeta_de_trabajo, mensaje_carpeta_inexistente, mensaje_desenlace_atendidos,
+    mensaje_desenlace_motor_cargando, mensaje_desenlace_sin_encargos, mensaje_fallo_arranque,
+    mensaje_fallo_pasada_ciclo, mensaje_fallo_publicar_guia, mensaje_fallo_sondeo_canal,
+    mensaje_guia_publicada, mensaje_instrucciones_instaladas, mensaje_listo_primer_arranque,
+    mensaje_listo_reinicio, mensaje_novedades_atendiendo, mensaje_orientacion_modelo_pago,
+    mensaje_publicaciones_fallidas, mensaje_reanudacion_encargo_esperando_motor,
+    mensaje_sin_carpeta_elegida, mensaje_version, ORIGEN_VENTANA_EMERGENTE,
+    TITULO_DEL_DIALOGO_DE_CARPETA,
 };
 pub use self::sondeo::{hay_novedades, Sondeo};

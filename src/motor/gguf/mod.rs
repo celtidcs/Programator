@@ -421,8 +421,8 @@ mod pruebas {
     /// modelo descargado en `modelos/devstral-small-2-24b-Q4_K_M.gguf` —el mismo nombre de fichero
     /// que fija `programator.ejemplo.toml`—, relativo a la raíz del paquete, que es desde donde
     /// corre `cargo test`. Se ignora por defecto: sin ese GGUF de varios gigabytes no hay nada que
-    /// pesar, y si el fichero no está, no se deja reventar con un pánico de Rust y su traza —el
-    /// Director la va a ejecutar a mano, y un pánico ahí es mala guía—: se avisa y se sale. Se deja
+    /// pesar, y si el fichero no está, no se deja reventar con un pánico de Rust y su traza —se
+    /// ejecuta a mano, y un pánico ahí es mala guía—: se avisa y se sale. Se deja
     /// puesta para el futuro, igual que la sonda de `motor::hardware`.
     ///
     /// **La igualdad no puede ser exacta.** `fin_datos` es el máximo de `offset + bytes` **sin

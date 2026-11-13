@@ -25,6 +25,16 @@ pub enum DecisionReintento {
     Abortar(String),
 }
 
+/// Cuántas veces se le preguntó al motor, en palabras. Sin reintentos, cada desenlace lo dice a su
+/// manera (`sin_reintentos`); con uno o más, siempre igual.
+fn detalle_de_intentos(reintentos_realizados: u32, sin_reintentos: &str) -> String {
+    match reintentos_realizados {
+        0 => sin_reintentos.to_string(),
+        1 => "1 reintento (2 intentos en total)".to_string(),
+        n => format!("{n} reintentos ({} intentos en total)", n + 1),
+    }
+}
+
 /// Evalúa si corresponde reintentar la llamada al motor o abortar el encargo.
 ///
 /// Parámetros:
@@ -42,14 +52,7 @@ pub fn evaluar_reintento(
 ) -> DecisionReintento {
     match salud {
         EstadoServidor::NoDisponible => {
-            let intentos_totales = reintentos_realizados + 1;
-            let detalle_intentos = if intentos_totales == 1 {
-                "1 intento".to_string()
-            } else if reintentos_realizados == 1 {
-                "1 reintento (2 intentos en total)".to_string()
-            } else {
-                format!("{reintentos_realizados} reintentos ({intentos_totales} intentos en total)")
-            };
+            let detalle_intentos = detalle_de_intentos(reintentos_realizados, "1 intento");
             DecisionReintento::Abortar(format!(
                 "🔴 Programator no pudo completar el encargo: el motor no respondió tras {detalle_intentos} y la comprobación de salud indica que {salud}. Último error del motor: {error}"
             ))
@@ -61,16 +64,8 @@ pub fn evaluar_reintento(
                     espera,
                 }
             } else {
-                let intentos_totales = reintentos_realizados + 1;
-                let detalle_intentos = if reintentos_realizados == 0 {
-                    "0 reintentos (1 intento en total)".to_string()
-                } else if reintentos_realizados == 1 {
-                    "1 reintento (2 intentos en total)".to_string()
-                } else {
-                    format!(
-                        "{reintentos_realizados} reintentos ({intentos_totales} intentos en total)"
-                    )
-                };
+                let detalle_intentos =
+                    detalle_de_intentos(reintentos_realizados, "0 reintentos (1 intento en total)");
                 DecisionReintento::Abortar(format!(
                     "🔴 Programator no pudo completar el encargo: el motor no respondió tras {detalle_intentos}. Última comprobación de salud: {salud}. Último error del motor: {error}"
                 ))

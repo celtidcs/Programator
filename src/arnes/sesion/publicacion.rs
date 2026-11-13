@@ -7,9 +7,16 @@
 
 use crate::protocolo::ResumenLeido;
 
+/// El aviso en la terminal de un encargo que terminó sin invocar ninguna herramienta de entrega.
+pub(super) fn aviso_sin_entrega_en_la_terminal(de: &str) -> String {
+    format!(
+        "⚠️ Programator procesó el encargo de «{de}» pero no invocó herramientas de entrega («publicar» o «escribir_propuesta»). Se publica la respuesta directa en el canal."
+    )
+}
+
 /// Obtiene el texto base del cuerpo según el desenlace del encargo.
 ///
-/// Si el desenlace es `SinEntrega`, antepone un aviso visible y explícito (INC-N02)
+/// Si el desenlace es `SinEntrega`, antepone un aviso visible y explícito
 /// advirtiendo de que no se invocó ninguna herramienta de entrega (`publicar` o `escribir_propuesta`).
 pub(super) fn cuerpo_base_desenlace(desenlace: &crate::arnes::ciclo::Desenlace) -> String {
     match desenlace {
@@ -22,8 +29,63 @@ pub(super) fn cuerpo_base_desenlace(desenlace: &crate::arnes::ciclo::Desenlace) 
                 format!("{aviso}\n\nRespuesta directa del modelo:\n\n{texto}")
             }
         }
-        crate::arnes::ciclo::Desenlace::Abortado(motivo) => motivo.clone(),
+        crate::arnes::ciclo::Desenlace::SinPublicar { texto, propuestas } => {
+            let aviso = aviso_sin_publicar(propuestas);
+            if texto.trim().is_empty() {
+                aviso
+            } else {
+                format!("{aviso}\n\nRespuesta directa del modelo:\n\n{texto}")
+            }
+        }
+        crate::arnes::ciclo::Desenlace::Cortado { texto, propuestas } => {
+            let aviso = aviso_cortado(propuestas);
+            if texto.trim().is_empty() {
+                aviso
+            } else {
+                format!("{aviso}\n\nLo que llegó a escribir:\n\n{texto}")
+            }
+        }
+        crate::arnes::ciclo::Desenlace::Abortado(motivo)
+        | crate::arnes::ciclo::Desenlace::FueraDePlazo(motivo) => motivo.clone(),
     }
+}
+
+/// El aviso de un encargo cuya última respuesta cortó el motor. Dice que no fue el modelo quien
+/// cerró, y qué quedó en disco, porque quien lo lee decide con eso si repite el encargo o lo parte.
+pub(super) fn aviso_cortado(propuestas: &[String]) -> String {
+    let entregado = if propuestas.is_empty() {
+        "No llegó a entregar nada en este encargo.".to_string()
+    } else {
+        let lista = propuestas
+            .iter()
+            .map(|p| format!("«{p}»"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Lo que sí quedó en disco: {lista}.")
+    };
+    format!(
+        "⚠️ El motor cortó la respuesta del modelo antes de que terminara: se acabó el contexto \
+         (o el tope de tokens). No es que el modelo cerrara sin entregar. {entregado}"
+    )
+}
+
+/// El aviso de un encargo que escribió propuestas y cerró sin llamar a `publicar`. Nombra lo que
+/// sí quedó en disco: el arnés no niega una entrega que hizo.
+pub(super) fn aviso_sin_publicar(propuestas: &[String]) -> String {
+    let lista = propuestas
+        .iter()
+        .map(|p| format!("«{p}»"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (sujeto, verbo) = if propuestas.len() == 1 {
+        ("la propuesta", "quedó")
+    } else {
+        ("las propuestas", "quedaron")
+    };
+    format!(
+        "⚠️ Programator escribió {sujeto} {lista}, que {verbo} en disco, pero cerró el encargo \
+         sin llamar a «publicar»."
+    )
 }
 
 /// Añade al cuerpo que publicará el modelo el resultado de comprobar sus propuestas.
@@ -68,18 +130,17 @@ pub(super) fn construir_resumen_leido(buzones: &[(String, String)]) -> ResumenLe
     }
 }
 
-/// Describe hasta dónde se ha leído un buzón: hasta su último `**LATIDO:**` propio (nunca uno
-/// citado con `> `, que sería uno falsificado por el modelo de otro agente), o «leído entero» si
-/// no hay ninguno.
+/// Describe hasta dónde se ha leído un buzón: hasta su último latido propio, con o sin negrita
+/// (nunca uno citado con `> `, que sería uno falsificado por el modelo de otro agente), o «leído
+/// entero» si no hay ninguno.
 pub(super) fn hasta_donde_se_leyo(contenido: &str) -> String {
     let ultimo_latido = contenido
         .lines()
         .rev()
-        .find(|linea| linea.starts_with("**LATIDO:**"));
+        .find_map(crate::protocolo::tras_la_marca_de_latido);
 
     match ultimo_latido {
-        Some(linea) => {
-            let resto = linea.trim_start_matches("**LATIDO:**").trim();
+        Some(resto) => {
             let hora = resto.split(" — ").next().unwrap_or(resto).trim();
             format!("hasta su latido {hora}")
         }
@@ -105,10 +166,10 @@ pub(super) fn mensaje_fallo_publicar_desenlace(
 /// ¿Debe el fallo al publicar el **cierre** de un encargo impedir que el registro avance?
 ///
 /// Si el encargo entregó al menos una propuesta y todos sus veredictos ya habían salido al canal
-/// por la vía inmediata (`Canal::publicar_entrega` al escribir la propuesta, incidencia C2 de
-/// NatureLand), el fallo se queda en el resumen de cierre: la entrega ya quedó anotada. Reatender
+/// por la vía inmediata (`Canal::publicar_entrega` al escribir la propuesta, visto en uso
+/// real), el fallo se queda en el resumen de cierre: la entrega ya quedó anotada. Reatender
 /// el encargo solo produciría una segunda respuesta que contradice a la primera —exactamente lo que
-/// documenta INC-N13 de NatureLand, dos pasadas sobre el mismo encargo 027-bis, la segunda sin
+/// se vio en uso real, dos pasadas sobre el mismo encargo 027-bis, la segunda sin
 /// entrega y peor que la primera. Si no hubo ninguna propuesta (p. ej. `SinEntrega` o `Abortado`), o
 /// si queda algún veredicto sin publicar, el fallo sí pierde información real y hay que reintentar.
 pub(super) fn fallo_de_cierre_pierde_el_encargo(
@@ -128,9 +189,36 @@ pub(super) fn mensaje_fallo_publicar_cierre_con_entrega_ya_registrada(
         "⚠️ No se pudo publicar el resumen de cierre del encargo de «{solicitante}» en el canal: {fallo}.\n\
          Consecuencia: la propuesta ya había quedado anotada en el canal al entregarse, así que no se \
          pierde trabajo; solo falta el resumen final. El registro avanza igual: el encargo no se \
-         reatenderá (INC-N13).\n\
+         reatenderá, para no dar una segunda respuesta que contradiga la primera.\n\
          Qué hacer: no hace falta nada; si el fallo persiste en el siguiente ciclo, comprueba que el \
          archivo del canal no esté bloqueado por otro proceso o protegido contra escritura."
+    )
+}
+
+/// Redacta el aviso de un encargo de revisión cuyo resultado no se pudo publicar. El registro
+/// avanza igual, porque lo hecho está en disco y repetirlo serían horas de banco.
+pub(super) fn mensaje_fallo_publicar_revision(
+    solicitante: &str,
+    fallo: &crate::error::Error,
+) -> String {
+    format!(
+        "⚠️ No se pudo publicar en el canal el resultado del encargo de revisión de «{solicitante}»: {fallo}.\n\
+         Consecuencia: lo hecho está en disco, en la carpeta del mes de `revisiones/` (`probados.toml`, \
+         la propuesta) y en las tandas del banco. El encargo no se repite, para no volver a descargar \
+         ni a pasar el banco.\n\
+         Qué hacer: comprueba que el archivo del canal no esté bloqueado o protegido contra escritura, \
+         y pide al que encargó la revisión que mire esa carpeta."
+    )
+}
+
+/// Redacta el aviso de una reserva que no se pudo quitar de `estado.md` al cerrar un encargo.
+pub(super) fn mensaje_fallo_liberar_reserva(linea: &str, fallo: &crate::error::Error) -> String {
+    format!(
+        "⚠️ No se pudo quitar de estado.md la reserva «{linea}»: {fallo}.\n\
+         Consecuencia: el encargo está cerrado, pero la reserva sigue anotada y los demás \
+         agentes la verán como viva.\n\
+         Qué hacer: comprueba que estado.md no esté bloqueado o protegido contra escritura y borra \
+         esa línea a mano de «## Reservas activas»."
     )
 }
 
@@ -183,6 +271,17 @@ mod pruebas {
     }
 
     #[test]
+    fn hasta_donde_se_leyo_reconoce_el_latido_del_canal() {
+        let contenido = "LATIDO: 2026-11-13 12:22:06\n\nPara Gemini 1: algo.\n\n\
+                          > LATIDO: 1999-01-01 00:00:00\n\n\
+                          LATIDO: 2026-11-13 13:19:25\n\nOtra cosa.\n";
+        assert_eq!(
+            hasta_donde_se_leyo(contenido),
+            "hasta su latido 2026-11-13 13:19:25"
+        );
+    }
+
+    #[test]
     fn mensaje_fallo_publicar_desenlace_explica_fallo_consecuencia_y_accion() {
         let err = crate::error::Error::Escritura {
             ruta: std::path::PathBuf::from(".gestor/canal/programator.md"),
@@ -212,6 +311,59 @@ mod pruebas {
         let desenlace_vacio = crate::arnes::ciclo::Desenlace::SinEntrega(String::new());
         let cuerpo_vacio = cuerpo_base_desenlace(&desenlace_vacio);
         assert!(cuerpo_vacio.contains("sin producir texto ni invocar herramientas"));
+    }
+
+    #[test]
+    fn cerrar_con_texto_tras_escribir_nombra_la_propuesta_y_no_niega_la_entrega() {
+        let desenlace = crate::arnes::ciclo::Desenlace::SinPublicar {
+            texto: "Ya está.".to_string(),
+            propuestas: vec!["cola.lua".to_string()],
+        };
+        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        assert!(cuerpo.contains("«cola.lua»"), "{cuerpo}");
+        assert!(cuerpo.contains("sin llamar a «publicar»"), "{cuerpo}");
+        assert!(!cuerpo.contains("no invocó herramientas"), "{cuerpo}");
+        assert!(cuerpo.contains("Respuesta directa del modelo:\n\nYa está."));
+    }
+
+    #[test]
+    fn una_respuesta_cortada_dice_que_la_corto_el_motor_y_no_que_no_entrego() {
+        let desenlace = crate::arnes::ciclo::Desenlace::Cortado {
+            texto: String::new(),
+            propuestas: Vec::new(),
+        };
+        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        assert!(cuerpo.contains("El motor cortó la respuesta"), "{cuerpo}");
+        assert!(cuerpo.contains("se acabó el contexto"), "{cuerpo}");
+        assert!(cuerpo.contains("No llegó a entregar nada"), "{cuerpo}");
+        assert!(!cuerpo.contains("no invocó herramientas"), "{cuerpo}");
+    }
+
+    #[test]
+    fn una_respuesta_cortada_nombra_lo_que_quedo_y_lo_que_llego_a_escribir() {
+        let desenlace = crate::arnes::ciclo::Desenlace::Cortado {
+            texto: "Ahora repaso".to_string(),
+            propuestas: vec!["cola.lua".to_string()],
+        };
+        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        assert!(
+            cuerpo.contains("Lo que sí quedó en disco: «cola.lua»."),
+            "{cuerpo}"
+        );
+        assert!(
+            cuerpo.contains("Lo que llegó a escribir:\n\nAhora repaso"),
+            "{cuerpo}"
+        );
+    }
+
+    #[test]
+    fn el_aviso_sin_publicar_con_varias_propuestas_las_nombra_todas() {
+        let aviso = aviso_sin_publicar(&["a.rs".to_string(), "a-002.rs".to_string()]);
+        assert!(
+            aviso.contains("las propuestas «a.rs», «a-002.rs»"),
+            "{aviso}"
+        );
+        assert!(aviso.contains("quedaron en disco"), "{aviso}");
     }
 
     #[test]

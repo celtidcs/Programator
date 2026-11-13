@@ -51,8 +51,8 @@ fn componentes_de_version(cadena: &str) -> Option<(u32, u32, u32)> {
 /// Antes esto era un `Option<String>`: `Some` con el aviso si había versión nueva, `None` en
 /// cualquier otro caso. Eso mezclaba dos desenlaces bien distintos bajo el mismo silencio: «se
 /// comprobó y ya tienes la última» y «no se pudo ni comprobar» (sin red, GitHub caído, tiempo
-/// agotado). El Director pidió distinguirlos, porque desde la terminal no hay forma de saber cuál
-/// de los dos ha pasado (2026-10-01).
+/// agotado). Hay que distinguirlos, porque desde la terminal no hay forma de saber cuál
+/// de los dos ha pasado.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Comprobacion {
     /// Hay una versión más nueva publicada: el aviso ya redactado, listo para imprimir.
@@ -185,7 +185,7 @@ mod pruebas {
     }
 
     #[test]
-    #[ignore = "toca la red de verdad (api.github.com): se lanza a mano, igual que las pruebas de GPU y GGUF de §3 de CLAUDE.md"]
+    #[ignore = "toca la red de verdad (api.github.com): se lanza a mano, igual que las pruebas de GPU y GGUF"]
     fn un_repositorio_que_no_contesta_a_tiempo_no_se_declara_version_nueva() {
         // Un tiempo de espera absurdamente corto contra la API real: la petición no puede
         // completarse a tiempo. Comprueba que un fallo de red se traduce en «no se pudo

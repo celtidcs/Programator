@@ -5,7 +5,7 @@
 //! proyecto de Godot y .NET y le entregó al modelo siete menciones de `cargo`, cuatro de `egui` y
 //! ninguna de los tres lenguajes que ese proyecto usa.
 
-/// El tope de tamaño. La versión que un agente reescribió a mano para NatureLand cumplía la misma
+/// El tope de tamaño. La versión que un agente reescribió a mano para un proyecto real cumplía la misma
 /// función en 6.688 bytes; 8.000 deja margen sin permitir que vuelva a crecer sin control.
 const TOPE_DE_BYTES: usize = 8_000;
 
@@ -15,15 +15,44 @@ const PROHIBIDAS: &[(&str, &str)] = &[
         "cargo",
         "es el gestor de Rust, y el proyecto anfitrión puede no usar Rust",
     ),
-    ("egui", "es la biblioteca de interfaz de MMCelt"),
+    ("egui", "es la biblioteca de interfaz de otro proyecto"),
     (
         "documentacion/",
-        "es la estructura documental de MMCelt, no la de todos",
+        "es la estructura documental de otro proyecto, no la de todos",
     ),
     ("Codex", "es un agente de otro equipo"),
-    ("mmcelt", "es el nombre de otro producto"),
     ("audit_checks", "es un fichero de otro repositorio"),
 ];
+
+/// Lo que no puede aparecer y tampoco se puede escribir aquí, porque es el nombre de un producto
+/// privado: va su huella SHA-256 en minúsculas, y se compara con la de cada palabra.
+const PROHIBIDAS_POR_HUELLA: &[(&str, &str)] = &[(
+    "572492d015c725a6402f7c450319e5d050e6f8cefa72034873ff5e1030ed3ee4",
+    "es el nombre de otro producto",
+)];
+
+fn huella(palabra: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(palabra.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// La huella de la primera palabra de `texto` que la tenga entre `huellas`.
+fn palabra_con_huella<'a>(
+    texto: &str,
+    huellas: &[(&'a str, &'a str)],
+) -> Option<(&'a str, &'a str)> {
+    texto
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|palabra| !palabra.is_empty())
+        .find_map(|palabra| {
+            let suya = huella(palabra);
+            huellas.iter().find(|(h, _)| *h == suya).copied()
+        })
+}
 
 fn plantilla() -> String {
     std::fs::read_to_string("plantillas/instrucciones-del-proyecto.md")
@@ -65,6 +94,20 @@ fn la_plantilla_no_nombra_ningun_proyecto_concreto() {
             "la plantilla dice «{prohibida}», y {motivo}"
         );
     }
+    if let Some((suya, motivo)) = palabra_con_huella(&texto, PROHIBIDAS_POR_HUELLA) {
+        panic!("la plantilla dice la palabra de huella {suya}, y {motivo}");
+    }
+}
+
+#[test]
+fn la_barrera_por_huella_caza_la_palabra_entera_y_no_un_trozo() {
+    let prueba = [(
+        "3928d2fb50c11791fed429ae38189f8bb36c8fdcefc57328d04b1381c39de380",
+        "ejemplo",
+    )];
+    assert_eq!(prueba[0].0, huella("encargo"));
+    assert!(palabra_con_huella("Atiende un ENCARGO.", &prueba).is_some());
+    assert!(palabra_con_huella("atiende los encargos", &prueba).is_none());
 }
 
 #[test]

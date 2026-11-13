@@ -20,26 +20,22 @@ pub fn publicar_guia(
     plantilla: &Path,
     destino: &str,
     contexto: u32,
-    desempeno: &Path,
+    desempeno: &str,
     comprobadores: &crate::arnes::verificacion::Comprobadores,
 ) -> Resultado<()> {
     let contenido = std::fs::read_to_string(plantilla).map_err(|causa| Error::Lectura {
         ruta: plantilla.to_path_buf(),
         causa,
     })?;
-    let cifras = std::fs::read_to_string(desempeno).map_err(|causa| Error::Lectura {
-        ruta: desempeno.to_path_buf(),
-        causa,
-    })?;
 
     // El repertorio y el desempeño se componen antes que el contexto: la guía es la única
     // plantilla que trae los tres marcadores, y componer en este orden es lo que la mantiene
     // fiable pieza a pieza en vez de a base de reescribirla a mano cada vez que algo cambia.
-    let contenido = crate::arnes::redaccion::componer_guia(&contenido, &cifras);
+    let contenido = crate::arnes::redaccion::componer_guia(&contenido, desempeno);
     let contenido = crate::arnes::normas::componer(&contenido, comprobadores);
 
     // La ventana la decide el TOML, así que escribirla a mano en la plantilla condena a las dos
-    // cifras a divergir: en NatureLand la guía decía 16.384 y el TOML 32.768, las dos eran ciertas
+    // cifras a divergir: en uso real la guía decía 16.384 y el TOML 32.768, las dos eran ciertas
     // y ninguna decía cuál mandaba. Quien dimensione un encargo lee aquí la que está en vigor.
     let contenido = contenido.replace(MARCADOR_CONTEXTO, &contexto.to_string());
 

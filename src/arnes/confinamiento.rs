@@ -25,6 +25,11 @@ impl Ambito {
         Ok(Self { raiz })
     }
 
+    /// La carpeta de trabajo, ya canónica.
+    pub fn raiz(&self) -> &Path {
+        &self.raiz
+    }
+
     /// Resuelve una ruta solicitada por el modelo, o la deniega.
     pub fn resolver(&self, relativa: &str) -> Resultado<PathBuf> {
         let solicitada = Path::new(relativa);

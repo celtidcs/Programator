@@ -1,0 +1,34 @@
+id = "E07"
+titulo = "Lua: cola FIFO con límite y metatablas"
+familia = "oficio"
+entrega = "cola.lua"
+colocar_en = "cola.lua"
+herramientas = ["lua"]
+
+# Solo carga el fichero: aquí se ve si un identificador con «ñ» o un error de sintaxis lo rompe.
+[compilar]
+orden = "lua5.4 -e 'assert(loadfile(\"cola.lua\"))'"
+
+[[comprobaciones]]
+nombre = "comportamiento_fifo_con_limite"
+orden = "lua5.4 probar.lua comportamiento_fifo_con_limite"
+
+[[comprobaciones]]
+nombre = "se_reutiliza_tras_vaciarse"
+orden = "lua5.4 probar.lua se_reutiliza_tras_vaciarse"
+
+[[comprobaciones]]
+nombre = "dos_colas_son_independientes"
+orden = "lua5.4 probar.lua dos_colas_son_independientes"
+
+[[comprobaciones]]
+nombre = "las_instancias_usan_metatabla"
+orden = "lua5.4 probar.lua las_instancias_usan_metatabla"
+
+[[comprobaciones]]
+nombre = "no_crea_variables_globales"
+orden = "lua5.4 probar.lua no_crea_variables_globales"
+
+[[comprobaciones]]
+nombre = "meter_y_sacar_son_de_coste_constante"
+orden = "lua5.4 probar.lua meter_y_sacar_son_de_coste_constante"

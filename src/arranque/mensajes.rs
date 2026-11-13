@@ -3,8 +3,10 @@
 //! Cada mensaje orienta al operador indicando qué falló (con su causa), qué consecuencia tiene
 //! para el ciclo y qué acción llevar a cabo (o si no se requiere ninguna).
 
+use crate::config::NOMBRE_DEL_FICHERO_DE_CONFIGURACION;
 use crate::error::Error;
 use crate::plataforma::{EJEMPLO_DE_RUTA, NOMBRE_DEL_EJECUTABLE};
+use crate::protocolo::carpetas::ruta_legible_de_la_guia;
 use std::path::Path;
 
 /// Redacta el mensaje de error fatal cuando Programator no puede ponerse en marcha.
@@ -16,7 +18,7 @@ use std::path::Path;
 pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
     let detalle_accion = match fallo {
         Error::Lectura { ruta, .. } => {
-            if ruta.ends_with("programator.toml") {
+            if ruta.ends_with(NOMBRE_DEL_FICHERO_DE_CONFIGURACION) {
                 "Comprueba que «programator.toml» existe junto al ejecutable (puedes copiar y \
                  adaptar «programator.ejemplo.toml») y que tienes permisos de lectura."
                     .to_string()
@@ -75,6 +77,27 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
         }
         Error::PodaInvalida(_) => {
             "Revisa el formato del buzón o documento que se intentaba podar.".to_string()
+        }
+        Error::Banco(_) => {
+            "Revisa la ficha o la configuración del banco que nombra el mensaje; el esquema está \
+             en «evaluacion/banco/encargos/README.md»."
+                .to_string()
+        }
+        Error::Registro(_) => {
+            "El registro de modelos solo lo escribe «--registro-anotar»: si está roto, bórralo y \
+             vuelve a anotar las tandas, que conservan todas las cifras."
+                .to_string()
+        }
+        Error::Aislamiento(_) => {
+            "Windows no dejó aislar la comprobación local. Si no se puede arreglar, «aislamiento \
+             = \"ninguno\"» en [comprobacion_local] la deja correr sin aislar, con todos los \
+             permisos del usuario."
+                .to_string()
+        }
+        Error::Revision(_) => {
+            "Revisa la sección [revision] de «programator.toml» y que Hugging Face responda \
+             desde este equipo."
+                .to_string()
         }
     };
 
@@ -150,18 +173,19 @@ pub fn mensaje_fallo_sondeo_canal(fallo: &Error) -> String {
 /// Se expresa en la unidad más legible: minutos exactos cuando no hay residuo, minutos y segundos
 /// cuando ambos son distintos de cero, y segundos cuando el intervalo es inferior a un minuto.
 pub fn cadencia_sondeo(intervalo_segundos: u64) -> String {
+    const SEGUNDOS_POR_MINUTO: u64 = 60;
     if intervalo_segundos == 0 {
         return "cada 0 segundos".to_string();
     }
-    if intervalo_segundos < 60 {
+    if intervalo_segundos < SEGUNDOS_POR_MINUTO {
         if intervalo_segundos == 1 {
             "cada segundo".to_string()
         } else {
             format!("cada {intervalo_segundos} segundos")
         }
     } else {
-        let minutos = intervalo_segundos / 60;
-        let segundos = intervalo_segundos % 60;
+        let minutos = intervalo_segundos / SEGUNDOS_POR_MINUTO;
+        let segundos = intervalo_segundos % SEGUNDOS_POR_MINUTO;
         if segundos == 0 {
             if minutos == 1 {
                 "cada minuto".to_string()
@@ -257,17 +281,21 @@ pub fn mensaje_instrucciones_instaladas(destino_normas: &Path) -> String {
 
 /// Redacta el aviso de publicación exitosa de la guía para el equipo en el canal.
 pub fn mensaje_guia_publicada() -> String {
-    "Publicada la guía para el resto del equipo en .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md."
-        .to_string()
+    format!(
+        "Publicada la guía para el resto del equipo en {}.",
+        ruta_legible_de_la_guia()
+    )
 }
 
 /// Redacta la orientación para el usuario sobre cómo comenzar la colaboración desde su modelo de pago habitual.
 pub fn mensaje_orientacion_modelo_pago() -> String {
-    "💡 Cómo empezar:\n   \
+    format!(
+        "💡 Cómo empezar:\n   \
      Abre tu modelo de pago habitual (Claude, ChatGPT, etc.) en esta carpeta de trabajo y pídele:\n   \
-     «Accede a la ayuda de Programator en .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md, \
-     infórmame de sus capacidades y coordínate con él para gestionar el trabajo.»"
-        .to_string()
+     «Accede a la ayuda de Programator en {}, \
+     infórmame de sus capacidades y coordínate con él para gestionar el trabajo.»",
+        ruta_legible_de_la_guia()
+    )
 }
 
 /// Redacta el aviso cuando el sondeo detecta novedades en el canal para atender.
@@ -289,6 +317,31 @@ pub fn mensaje_desenlace_sin_encargos() -> String {
 pub fn mensaje_desenlace_motor_cargando() -> String {
     "El motor local todavía está cargando el modelo: se reintenta en el ciclo siguiente."
         .to_string()
+}
+
+/// El título de la ventana emergente que pide la carpeta de trabajo.
+pub const TITULO_DEL_DIALOGO_DE_CARPETA: &str = "Elige la carpeta de trabajo de Programator";
+
+/// De dónde salió la carpeta de trabajo cuando la eligió una persona en la ventana emergente,
+/// como lo dicen las demás procedencias en `carpeta::Origen::descripcion`.
+pub const ORIGEN_VENTANA_EMERGENTE: &str = "elegida en la ventana emergente";
+
+/// El error de una carpeta de trabajo que no existe, con de dónde salió.
+pub fn mensaje_carpeta_inexistente(ruta: &Path, origen: &str) -> String {
+    format!(
+        "la carpeta de trabajo {} ({origen}) no existe",
+        ruta.display()
+    )
+}
+
+/// El error de cerrar la ventana emergente sin elegir carpeta.
+pub fn mensaje_sin_carpeta_elegida() -> String {
+    "no se eligió carpeta de trabajo".to_string()
+}
+
+/// Lo que anota el latido cuando una pasada no pudo publicar algún encargo.
+pub fn mensaje_publicaciones_fallidas(fallidos: usize) -> String {
+    format!("falló la publicación de {fallidos} encargo(s)")
 }
 
 /// Redacta el resumen de encargos atendidos y fallos de publicación al cierre de una pasada.

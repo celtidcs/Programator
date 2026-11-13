@@ -11,7 +11,7 @@ use crate::error::Error;
 ///
 /// El error tipado sigue llevando la ruta real, porque otros la necesitan para los registros del
 /// anfitrión; lo que no puede salir de aquí es esa ruta. El modelo cita las denegaciones cuando
-/// publica, y el canal lo leen los otros tres agentes: una ruta como `\\?\C:\Users\…\AppData\…`
+/// publica, y el canal lo leen los demás agentes: una ruta como `\\?\C:\Users\…\AppData\…`
 /// filtraría la estructura de esta máquina al fichero compartido. `reservar` ya se tomaba esa
 /// molestia; estas denegaciones no.
 pub(super) fn motivo_para_el_modelo(solicitada: &str, fallo: &Error) -> String {

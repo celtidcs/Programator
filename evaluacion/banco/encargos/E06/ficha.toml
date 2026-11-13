@@ -1,0 +1,51 @@
+id = "E06"
+titulo = "C#: lector asíncrono de un fichero por lotes"
+familia = "oficio"
+entrega = "LectorLotes.cs"
+colocar_en = "LectorLotes.cs"
+herramientas = ["dotnet"]
+
+# Restaura con NuGet. Es lo único con red: no toca el código del modelo.
+[preparar]
+orden = "dotnet restore --nologo -v q"
+
+[compilar]
+orden = "dotnet build --no-restore --nologo -v q -c Release -o salida"
+
+[[comprobaciones]]
+nombre = "lotea_siete_lineas_de_tres_en_tres"
+orden = "dotnet salida/banco_e06.dll lotea_siete_lineas_de_tres_en_tres"
+
+[[comprobaciones]]
+nombre = "los_lotes_entregados_no_se_vacian"
+orden = "dotnet salida/banco_e06.dll los_lotes_entregados_no_se_vacian"
+
+[[comprobaciones]]
+nombre = "tamano_cero_lanza_argument_out_of_range"
+orden = "dotnet salida/banco_e06.dll tamano_cero_lanza_argument_out_of_range"
+
+[[comprobaciones]]
+nombre = "tamano_negativo_lanza_argument_out_of_range"
+orden = "dotnet salida/banco_e06.dll tamano_negativo_lanza_argument_out_of_range"
+
+[[comprobaciones]]
+nombre = "respeta_la_cancelacion"
+orden = "dotnet salida/banco_e06.dll respeta_la_cancelacion"
+
+[[comprobaciones]]
+nombre = "un_fichero_vacio_no_emite_lotes"
+orden = "dotnet salida/banco_e06.dll un_fichero_vacio_no_emite_lotes"
+
+[[comprobaciones]]
+nombre = "un_lote_mayor_que_el_fichero_lo_devuelve_entero"
+orden = "dotnet salida/banco_e06.dll un_lote_mayor_que_el_fichero_lo_devuelve_entero"
+
+[[texto]]
+nombre = "no carga el fichero entero"
+patron = "ReadAllLines"
+maximo = 0
+
+[[texto]]
+nombre = "no carga el fichero entero de otra forma"
+patron = "ReadToEnd"
+maximo = 0

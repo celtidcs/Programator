@@ -1,6 +1,6 @@
 //! Registro de llamadas a herramientas atendidas para colapsar repeticiones idénticas.
 //!
-//! En la jornada del 23/09/2026 (incidencia B3 de NatureLand), el modelo repitió cinco
+//! En una jornada de uso real (23/09/2026), el modelo repitió cinco
 //! veces la misma llamada a «escribir_propuesta» con el mismo contenido exacto, consumiendo
 //! el cupo de herramientas y abortando el encargo por agotamiento.
 //!

@@ -328,8 +328,7 @@ pub(crate) mod pruebas_apoyo {
     /// Un GGUF mínimo pero coherente, pensado para las pruebas de `motor::encaje`: cuatro capas de
     /// 1 MiB, 256 KiB fuera de capa, y una cabecera de llama con 4 capas, 512 de embedding, 8
     /// cabezas de atención y 2 de KV (así `dim_cabeza` sale 64 redondo).
-    // Nadie lo llama todavía: `motor::encaje` no existe hasta la Tarea 7. Construirlo aquí, y no
-    // esperar a esa tarea, es lo que pide el encargo de la Tarea 2.
+    // Se construyó antes de que existiera `motor::encaje`, que es quien lo usa.
     #[allow(dead_code)]
     pub(crate) fn gguf_de_juguete() -> (tempfile::TempDir, std::path::PathBuf) {
         let un_mib = 1024 * 1024 / 4; // en elementos F32, que ocupan cuatro bytes cada uno

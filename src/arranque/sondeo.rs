@@ -33,8 +33,8 @@ pub enum Sondeo {
 /// proyecto, así que la única alternativa fiable es comparar el estado del árbol entero en cada
 /// ciclo.
 ///
-/// **El recorrido baja a las subcarpetas**, aunque el canal de MMCelt —comprobado sobre el canal
-/// real— sea plano: cuatro ficheros (`estado.md` y un buzón por agente) y ninguna carpeta. Se hace
+/// **El recorrido baja a las subcarpetas**, aunque un canal real —comprobado sobre uno en
+/// uso— sea plano: cuatro ficheros (`estado.md` y un buzón por agente) y ninguna carpeta. Se hace
 /// así porque el error no es simétrico: bajar de más solo cuesta una comprobación que no encuentra
 /// nada, mientras que no bajar dejaría a Programator dormido ante cualquier proyecto que sí
 /// organice el canal en carpetas. Una versión anterior de este comentario afirmaba que el canal

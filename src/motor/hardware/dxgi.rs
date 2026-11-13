@@ -1,17 +1,17 @@
-//! La medición de la GPU en Windows, a través de DXGI.
+//! La medición de la GPU en Windows a través de DXGI, **solo de respaldo**.
 //!
-//! Vive aparte porque es una de dos formas de medir lo mismo: en Linux la cifra sale de
-//! `nvidia-smi`, y mezclar las dos en un fichero haría que ninguna se leyera entera. Lo que
-//! ambas comparten —el tipo `Gpu` y la decisión de a quién preguntar— se queda en el módulo
-//! padre.
+//! Desde el 12/11/2026 se usa únicamente cuando `nvidia-smi` no contesta, por ejemplo con una
+//! tarjeta que no es de NVIDIA. El motivo es su limitación, abajo: con el modelo cargado por otro
+//! proceso, DXGI daba 344 MiB ocupados y la tarjeta tenía 14 195. Lo que los dos medidores
+//! comparten —el tipo `Gpu` y la decisión de a quién preguntar— se queda en el módulo padre.
 
 use super::Gpu;
 
 /// La GPU dedicada con más memoria según DXGI, o `None` si no se puede saber.
 ///
-/// **Limitación declarada:** `Budget` es el presupuesto del proceso que pregunta, y quien va a
-/// reservar la VRAM es `llama-server`, que es otro proceso. Corren en la misma máquina y ven
-/// presupuestos equivalentes, así que la medida sirve, pero no es la misma cifra.
+/// **Limitación declarada:** `Budget` y `CurrentUsage` son del proceso que pregunta, no de la
+/// tarjeta. Lo que ocupe otro proceso —`llama-server`, un juego, otro modelo— apenas mueve la
+/// cifra, y en reposo da alrededor de 1 GiB más libre de lo que hay.
 pub fn describir_gpu() -> Option<Gpu> {
     use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{

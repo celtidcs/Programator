@@ -31,6 +31,18 @@ pub enum Error {
 
     #[error("cabecera GGUF inválida en «{ruta}»: {causa}")]
     GgufInvalido { ruta: PathBuf, causa: String },
+
+    #[error("banco de modelos: {0}")]
+    Banco(String),
+
+    #[error("registro de modelos: {0}")]
+    Registro(String),
+
+    #[error("no se pudo aislar la orden: {0}")]
+    Aislamiento(String),
+
+    #[error("revisión de modelos: {0}")]
+    Revision(String),
 }
 
 /// Alias corto para los resultados del proyecto.

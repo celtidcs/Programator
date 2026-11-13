@@ -1,0 +1,65 @@
+id = "E04"
+titulo = "TypeScript: validador de configuración con unión discriminada"
+familia = "oficio"
+entrega = "config.ts"
+colocar_en = "config.ts"
+herramientas = ["node"]
+
+# Descarga la versión de TypeScript fijada en package.json. Es lo único con red: no toca el código
+# del modelo.
+[preparar]
+orden = "npm install --silent --no-audit --no-fund"
+
+# Compila en modo estricto, ya sin red.
+[compilar]
+orden = "npx tsc -p ."
+
+[[comprobaciones]]
+nombre = "acepta_una_configuracion_valida"
+orden = "node adversarias.cjs acepta_una_configuracion_valida"
+
+[[comprobaciones]]
+nombre = "acepta_depurar_cuando_es_booleano"
+orden = "node adversarias.cjs acepta_depurar_cuando_es_booleano"
+
+[[comprobaciones]]
+nombre = "acumula_todos_los_errores"
+orden = "node adversarias.cjs acumula_todos_los_errores"
+
+[[comprobaciones]]
+nombre = "rechaza_puertos_fuera_de_rango"
+orden = "node adversarias.cjs rechaza_puertos_fuera_de_rango"
+
+[[comprobaciones]]
+nombre = "rechaza_puerto_nan"
+orden = "node adversarias.cjs rechaza_puerto_nan"
+
+[[comprobaciones]]
+nombre = "rechaza_reintentos_negativos_o_no_enteros"
+orden = "node adversarias.cjs rechaza_reintentos_negativos_o_no_enteros"
+
+[[comprobaciones]]
+nombre = "rechaza_host_vacio"
+orden = "node adversarias.cjs rechaza_host_vacio"
+
+[[comprobaciones]]
+nombre = "rechaza_depurar_que_no_es_booleano"
+orden = "node adversarias.cjs rechaza_depurar_que_no_es_booleano"
+
+[[comprobaciones]]
+nombre = "rechaza_lo_que_no_es_un_objeto"
+orden = "node adversarias.cjs rechaza_lo_que_no_es_un_objeto"
+
+[[comprobaciones]]
+nombre = "rechaza_un_array"
+orden = "node adversarias.cjs rechaza_un_array"
+
+[[texto]]
+nombre = "sin any como tipo"
+patron = ": any"
+maximo = 0
+
+[[texto]]
+nombre = "sin as any"
+patron = "as any"
+maximo = 0
