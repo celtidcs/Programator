@@ -308,8 +308,8 @@ if (Test-Path $toml) {
 } else {
     Copy-Item (Join-Path $Aqui "programator.ejemplo.toml") $toml
     Escribir-Bien "Creado «programator.toml» a partir del ejemplo."
-    Escribir-Nota "Repasalo: viene comentado clave a clave y trae una ruta de proyecto de ejemplo"
-    Escribir-Nota "en la seccion [carpeta] que seguramente quieras cambiar o comentar."
+    Escribir-Nota "Repasalo: viene comentado clave a clave. Tal como viene, Programator te pregunta la"
+    Escribir-Nota "carpeta del proyecto al arrancar; para fijarla, descomenta la clave ruta de [carpeta]."
 }
 
 Escribir-Titulo "Comprobacion"
