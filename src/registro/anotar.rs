@@ -95,6 +95,7 @@ pub fn entrada_de_la_tanda(
         capas_en_gpu: datos.capas_en_gpu,
         contexto: ajustes.contexto,
         cache_kv: ajustes.cache_kv.clone(),
+        paralelo: Some(ajustes.paralelo),
         vram_ocupada_mib: datos.vram_ocupada_mib,
         generando_tokens_por_segundo: velocidad_de_generacion(semillas()),
         leyendo_tokens_por_segundo: velocidad_de_lectura(semillas()),
@@ -106,6 +107,8 @@ pub fn entrada_de_la_tanda(
         retirado_el: None,
         motivo_de_retirada: None,
         codigo_puntuado_con: codigo_puntuado_con(encargos),
+        // La tanda no sabe de dónde salió el fichero; lo pone quien lo sabe (la revisión).
+        origen: None,
         clase: calcular_clases(encargos)
             .into_iter()
             .map(|c| NotaDeClase {
@@ -143,10 +146,15 @@ fn codigo_puntuado_con(encargos: &[ResultadoDeEncargo]) -> Option<CodigoPuntuado
 }
 
 /// Mete la entrada en el registro: sustituye la del mismo modelo en la misma tarjeta, o la añade.
-pub fn anotar(registro: &mut Registro, entrada: EntradaDeModelo) -> Anotacion {
+/// Si la nueva no trae origen, se queda con el de la anterior: la clave lleva la huella, así que
+/// es el mismo fichero, y volver a anotar una tanda no hace olvidar de dónde salió.
+pub fn anotar(registro: &mut Registro, mut entrada: EntradaDeModelo) -> Anotacion {
     match registro.modelo.iter_mut().find(|e| e.misma_clave(&entrada)) {
         Some(anterior) => {
             let cambios = cambios(anterior, &entrada);
+            if entrada.origen.is_none() {
+                entrada.origen = anterior.origen.take();
+            }
             *anterior = entrada;
             Anotacion::Sustituye(cambios)
         }
@@ -241,6 +249,7 @@ mod pruebas {
     use super::*;
     use crate::banco::resultados::pruebas::tanda_de_ejemplo;
     use crate::banco::resultados::{AjustesDelMotor, EstadoDeNota, FilaDeDesempeno};
+    use crate::registro::modelo::Origen;
 
     const NOMBRE: &str = "2026-11-12-1219-devstral";
 
@@ -369,6 +378,19 @@ mod pruebas {
         }
     }
 
+    /// La entrada guarda con cuántas conversaciones en paralelo midió la tanda.
+    #[test]
+    fn la_entrada_guarda_las_conversaciones_en_paralelo_de_la_tanda() {
+        let mut resultados = tanda_completa();
+        if let Some(ajustes) = resultados.tanda.ajustes_del_motor.as_mut() {
+            ajustes.paralelo = 3;
+        }
+
+        let entrada = entrada_de_la_tanda(&resultados, NOMBRE).unwrap();
+
+        assert_eq!(entrada.paralelo, Some(3));
+    }
+
     #[test]
     fn una_clase_que_no_se_midio_queda_sin_nota() {
         let entrada = entrada_de_la_tanda(&tanda_completa(), NOMBRE).unwrap();
@@ -464,5 +486,46 @@ mod pruebas {
 
         assert_eq!(anotar(&mut registro, otra), Anotacion::Nueva);
         assert_eq!(registro.modelo.len(), 2);
+    }
+
+    fn origen_de_ejemplo() -> Origen {
+        Origen {
+            repositorio: "unsloth/ejemplo-GGUF".into(),
+            fichero: "ejemplo-Q4_K_M.gguf".into(),
+            tamano: Some(1_000),
+        }
+    }
+
+    /// Anotar otra vez la misma tanda no pierde de dónde salió el modelo: la tanda no lo sabe.
+    #[test]
+    fn anotar_otra_vez_la_misma_tanda_conserva_el_origen() {
+        let mut registro = Registro::default();
+        let mut primera = entrada_de_la_tanda(&tanda_completa(), NOMBRE).unwrap();
+        primera.origen = Some(origen_de_ejemplo());
+        anotar(&mut registro, primera);
+
+        anotar(
+            &mut registro,
+            entrada_de_la_tanda(&tanda_completa(), NOMBRE).unwrap(),
+        );
+
+        assert_eq!(registro.modelo[0].origen, Some(origen_de_ejemplo()));
+    }
+
+    /// Con otra huella es otro fichero, aunque se llame igual: entra como otra entrada y no hereda
+    /// el origen del anterior.
+    #[test]
+    fn con_otra_huella_el_origen_anterior_no_se_hereda() {
+        let mut registro = Registro::default();
+        let mut primera = entrada_de_la_tanda(&tanda_completa(), NOMBRE).unwrap();
+        primera.origen = Some(origen_de_ejemplo());
+        anotar(&mut registro, primera);
+        let mut otra_huella = entrada_de_la_tanda(&tanda_completa(), NOMBRE).unwrap();
+        otra_huella.huella_sha256 = "otra".into();
+
+        assert_eq!(anotar(&mut registro, otra_huella), Anotacion::Nueva);
+
+        assert_eq!(registro.modelo[0].origen, Some(origen_de_ejemplo()));
+        assert_eq!(registro.modelo[1].origen, None);
     }
 }

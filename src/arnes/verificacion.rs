@@ -10,9 +10,11 @@
 //! —compilar, o analizar la sintaxis—, que es otra cosa. `python -m py_compile` no corre el
 //! fichero.
 //!
-//! **Quién elige el comprobador:** el Director, en `[verificacion]` de su TOML. Ni el arnés
-//! incrusta comandos ni el modelo elige ninguno: el modelo solo pone el nombre del fichero, y ese
-//! ya está confinado.
+//! **Quién elige el comprobador:** quien usa Programator, en `[verificacion]` de su TOML. Ni el
+//! arnés incrusta comandos ni el modelo elige ninguno: el modelo solo pone el nombre del fichero,
+//! y ese ya está confinado.
+
+pub mod python;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -22,10 +24,6 @@ use crate::orden_acotada::{ejecutar_con_tope_y_temporales_dentro, DesenlaceDeOrd
 
 /// Marcador que se sustituye por la ruta de la propuesta en los argumentos del comprobador.
 const MARCADOR_FICHERO: &str = "{fichero}";
-
-/// Cuánta salida del comprobador se le pasa al modelo. Un error de `rustc` puede ocupar pantallas
-/// enteras y el contexto es finito: con esto sobra para saber qué falló y dónde.
-const MAXIMO_SALIDA: usize = 1200;
 
 /// Qué se sabe de una propuesta después de intentar comprobarla.
 ///
@@ -97,6 +95,7 @@ pub fn verificar(
     comprobadores: &Comprobadores,
     tiempo_maximo: Duration,
     directorio_de_trabajo: &Path,
+    maximo_salida: usize,
 ) -> Veredicto {
     let extension = fichero
         .extension()
@@ -173,19 +172,25 @@ pub fn verificar(
         return Veredicto::Pasa { orden: descripcion };
     }
 
-    // Los comprobadores escriben sus errores por stderr, pero no todos: se juntan las dos salidas
-    // para no perder el motivo del rechazo por una cuestión de canal.
-    let mut texto = errores.trim().to_string();
-    if texto.is_empty() {
-        texto = salida.trim().to_string();
-    }
-    if texto.is_empty() {
-        texto = format!("terminó con {estado} y sin decir nada");
-    }
-
     Veredicto::NoPasa {
         orden: descripcion,
-        salida: recortar(&texto, MAXIMO_SALIDA),
+        salida: recortar(&juntar_salidas(&errores, &salida, &estado), maximo_salida),
+    }
+}
+
+/// Lo que dijo un comprobador que rechazó. Los comprobadores escriben sus errores por stderr, pero
+/// no todos: `cargo test` escribe allí «Compiling…» y el fallo por stdout. Se juntan las dos, la de
+/// errores primero, para no perder el motivo del rechazo por una cuestión de canal: con algo en
+/// stderr, no se descarta stdout.
+fn juntar_salidas(errores: &str, salida: &str, estado: &impl std::fmt::Display) -> String {
+    let partes: Vec<&str> = [errores.trim(), salida.trim()]
+        .into_iter()
+        .filter(|parte| !parte.is_empty())
+        .collect();
+    if partes.is_empty() {
+        format!("terminó con {estado} y sin decir nada")
+    } else {
+        partes.join("\n")
     }
 }
 
@@ -203,6 +208,9 @@ fn recortar(texto: &str, maximo: usize) -> String {
 mod pruebas {
     use super::*;
     use std::time::Instant;
+
+    /// El tope de salida de fábrica, el que usan las pruebas.
+    const MAXIMO_SALIDA: usize = crate::config::MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO;
 
     #[test]
     fn sin_comprobador_el_canal_lo_dice_y_nombra_la_extension() {
@@ -249,6 +257,7 @@ mod pruebas {
             &comprobadores("py", orden_que(true)),
             Duration::from_secs(5),
             dir.path(),
+            MAXIMO_SALIDA,
         );
 
         assert_eq!(
@@ -274,9 +283,43 @@ mod pruebas {
             &comprobadores("py", orden_que(true)),
             Duration::from_secs(10),
             dir.path(),
+            MAXIMO_SALIDA,
         );
 
         assert!(matches!(veredicto, Veredicto::Pasa { .. }), "{veredicto:?}");
+    }
+
+    #[test]
+    fn un_tope_menor_que_el_de_fabrica_tambien_recorta() {
+        let dir = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+
+        let veredicto = verificar(
+            &fichero,
+            &comprobadores("py", orden_que(false)),
+            Duration::from_secs(10),
+            dir.path(),
+            10,
+        );
+
+        let Veredicto::NoPasa { salida, .. } = veredicto else {
+            panic!("{veredicto:?}");
+        };
+        assert_eq!(salida, "lo que dij\n[…recortado]");
+    }
+
+    #[test]
+    fn el_motivo_del_rechazo_junta_las_dos_salidas() {
+        assert_eq!(
+            juntar_salidas("Compiling x\n", "test falla en la línea 3\n", &1),
+            "Compiling x\ntest falla en la línea 3"
+        );
+        assert_eq!(juntar_salidas("", " solo stdout ", &1), "solo stdout");
+        assert_eq!(juntar_salidas("solo stderr", "\n", &1), "solo stderr");
+        assert_eq!(
+            juntar_salidas(" ", "", &2),
+            "terminó con 2 y sin decir nada"
+        );
     }
 
     #[test]
@@ -289,6 +332,7 @@ mod pruebas {
             &comprobadores("py", orden_que(false)),
             Duration::from_secs(10),
             dir.path(),
+            MAXIMO_SALIDA,
         );
 
         let Veredicto::NoPasa { salida, .. } = &veredicto else {
@@ -311,6 +355,7 @@ mod pruebas {
             &comprobadores("py", orden_que(true)),
             Duration::from_secs(10),
             dir.path(),
+            MAXIMO_SALIDA,
         );
 
         assert!(matches!(veredicto, Veredicto::Pasa { .. }), "{veredicto:?}");
@@ -332,6 +377,7 @@ mod pruebas {
             ),
             Duration::from_secs(5),
             dir.path(),
+            MAXIMO_SALIDA,
         );
 
         assert!(
@@ -356,6 +402,7 @@ mod pruebas {
             &comprobadores("py", crate::plataforma::ordenes_de_prueba::tardar_mucho()),
             Duration::from_millis(400),
             dir.path(),
+            MAXIMO_SALIDA,
         );
         let tardado = inicio.elapsed();
 
@@ -381,6 +428,7 @@ mod pruebas {
             &comprobadores("py", crate::plataforma::ordenes_de_prueba::volcar_fichero()),
             Duration::from_secs(10),
             dir.path(),
+            MAXIMO_SALIDA,
         );
 
         assert!(matches!(veredicto, Veredicto::Pasa { .. }), "{veredicto:?}");
@@ -395,7 +443,7 @@ mod pruebas {
         let fichero = fichero_de_prueba(&dir, "propuesta.py");
         let otro_directorio = tempfile::tempdir().unwrap();
 
-        let relativa = pathdiff_simple(&fichero, &std::env::current_dir().unwrap())
+        let relativa = ruta_relativa_simple(&fichero, &std::env::current_dir().unwrap())
             .unwrap_or_else(|| fichero.clone());
 
         let veredicto = verificar(
@@ -403,6 +451,7 @@ mod pruebas {
             &comprobadores("py", crate::plataforma::ordenes_de_prueba::volcar_fichero()),
             Duration::from_secs(10),
             otro_directorio.path(),
+            MAXIMO_SALIDA,
         );
 
         assert!(
@@ -413,7 +462,7 @@ mod pruebas {
 
     /// Ruta relativa de `objetivo` respecto a `base`, sin depender de ninguna crate. Devuelve
     /// `None` si no comparten raíz, y entonces la prueba usa la absoluta, que también vale.
-    fn pathdiff_simple(objetivo: &Path, base: &Path) -> Option<std::path::PathBuf> {
+    fn ruta_relativa_simple(objetivo: &Path, base: &Path) -> Option<std::path::PathBuf> {
         let objetivo = std::fs::canonicalize(objetivo).ok()?;
         let base = std::fs::canonicalize(base).ok()?;
         objetivo.strip_prefix(&base).ok().map(|p| p.to_path_buf())

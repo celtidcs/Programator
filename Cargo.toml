@@ -1,6 +1,6 @@
 [package]
 name = "programator"
-version = "0.12.0"
+version = "1.1.0"
 edition = "2021"
 description = "Arnés que convierte un modelo local en un agente del canal .gestor"
 license = "GPL-3.0-or-later"
@@ -13,7 +13,13 @@ serde_json = "1"
 toml = "0.8"
 toml_edit = "0.22"
 sha2 = "0.10"
-ureq = { version = "2", features = ["json"] }
+# El cliente HTTP del motor, de Hugging Face y de la descarga de modelos. La misma versión mayor
+# que usa aviso-version-github, para que Cargo.lock lleve una sola.
+ureq = { version = "3", features = ["json"] }
+# El aviso de versión nueva en GitHub: copia íntegra de la etiqueta v0.2.0, que no se edita
+# aquí (`bibliotecas/aviso-version-github/documentacion/norma-de-integracion.md`). GPL-3.0 o
+# posterior, como Programator.
+aviso-version-github = { path = "bibliotecas/aviso-version-github" }
 thiserror = "1"
 rfd = "0.14"
 ctrlc = "3"

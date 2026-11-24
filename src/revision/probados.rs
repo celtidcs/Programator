@@ -1,6 +1,5 @@
 //! `probados.toml`: lo que se ha probado en la revisión del mes, para que `revisión: cerrar` sepa
-//! qué tandas son suyas y cuáles quedaron sin comprobar (especificación de la revisión autónoma,
-//! §3 y §7).
+//! qué tandas son suyas y cuáles quedaron sin comprobar.
 
 use std::path::{Path, PathBuf};
 
@@ -62,13 +61,12 @@ impl Probados {
 
 pub fn escribir(probados: &Probados) -> Resultado<String> {
     toml::to_string(probados)
-        .map_err(|causa| Error::Revision(format!("lo probado no se compone: {causa}")))
+        .map_err(|causa| Error::Revision(super::mensajes::probados_sin_componer(&causa)))
 }
 
 pub fn leer(texto: &str) -> Resultado<Probados> {
-    toml::from_str(texto).map_err(|causa| {
-        Error::Revision(format!("«{NOMBRE_DE_LO_PROBADO}» no se entiende: {causa}"))
-    })
+    toml::from_str(texto)
+        .map_err(|causa| Error::Revision(super::mensajes::probados_que_no_se_entienden(&causa)))
 }
 
 /// Lo probado en la carpeta de un mes; vacío si todavía no hay nada.

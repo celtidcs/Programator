@@ -34,7 +34,7 @@ pub struct Propuesta {
 /// solo podía ser todo-o-nada.
 const SEPARADOR_LINEA: &str = "---";
 
-/// Límite de caracteres para la muestra de texto que se adjunta en diagnósticos de poda inválida (§4.3).
+/// Límite de caracteres para la muestra de texto que se adjunta en diagnósticos de poda inválida.
 const TOPE_CARACTERES_MUESTRA_DIAGNOSTICO: usize = 60;
 
 /// Una línea del buzón con lo que hace falta para cortar por ella sin perder un byte.
@@ -81,24 +81,28 @@ fn dividir_en_lineas(contenido: &str) -> Vec<Linea<'_>> {
     lineas
 }
 
-/// Cuenta los backticks al inicio de una línea recortada, o devuelve 0 si no hay.
-fn contar_backticks_apertura(linea: &str) -> usize {
-    let trimmed = linea.trim();
-    if !trimmed.starts_with('`') {
+/// Las comillas invertidas que abren una valla de código, como mínimo: CommonMark 0.31.2, §4.5
+/// «Fenced code blocks» (https://spec.commonmark.org/0.31.2/#fenced-code-blocks).
+const MINIMO_DE_UNA_VALLA: usize = 3;
+
+/// Cuenta las comillas invertidas al inicio de una línea recortada, o devuelve 0 si no hay.
+fn contar_comillas_invertidas_de_apertura(linea: &str) -> usize {
+    let recortada = linea.trim();
+    if !recortada.starts_with('`') {
         return 0;
     }
-    trimmed.chars().take_while(|c| *c == '`').count()
+    recortada.chars().take_while(|c| *c == '`').count()
 }
 
-/// Devuelve el número de backticks si la línea es solo backticks (cierre), 0 si no.
-fn contar_backticks_cierre(linea: &str) -> usize {
-    let trimmed = linea.trim();
-    if trimmed.is_empty() || !trimmed.starts_with('`') {
+/// Devuelve el número de comillas invertidas si la línea no tiene otra cosa (cierre), 0 si no.
+fn contar_comillas_invertidas_de_cierre(linea: &str) -> usize {
+    let recortada = linea.trim();
+    if recortada.is_empty() || !recortada.starts_with('`') {
         return 0;
     }
-    // Si toda la línea es solo backticks, es un cierre potencial
-    if trimmed.chars().all(|c| c == '`') {
-        trimmed.len()
+    // Si toda la línea es solo comillas invertidas, es un cierre potencial
+    if recortada.chars().all(|c| c == '`') {
+        recortada.len()
     } else {
         0
     }
@@ -122,7 +126,7 @@ pub fn trocear(contenido: &str) -> Vec<Bloque> {
     let mut bloques = Vec::new();
     let mut inicio_bloque = 0usize;
     let mut en_valla = false;
-    let mut backticks_apertura = 0usize;
+    let mut comillas_de_apertura = 0usize;
 
     for (indice, linea) in lineas.iter().enumerate() {
         // Estado de valla **antes** de procesar esta línea: la que abre la valla queda fuera, y la
@@ -131,17 +135,17 @@ pub fn trocear(contenido: &str) -> Vec<Bloque> {
         let dentro_de_valla = en_valla;
 
         if en_valla {
-            // Cierre: línea de solos backticks, al menos tantos como los de la apertura.
-            let backticks_cierre = contar_backticks_cierre(linea.texto);
-            if backticks_cierre > 0 && backticks_cierre >= backticks_apertura {
+            // Cierre: línea de solas comillas invertidas, al menos tantas como las de la apertura.
+            let comillas_de_cierre = contar_comillas_invertidas_de_cierre(linea.texto);
+            if comillas_de_cierre > 0 && comillas_de_cierre >= comillas_de_apertura {
                 en_valla = false;
             }
         } else {
-            // Apertura: línea que empieza por backticks (con o sin etiqueta de lenguaje).
-            let backticks = contar_backticks_apertura(linea.texto);
-            if backticks >= 3 {
+            // Apertura: línea que empieza por comillas invertidas (con o sin etiqueta de lenguaje).
+            let comillas_invertidas = contar_comillas_invertidas_de_apertura(linea.texto);
+            if comillas_invertidas >= MINIMO_DE_UNA_VALLA {
                 en_valla = true;
-                backticks_apertura = backticks;
+                comillas_de_apertura = comillas_invertidas;
             }
         }
 
@@ -170,10 +174,9 @@ pub fn trocear(contenido: &str) -> Vec<Bloque> {
 /// Reparte los bloques entre la versión podada y el material archivado.
 pub fn componer(bloques: &[Bloque], clases: &[Clasificacion]) -> Resultado<Propuesta> {
     if bloques.len() != clases.len() {
-        return Err(Error::PodaInvalida(format!(
-            "hay {} bloques y {} clasificaciones: el modelo no clasificó todo",
+        return Err(Error::PodaInvalida(mensaje_clasificaciones_incompletas(
             bloques.len(),
-            clases.len()
+            clases.len(),
         )));
     }
 
@@ -199,6 +202,35 @@ pub fn componer(bloques: &[Bloque], clases: &[Clasificacion]) -> Resultado<Propu
 /// 3. Orden: cada sección mantiene el orden original de sus bloques
 ///
 /// Si el modelo reescribió una sola palabra, la propuesta se descarta sin llegar al disco.
+/// Los textos de `de` que no tienen pareja en `frente_a`, contando copias: si `de` trae dos
+/// iguales y `frente_a` una, sobra una.
+fn sobrantes<'a>(de: &'a [String], frente_a: &[String]) -> Vec<&'a String> {
+    let mut disponibles: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for texto in frente_a {
+        *disponibles.entry(texto.as_str()).or_default() += 1;
+    }
+    de.iter()
+        .filter(|texto| match disponibles.get_mut(texto.as_str()) {
+            Some(quedan) if *quedan > 0 => {
+                *quedan -= 1;
+                false
+            }
+            _ => true,
+        })
+        .collect()
+}
+
+/// El principio de un bloque, para nombrarlo en un diagnóstico sin copiarlo entero.
+fn muestra_de(texto: &str) -> String {
+    texto
+        .chars()
+        .take(TOPE_CARACTERES_MUESTRA_DIAGNOSTICO)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<()> {
     let bloques_original = trocear(original);
     let bloques_podado = trocear(&propuesta.podado);
@@ -206,12 +238,10 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
 
     // 1. Recuento: mismo número total de bloques
     if bloques_podado.len() + bloques_archivo.len() != bloques_original.len() {
-        return Err(Error::PodaInvalida(format!(
-            "recuento de bloques: {} original, {} podado + {} archivo = {} total",
+        return Err(Error::PodaInvalida(mensaje_recuento_de_bloques(
             bloques_original.len(),
             bloques_podado.len(),
             bloques_archivo.len(),
-            bloques_podado.len() + bloques_archivo.len()
         )));
     }
 
@@ -228,56 +258,45 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
     textos_propuesta.sort();
 
     if textos_original != textos_propuesta {
-        // Encontrar qué está diferente para mensajes informativos
-        let perdidos: Vec<_> = textos_original
-            .iter()
-            .filter(|t| !textos_propuesta.contains(t))
-            .collect();
-        let inventados: Vec<_> = textos_propuesta
-            .iter()
-            .filter(|t| !textos_original.contains(t))
-            .collect();
+        // Qué sobra en cada lado, contando copias: con «A, A, B» frente a «A, B, B» no falta ningún
+        // texto distinto, pero se perdió una «A» y se inventó una «B». Sin contar copias, el
+        // diagnóstico saldría vacío.
+        let perdidos = sobrantes(&textos_original, &textos_propuesta);
+        let inventados = sobrantes(&textos_propuesta, &textos_original);
 
-        let mut msg = String::new();
-        if !perdidos.is_empty() {
-            msg.push_str(&format!("perdidos: {}", perdidos.len()));
-            if let Some(first) = perdidos.first() {
-                let muestra: String = first
-                    .chars()
-                    .take(TOPE_CARACTERES_MUESTRA_DIAGNOSTICO)
-                    .collect();
-                msg.push_str(&format!("; primer perdido: «{}»", muestra.trim()));
-            }
+        let mut diagnostico = String::new();
+        if let Some(primero) = perdidos.first() {
+            diagnostico.push_str(&format!(
+                "perdidos: {}; primer perdido: «{}»",
+                perdidos.len(),
+                muestra_de(primero)
+            ));
         }
-        if !inventados.is_empty() {
-            if !msg.is_empty() {
-                msg.push_str("; ");
+        if let Some(primero) = inventados.first() {
+            if !diagnostico.is_empty() {
+                diagnostico.push_str("; ");
             }
-            msg.push_str(&format!("inventados: {}", inventados.len()));
-            if let Some(first) = inventados.first() {
-                let muestra: String = first
-                    .chars()
-                    .take(TOPE_CARACTERES_MUESTRA_DIAGNOSTICO)
-                    .collect();
-                msg.push_str(&format!("; primer inventado: «{}»", muestra.trim()));
-            }
+            diagnostico.push_str(&format!(
+                "inventados: {}; primer inventado: «{}»",
+                inventados.len(),
+                muestra_de(primero)
+            ));
         }
 
-        return Err(Error::PodaInvalida(format!(
-            "contenido modificado: {}",
-            msg
+        return Err(Error::PodaInvalida(mensaje_contenido_modificado(
+            &diagnostico,
         )));
     }
 
     // 3. Orden preservado: cada sección es una subsecuencia del original
-    fn es_subsecuencia(subseq: &[Bloque], seq: &[Bloque]) -> bool {
-        let mut sub_idx = 0;
-        for bloque in seq {
-            if sub_idx < subseq.len() && bloque.texto == subseq[sub_idx].texto {
-                sub_idx += 1;
+    fn es_subsecuencia(subsecuencia: &[Bloque], secuencia: &[Bloque]) -> bool {
+        let mut indice_sub = 0;
+        for bloque in secuencia {
+            if indice_sub < subsecuencia.len() && bloque.texto == subsecuencia[indice_sub].texto {
+                indice_sub += 1;
             }
         }
-        sub_idx == subseq.len()
+        indice_sub == subsecuencia.len()
     }
 
     if !es_subsecuencia(&bloques_podado, &bloques_original) {
@@ -370,6 +389,17 @@ pub fn proponer_poda_por_cierre(
 /// `.gestor/candidatos/poda/<agente>-archivo.md`.
 ///
 /// Devuelve las rutas absolutas del fichero podado y del archivo histórico.
+/// El nombre del buzón sin la extensión `.md`, se escriba como se escriba (`Claude.MD`): si solo
+/// se quitara en minúsculas, saldría `claude.md.md`.
+pub fn nombre_del_buzon(fichero: &str) -> &str {
+    const EXTENSION: &str = ".md";
+    let corte = fichero.len().saturating_sub(EXTENSION.len());
+    match fichero.get(corte..) {
+        Some(final_) if final_.eq_ignore_ascii_case(EXTENSION) => &fichero[..corte],
+        _ => fichero,
+    }
+}
+
 pub fn guardar_propuesta_poda(
     carpeta_trabajo: &Path,
     agente_origen: &str,
@@ -383,7 +413,7 @@ pub fn guardar_propuesta_poda(
         causa,
     })?;
 
-    let nombre_limpio = agente_origen.trim().trim_end_matches(".md").to_lowercase();
+    let nombre_limpio = nombre_del_buzon(agente_origen.trim()).to_lowercase();
     let ruta_podado = dir_poda.join(format!("{nombre_limpio}.md"));
     let ruta_archivo = dir_poda.join(format!("{nombre_limpio}-archivo.md"));
 
@@ -420,6 +450,29 @@ pub fn guardar_propuesta_poda(
     }
 
     Ok((ruta_podado, ruta_archivo))
+}
+
+/// El modelo devolvió menos (o más) clasificaciones que bloques.
+fn mensaje_clasificaciones_incompletas(bloques: usize, clasificaciones: usize) -> String {
+    format!(
+        "hay {bloques} bloques y {clasificaciones} clasificaciones: el modelo no clasificó todo"
+    )
+}
+
+/// La versión podada y el archivo no suman los bloques del original.
+fn mensaje_recuento_de_bloques(original: usize, podado: usize, archivo: usize) -> String {
+    format!(
+        "recuento de bloques: {} original, {} podado + {} archivo = {} total",
+        original,
+        podado,
+        archivo,
+        podado + archivo
+    )
+}
+
+/// La poda cambió el texto de algún bloque; el diagnóstico dice qué se perdió o se inventó.
+fn mensaje_contenido_modificado(diagnostico: &str) -> String {
+    format!("contenido modificado: {diagnostico}")
 }
 
 #[cfg(test)]
@@ -587,6 +640,25 @@ Mensaje B
         assert!(matches!(fallo, crate::error::Error::PodaInvalida(_)));
     }
 
+    /// Con repetidos, el diagnóstico no sale «contenido modificado: » sin decir qué.
+    #[test]
+    fn con_bloques_repetidos_el_diagnostico_dice_que_se_perdio_y_que_se_invento() {
+        let original = "A\n---\nA\n---\nB\n";
+        let propuesta = Propuesta {
+            podado: "A\n---\nB\n---\nB\n".to_string(),
+            archivo: String::new(),
+        };
+
+        let fallo = verificar_integridad(original, &propuesta)
+            .unwrap_err()
+            .to_string();
+        assert!(fallo.contains("perdidos: 1; primer perdido: «A"), "{fallo}");
+        assert!(
+            fallo.contains("inventados: 1; primer inventado: «B"),
+            "{fallo}"
+        );
+    }
+
     #[test]
     fn rechazo_bloques_reordenados() {
         // Mismo contenido, distinto orden dentro de podado
@@ -680,9 +752,9 @@ Mensaje B
     }
 
     #[test]
-    fn cierre_con_mas_backticks_que_apertura() {
-        // Valla abierta con ``` (3) y cerrada con ```` (4 backticks)
-        // En markdown, el cierre con más backticks sigue siendo válido si son solo backticks
+    fn cierre_con_mas_comillas_invertidas_que_apertura() {
+        // Valla abierta con ``` (3) y cerrada con ```` (4 comillas invertidas)
+        // En markdown, el cierre con más comillas invertidas sigue siendo válido si no hay otra cosa
         let original = "Texto antes\n\n---\n\n```\nCódigo aquí\n````\n\n---\n\nTrabajo después\n";
 
         let bloques = trocear(original);
@@ -705,7 +777,7 @@ Mensaje B
     }
 
     #[test]
-    fn valla_abierta_con_cuatro_backticks_no_cierra_con_tres() {
+    fn valla_abierta_con_cuatro_comillas_invertidas_no_cierra_con_tres() {
         // Valla abierta con ```` (cuatro) y una línea de ``` (tres) dentro no cierra
         let original = "Bloque 1\n\n---\n\n````\nCódigo\n```\nSigue dentro de valla\n````\n\n---\n\nBloque 2\n";
 
@@ -726,7 +798,7 @@ Mensaje B
             "concatenación debe reproducir original exactamente"
         );
 
-        // La valla interior (3 backticks) no cierra la valla exterior (4 backticks)
+        // La valla interior (3 comillas invertidas) no cierra la valla exterior (4)
         assert!(
             bloques[1].texto.contains("```\nSigue dentro de valla"),
             "los 3 backticks no cierran una valla de 4"
@@ -949,6 +1021,28 @@ Revisa el plan de pruebas.
     fn proponer_poda_por_cierre_devuelve_none_si_encargo_no_existe() {
         let buzon = "# Claude\n\n**LATIDO:** 10:00\n\n---\n\nAlgo diferente.\n";
         assert!(proponer_poda_por_cierre(buzon, "Texto inexistente").is_none());
+    }
+
+    #[test]
+    fn un_buzon_con_la_extension_en_mayusculas_no_la_duplica() {
+        let dir = tempfile::tempdir().unwrap();
+        let buzon = "# Claude\n\n**LATIDO:** 10:00\n\n---\n\n## Para Programator\n\nTarea A.\n";
+        let propuesta = proponer_poda_por_cierre(buzon, "Tarea A.").unwrap();
+
+        let (ruta_podado, ruta_archivo) =
+            guardar_propuesta_poda(dir.path(), "Claude.MD", &propuesta).unwrap();
+
+        assert_eq!(
+            ruta_podado,
+            dir.path().join(".gestor/candidatos/poda/claude.md")
+        );
+        assert_eq!(
+            ruta_archivo,
+            dir.path().join(".gestor/candidatos/poda/claude-archivo.md")
+        );
+        assert_eq!(nombre_del_buzon("Claude.MD"), "Claude");
+        assert_eq!(nombre_del_buzon("claude2.md"), "claude2");
+        assert_eq!(nombre_del_buzon("notas"), "notas");
     }
 
     #[test]

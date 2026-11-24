@@ -10,9 +10,9 @@ use crate::error::Error;
 
 use super::anotar::{Anotacion, Cambio, MotivoParaNoAnotar, QueCambia, Valor};
 use super::modelo::EntradaDeModelo;
+use crate::argumentos::OPCION_REGISTRO_ANOTAR;
 
-/// Lo que se dice cuando no hay cifra.
-pub const SIN_MEDIR: &str = "sin medir";
+pub use crate::unidades::SIN_MEDIR;
 
 /// Una cifra para leer: entera si lo es, y si no con un decimal y coma.
 pub fn texto_de_cifra(cifra: Option<f64>) -> String {
@@ -104,13 +104,24 @@ pub fn mensaje_no_se_anota(motivo: &MotivoParaNoAnotar, tanda: &Path) -> String 
 pub fn mensaje_registro_ilegible(fallo: &Error) -> String {
     format!(
         "⚠️ No se pudo leer el registro de modelos ({fallo}). Programator arranca igual, pero la \
-         guía dirá que el modelo no está medido. El registro lo escribe «--registro-anotar»: si \
+         guía dirá que el modelo no está medido. El registro lo escribe \
+         «{OPCION_REGISTRO_ANOTAR}»: si \
          está roto, bórralo y vuelve a anotar las tandas."
     )
 }
 
 pub fn mensaje_fallo(fallo: &Error) -> String {
     format!("🔴 No se pudo anotar en el registro de modelos: {fallo}.")
+}
+
+/// El fichero del registro de modelos existe pero no se deja interpretar.
+pub(crate) fn registro_que_no_se_lee(ruta: &Path, causa: &dyn std::fmt::Display) -> String {
+    format!("«{}» no se puede leer: {causa}", ruta.display())
+}
+
+/// El registro de modelos no se pudo pasar a TOML.
+pub(crate) fn registro_sin_componer(causa: &dyn std::fmt::Display) -> String {
+    format!("no se pudo componer el registro: {causa}")
 }
 
 #[cfg(test)]

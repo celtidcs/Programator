@@ -3,6 +3,7 @@
 //! Cada mensaje orienta al operador indicando qué falló (con su causa), qué consecuencia tiene
 //! para el ciclo y qué acción llevar a cabo (o si no se requiere ninguna).
 
+use crate::argumentos::{OPCION_AYUDA, OPCION_DIAGNOSTICO, OPCION_REGISTRO_ANOTAR, OPCION_RUTA};
 use crate::config::NOMBRE_DEL_FICHERO_DE_CONFIGURACION;
 use crate::error::Error;
 use crate::plataforma::{EJEMPLO_DE_RUTA, NOMBRE_DEL_EJECUTABLE};
@@ -22,7 +23,7 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
                 "Comprueba que «programator.toml» existe junto al ejecutable (puedes copiar y \
                  adaptar «programator.ejemplo.toml») y que tienes permisos de lectura."
                     .to_string()
-            } else if ruta.extension().is_some_and(|ext| ext == "md") {
+            } else if ruta.extension().is_some_and(|extension| extension == "md") {
                 "Comprueba que el archivo de plantilla configurado existe y es legible, o revisa \
                  la ruta indicada en «programator.toml»."
                     .to_string()
@@ -32,30 +33,23 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
                     .to_string()
             }
         }
-        Error::Configuracion(msg) => {
-            let minusculas = msg.to_lowercase();
-            if minusculas.contains("carpeta") {
-                format!(
-                    "Revisa la clave «ruta» en la sección [carpeta] de «programator.toml», o \
-                     arranca indicando una carpeta válida con «{NOMBRE_DEL_EJECUTABLE} --ruta \
-                     <DIRECTORIO>»."
-                )
-            } else if minusculas.contains("motor")
-                || minusculas.contains("puerto")
-                || minusculas.contains("modelo")
-            {
-                format!(
-                    "Revisa la sección [motor] de «programator.toml» (puerto, binario y modelo) o \
-                     ejecuta «{NOMBRE_DEL_EJECUTABLE} --diagnostico» para comprobar el encaje de \
-                     hardware."
-                )
-            } else {
-                format!(
-                    "Revisa los valores y la sintaxis de «programator.toml», o ejecuta \
-                     «{NOMBRE_DEL_EJECUTABLE} --diagnostico» para verificar la configuración."
-                )
-            }
-        }
+        Error::ConfiguracionDeLaCarpeta(_) => format!(
+            "Revisa la clave «ruta» en la sección [carpeta] de «programator.toml», o \
+             arranca indicando una carpeta válida con «{NOMBRE_DEL_EJECUTABLE} \
+             {OPCION_RUTA} \
+             <DIRECTORIO>»."
+        ),
+        Error::ConfiguracionDelMotor(_) => format!(
+            "Revisa la sección [motor] de «programator.toml» (puerto, binario y modelo) o \
+             ejecuta «{NOMBRE_DEL_EJECUTABLE} {OPCION_DIAGNOSTICO}» para comprobar el \
+             encaje de \
+             hardware."
+        ),
+        Error::Configuracion(_) => format!(
+            "Revisa los valores y la sintaxis de «programator.toml», o ejecuta \
+             «{NOMBRE_DEL_EJECUTABLE} {OPCION_DIAGNOSTICO}» para verificar la \
+             configuración."
+        ),
         Error::Escritura { .. } => {
             "Comprueba los permisos de escritura en la ruta indicada y que la unidad de disco no \
              esté llena."
@@ -63,7 +57,7 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
         }
         Error::MotorSinRespuesta(_) => format!(
             "Comprueba que llama-server esté en ejecución en el puerto configurado o ejecuta \
-             «{NOMBRE_DEL_EJECUTABLE} --diagnostico» para revisar la GPU y el motor."
+             «{NOMBRE_DEL_EJECUTABLE} {OPCION_DIAGNOSTICO}» para revisar la GPU y el motor."
         ),
         Error::GgufInvalido { .. } => {
             "Comprueba que el fichero del modelo configurado no esté dañado o incompleto y sea \
@@ -84,9 +78,11 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
                 .to_string()
         }
         Error::Registro(_) => {
-            "El registro de modelos solo lo escribe «--registro-anotar»: si está roto, bórralo y \
-             vuelve a anotar las tandas, que conservan todas las cifras."
-                .to_string()
+            format!(
+                "El registro de modelos solo lo escribe «{OPCION_REGISTRO_ANOTAR}»: si está \
+                 roto, bórralo \
+                 y vuelve a anotar las tandas, que conservan todas las cifras."
+            )
         }
         Error::Aislamiento(_) => {
             "Windows no dejó aislar la comprobación local. Si no se puede arreglar, «aislamiento \
@@ -97,6 +93,12 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
         Error::Revision(_) => {
             "Revisa la sección [revision] de «programator.toml» y que Hugging Face responda \
              desde este equipo."
+                .to_string()
+        }
+        Error::Pendientes(_) => {
+            "La cola de encargos pendientes guarda encargos que aún no tienen respuesta: no la \
+             borres sin mirarla. Corrige el fichero que nombra el mensaje o apártalo y vuelve a \
+             publicar esos encargos en el canal."
                 .to_string()
         }
     };
@@ -136,7 +138,7 @@ pub fn mensaje_fallo_pasada_ciclo(fallo: &Error) -> String {
         Error::MotorSinRespuesta(_) => format!(
             "Si se debe a contención temporal de GPU o carga del modelo, el arnés reintentará \
              automáticamente en la siguiente vuelta. Si persiste tras varios ciclos, comprueba \
-             con «{NOMBRE_DEL_EJECUTABLE} --diagnostico» si el servidor de inferencia sigue \
+             con «{NOMBRE_DEL_EJECUTABLE} {OPCION_DIAGNOSTICO}» si el servidor de inferencia sigue \
              activo."
         ),
         Error::Lectura { .. } | Error::Escritura { .. } => {
@@ -173,7 +175,7 @@ pub fn mensaje_fallo_sondeo_canal(fallo: &Error) -> String {
 /// Se expresa en la unidad más legible: minutos exactos cuando no hay residuo, minutos y segundos
 /// cuando ambos son distintos de cero, y segundos cuando el intervalo es inferior a un minuto.
 pub fn cadencia_sondeo(intervalo_segundos: u64) -> String {
-    const SEGUNDOS_POR_MINUTO: u64 = 60;
+    use crate::unidades::SEGUNDOS_POR_MINUTO;
     if intervalo_segundos == 0 {
         return "cada 0 segundos".to_string();
     }
@@ -234,11 +236,11 @@ pub fn mensaje_listo_reinicio(intervalo_segundos: u64) -> String {
     )
 }
 
-/// Comprueba si existe un registro de lectura previo con datos en el proyecto.
-pub fn hay_registro_previo(ruta_registro: &Path) -> bool {
-    crate::protocolo::RegistroLectura::cargar(ruta_registro)
-        .map(|reg| !reg.esta_vacio())
-        .unwrap_or(false)
+/// Un bloque del texto de arranque, listo para `println!` o `eprintln!`: sin los saltos de línea
+/// que traiga al final y con uno solo añadido, de modo que al imprimirlo queda una línea en blanco
+/// debajo. Todo seguido costaba leerlo.
+pub fn bloque(texto: &str) -> String {
+    format!("{}\n", texto.trim_end_matches('\n'))
 }
 
 /// Redacta el mensaje de identificación de versión.
@@ -249,7 +251,8 @@ pub fn mensaje_version(version: &str) -> String {
 /// Redacta el mensaje emitido cuando se pasa un argumento no reconocido por la línea de comandos.
 pub fn mensaje_argumento_no_entendido(cual: &str) -> String {
     format!(
-        "No entiendo «{cual}». Prueba «{NOMBRE_DEL_EJECUTABLE} --ayuda» para ver qué se le puede \
+        "No entiendo «{cual}». Prueba «{NOMBRE_DEL_EJECUTABLE} {OPCION_AYUDA}» para ver qué se \
+         le puede \
          pedir a Programator."
     )
 }
@@ -257,7 +260,7 @@ pub fn mensaje_argumento_no_entendido(cual: &str) -> String {
 /// Redacta el mensaje emitido cuando una opción requiere un valor y no se le proporcionó.
 pub fn mensaje_argumento_falta_valor(cual: &str) -> String {
     format!(
-        "«{cual}» necesita un valor detrás. Ejemplo: {NOMBRE_DEL_EJECUTABLE} --ruta \
+        "«{cual}» necesita un valor detrás. Ejemplo: {NOMBRE_DEL_EJECUTABLE} {OPCION_RUTA} \
          \"{EJEMPLO_DE_RUTA}\"."
     )
 }
@@ -287,14 +290,37 @@ pub fn mensaje_guia_publicada() -> String {
     )
 }
 
+/// La guía para personas en el paquete portable: el LEEME, junto al ejecutable
+/// (`empaquetado/contenido.txt`).
+const GUIA_PARA_PERSONAS_EN_EL_PAQUETE: &str = "LEEME.md";
+/// La guía para personas en el repositorio.
+const GUIA_PARA_PERSONAS_EN_EL_REPOSITORIO: &str = "docs/Manual de uso.md";
+
+/// Dónde está la guía para personas, y que la del canal es para el agente que dirige.
+pub fn mensaje_guia_para_personas() -> String {
+    format!(
+        "📖 La guía para ti es {GUIA_PARA_PERSONAS_EN_EL_PAQUETE}, junto al ejecutable (en el \
+         repositorio, {GUIA_PARA_PERSONAS_EN_EL_REPOSITORIO}). La del canal, {}, es para el agente \
+         que dirige a Programator: que la lea antes de encargarle nada.",
+        ruta_legible_de_la_guia()
+    )
+}
+
 /// Redacta la orientación para el usuario sobre cómo comenzar la colaboración desde su modelo de pago habitual.
 pub fn mensaje_orientacion_modelo_pago() -> String {
     format!(
         "💡 Cómo empezar:\n   \
      Abre tu modelo de pago habitual (Claude, ChatGPT, etc.) en esta carpeta de trabajo y pídele:\n   \
      «Accede a la ayuda de Programator en {}, \
-     infórmame de sus capacidades y coordínate con él para gestionar el trabajo.»",
-        ruta_legible_de_la_guia()
+     infórmame de sus capacidades y coordínate con él para gestionar el trabajo. Antes de \
+     encargarle nada, elige tu identidad, de la forma «Herramienta N» (por ejemplo {}), y \
+     escríbela en la primera línea de tu buzón en .gestor/canal/: «{}<tu identidad>». Después \
+     de cada encargo, lanza en segundo plano {} con esa misma identidad, y vuelve a lanzarlo tras \
+     cada aviso.»",
+        ruta_legible_de_la_guia(),
+        crate::protocolo::respuesta::ejemplos_de_identidad(),
+        crate::protocolo::respuesta::CABECERA_DE_BANDEJA,
+        super::vigilante::orden_para_el_agente()
     )
 }
 
@@ -345,6 +371,18 @@ pub fn mensaje_publicaciones_fallidas(fallidos: usize) -> String {
 }
 
 /// Redacta el resumen de encargos atendidos y fallos de publicación al cierre de una pasada.
+/// Lo que se dice al volver por los encargos de la cola de pendientes sin novedades en el canal.
+pub fn mensaje_atendiendo_pendientes() -> String {
+    "Se retoman los encargos que quedaron en la cola de pendientes.".to_string()
+}
+
+/// Cuántos encargos quedaron en la cola de pendientes al terminar la pasada.
+pub fn mensaje_encargos_en_cola(pendientes: usize) -> String {
+    format!(
+        "Encargos en la cola de pendientes: {pendientes}. Se volverán a atender en la próxima vuelta."
+    )
+}
+
 pub fn mensaje_desenlace_atendidos(atendidos: usize, fallidos: usize) -> String {
     format!("Encargos atendidos: {atendidos} (fallos al publicar: {fallidos}).")
 }

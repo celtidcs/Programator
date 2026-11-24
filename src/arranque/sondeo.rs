@@ -1,7 +1,6 @@
 //! Detección de novedades en el directorio del canal mediante cálculo de huellas.
 
 use crate::error::{Error, Resultado};
-use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// Cómo salió una pasada de sondeo del canal.
@@ -168,7 +167,5 @@ fn recolectar_huellas(
 /// Hash SHA-256 hexadecimal del contenido, para distinguir ficheros que cambian de contenido sin
 /// cambiar de tamaño. No depende de ninguna resolución de reloj del sistema de ficheros.
 fn huella_contenido(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    crate::ficheros::huella_sha256_de_bytes(bytes)
 }

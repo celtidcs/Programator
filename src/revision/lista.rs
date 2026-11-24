@@ -1,5 +1,5 @@
-//! `candidatos.toml`: lo que encontró una búsqueda, para que el Director lo lea y para que la
-//! descarga compruebe contra él el nombre y la huella (especificación, §3.2, punto 6, y §4).
+//! `candidatos.toml`: lo que encontró una búsqueda, para que el usuario lo lea y para que la
+//! descarga compruebe contra él el nombre y la huella.
 
 use serde::{Deserialize, Serialize};
 
@@ -46,12 +46,12 @@ pub fn enlace_del_repositorio(sitio: &str, repositorio: &str) -> String {
 
 pub fn escribir(lista: &ListaDeCandidatos) -> Resultado<String> {
     toml::to_string(lista)
-        .map_err(|causa| Error::Revision(format!("la lista de candidatos no se compone: {causa}")))
+        .map_err(|causa| Error::Revision(super::mensajes::lista_sin_componer(&causa)))
 }
 
 pub fn leer(texto: &str) -> Resultado<ListaDeCandidatos> {
     toml::from_str(texto)
-        .map_err(|causa| Error::Revision(format!("«{NOMBRE_DE_LA_LISTA}» no se entiende: {causa}")))
+        .map_err(|causa| Error::Revision(super::mensajes::lista_que_no_se_entiende(&causa)))
 }
 
 #[cfg(test)]

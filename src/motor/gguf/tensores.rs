@@ -152,7 +152,17 @@ pub(super) fn leer_tensores_de<R: Read>(
         .alineacion
         .filter(|a| *a > 0)
         .unwrap_or(ALINEACION_POR_DEFECTO);
-    pesos.inicio_datos = lector.posicion().div_ceil(alineacion) * alineacion;
+    // La alineación la dice el fichero: una que llevaría el comienzo de los datos más allá de
+    // un u64 es un fichero roto, no una cifra que redondear.
+    pesos.inicio_datos = lector
+        .posicion()
+        .checked_next_multiple_of(alineacion)
+        .ok_or_else(|| {
+            error_gguf(
+                ruta,
+                format!("la alineación {alineacion} lleva los datos más allá de lo que cabe"),
+            )
+        })?;
 
     Ok(pesos)
 }
@@ -176,12 +186,12 @@ pub(crate) mod pruebas_apoyo {
         U32(u32),
         I32(i32),
         F32(f32),
-        Bool(bool),
+        Logico(bool),
         Cadena(String),
         U64(u64),
         I64(i64),
         F64(f64),
-        ArrayU32(Vec<u32>),
+        ListaU32(Vec<u32>),
     }
 
     pub(crate) fn codigo_tipo(valor: &ValorPrueba) -> u32 {
@@ -193,61 +203,61 @@ pub(crate) mod pruebas_apoyo {
             ValorPrueba::U32(_) => 4,
             ValorPrueba::I32(_) => 5,
             ValorPrueba::F32(_) => 6,
-            ValorPrueba::Bool(_) => 7,
+            ValorPrueba::Logico(_) => 7,
             ValorPrueba::Cadena(_) => 8,
-            ValorPrueba::ArrayU32(_) => 9,
+            ValorPrueba::ListaU32(_) => 9,
             ValorPrueba::U64(_) => 10,
             ValorPrueba::I64(_) => 11,
             ValorPrueba::F64(_) => 12,
         }
     }
 
-    pub(crate) fn escribir_cadena(buf: &mut Vec<u8>, texto: &str) {
-        buf.extend_from_slice(&(texto.len() as u64).to_le_bytes());
-        buf.extend_from_slice(texto.as_bytes());
+    pub(crate) fn escribir_cadena(contenido: &mut Vec<u8>, texto: &str) {
+        contenido.extend_from_slice(&(texto.len() as u64).to_le_bytes());
+        contenido.extend_from_slice(texto.as_bytes());
     }
 
-    pub(crate) fn escribir_valor(buf: &mut Vec<u8>, valor: &ValorPrueba) {
+    pub(crate) fn escribir_valor(contenido: &mut Vec<u8>, valor: &ValorPrueba) {
         match valor {
-            ValorPrueba::U8(v) => buf.push(*v),
-            ValorPrueba::I8(v) => buf.push(*v as u8),
-            ValorPrueba::U16(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::I16(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::U32(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::I32(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::F32(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::Bool(v) => buf.push(if *v { 1 } else { 0 }),
-            ValorPrueba::Cadena(v) => escribir_cadena(buf, v),
-            ValorPrueba::U64(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::I64(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::F64(v) => buf.extend_from_slice(&v.to_le_bytes()),
-            ValorPrueba::ArrayU32(elementos) => {
-                buf.extend_from_slice(&4u32.to_le_bytes()); // tipo de elemento: U32
-                buf.extend_from_slice(&(elementos.len() as u64).to_le_bytes());
+            ValorPrueba::U8(v) => contenido.push(*v),
+            ValorPrueba::I8(v) => contenido.push(*v as u8),
+            ValorPrueba::U16(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::I16(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::U32(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::I32(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::F32(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::Logico(v) => contenido.push(if *v { 1 } else { 0 }),
+            ValorPrueba::Cadena(v) => escribir_cadena(contenido, v),
+            ValorPrueba::U64(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::I64(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::F64(v) => contenido.extend_from_slice(&v.to_le_bytes()),
+            ValorPrueba::ListaU32(elementos) => {
+                contenido.extend_from_slice(&4u32.to_le_bytes()); // tipo de elemento: U32
+                contenido.extend_from_slice(&(elementos.len() as u64).to_le_bytes());
                 for elemento in elementos {
-                    buf.extend_from_slice(&elemento.to_le_bytes());
+                    contenido.extend_from_slice(&elemento.to_le_bytes());
                 }
             }
         }
     }
 
-    pub(crate) fn escribir_par(buf: &mut Vec<u8>, clave: &str, valor: &ValorPrueba) {
-        escribir_cadena(buf, clave);
-        buf.extend_from_slice(&codigo_tipo(valor).to_le_bytes());
-        escribir_valor(buf, valor);
+    pub(crate) fn escribir_par(contenido: &mut Vec<u8>, clave: &str, valor: &ValorPrueba) {
+        escribir_cadena(contenido, clave);
+        contenido.extend_from_slice(&codigo_tipo(valor).to_le_bytes());
+        escribir_valor(contenido, valor);
     }
 
     /// Compone una cabecera GGUF válida a partir de la lista de pares clave-valor dada.
     pub(crate) fn cabecera_valida(pares: &[(&str, ValorPrueba)]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"GGUF");
-        buf.extend_from_slice(&3u32.to_le_bytes()); // versión 3, la actual
-        buf.extend_from_slice(&0u64.to_le_bytes()); // cero tensores: no hace falta ninguno
-        buf.extend_from_slice(&(pares.len() as u64).to_le_bytes());
+        let mut contenido = Vec::new();
+        contenido.extend_from_slice(b"GGUF");
+        contenido.extend_from_slice(&3u32.to_le_bytes()); // versión 3, la actual
+        contenido.extend_from_slice(&0u64.to_le_bytes()); // cero tensores: no hace falta ninguno
+        contenido.extend_from_slice(&(pares.len() as u64).to_le_bytes());
         for (clave, valor) in pares {
-            escribir_par(&mut buf, clave, valor);
+            escribir_par(&mut contenido, clave, valor);
         }
-        buf
+        contenido
     }
 
     /// Un tensor tal y como lo escribe la utilidad de pruebas.
@@ -257,14 +267,14 @@ pub(crate) mod pruebas_apoyo {
         pub(crate) tipo: u32,
     }
 
-    pub(crate) fn escribir_tensor(buf: &mut Vec<u8>, tensor: &TensorPrueba, offset: u64) {
-        escribir_cadena(buf, &tensor.nombre);
-        buf.extend_from_slice(&(tensor.dimensiones.len() as u32).to_le_bytes());
+    pub(crate) fn escribir_tensor(contenido: &mut Vec<u8>, tensor: &TensorPrueba, offset: u64) {
+        escribir_cadena(contenido, &tensor.nombre);
+        contenido.extend_from_slice(&(tensor.dimensiones.len() as u32).to_le_bytes());
         for dimension in &tensor.dimensiones {
-            buf.extend_from_slice(&dimension.to_le_bytes());
+            contenido.extend_from_slice(&dimension.to_le_bytes());
         }
-        buf.extend_from_slice(&tensor.tipo.to_le_bytes());
-        buf.extend_from_slice(&offset.to_le_bytes());
+        contenido.extend_from_slice(&tensor.tipo.to_le_bytes());
+        contenido.extend_from_slice(&offset.to_le_bytes());
     }
 
     /// Compone un GGUF completo y coherente: cabecera, tabla de tensores, relleno hasta la
@@ -275,13 +285,13 @@ pub(crate) mod pruebas_apoyo {
         tensores: &[TensorPrueba],
         alineacion: u64,
     ) -> Vec<u8> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"GGUF");
-        buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&(tensores.len() as u64).to_le_bytes());
-        buf.extend_from_slice(&(pares.len() as u64).to_le_bytes());
+        let mut contenido = Vec::new();
+        contenido.extend_from_slice(b"GGUF");
+        contenido.extend_from_slice(&3u32.to_le_bytes());
+        contenido.extend_from_slice(&(tensores.len() as u64).to_le_bytes());
+        contenido.extend_from_slice(&(pares.len() as u64).to_le_bytes());
         for (clave, valor) in pares {
-            escribir_par(&mut buf, clave, valor);
+            escribir_par(&mut contenido, clave, valor);
         }
 
         let mut offset = 0u64;
@@ -293,15 +303,15 @@ pub(crate) mod pruebas_apoyo {
             let bytes = tipo_tensor(tensor.tipo)
                 .and_then(|tipo| bytes_de_tensor(&tensor.dimensiones, tipo))
                 .unwrap_or(0);
-            escribir_tensor(&mut buf, tensor, offset);
+            escribir_tensor(&mut contenido, tensor, offset);
             fin_datos = offset + bytes;
             offset = fin_datos.div_ceil(alineacion) * alineacion;
         }
 
-        let relleno = (alineacion - (buf.len() as u64 % alineacion)) % alineacion;
-        buf.extend(std::iter::repeat_n(0u8, relleno as usize));
-        buf.extend(std::iter::repeat_n(0u8, fin_datos as usize));
-        buf
+        let relleno = (alineacion - (contenido.len() as u64 % alineacion)) % alineacion;
+        contenido.extend(std::iter::repeat_n(0u8, relleno as usize));
+        contenido.extend(std::iter::repeat_n(0u8, fin_datos as usize));
+        contenido
     }
 
     pub(crate) fn escribir_temporal(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {

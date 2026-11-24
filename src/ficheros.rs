@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, Resultado};
 
 /// Cuánto se lee de una vez al calcular una huella: 1 MiB, para no cargar un modelo en memoria.
-const TAMANO_DEL_TROZO: usize = 1024 * 1024;
+pub(crate) const TAMANO_DEL_TROZO: usize = crate::unidades::BYTES_POR_MIB_USIZE;
 
 /// Las entradas de una carpeta, sin orden garantizado.
 pub fn entradas(carpeta: &Path) -> Resultado<Vec<PathBuf>> {
@@ -52,20 +52,23 @@ pub fn huella_sha256(ruta: &Path) -> Resultado<String> {
         causa,
     };
     let mut fichero = std::fs::File::open(ruta).map_err(error)?;
-    let mut hasher = Sha256::new();
+    let mut calculador = Sha256::new();
     let mut trozo = vec![0u8; TAMANO_DEL_TROZO];
     loop {
         let leidos = fichero.read(&mut trozo).map_err(error)?;
         if leidos == 0 {
             break;
         }
-        hasher.update(&trozo[..leidos]);
+        calculador.update(&trozo[..leidos]);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok(format!("{:x}", calculador.finalize()))
+}
+
+/// La huella SHA-256 de unos bytes ya leídos, en hexadecimal: la misma que daría
+/// [`huella_sha256`] con un fichero que los contuviera.
+pub fn huella_sha256_de_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// La huella SHA-256 de un texto, en hexadecimal.
@@ -152,6 +155,18 @@ pub fn leer_si_existe(ruta: &Path) -> Resultado<String> {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn la_huella_de_unos_bytes_es_la_de_un_fichero_con_ellos() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = dir.path().join("abc.txt");
+        std::fs::write(&ruta, b"abc").unwrap();
+
+        // El vector de prueba de «abc» de FIPS 180-2.
+        let esperada = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(huella_sha256_de_bytes(b"abc"), esperada);
+        assert_eq!(huella_sha256(&ruta).unwrap(), esperada);
+    }
 
     #[test]
     fn la_huella_de_un_texto_es_su_sha256_y_se_busca_por_palabras_enteras() {

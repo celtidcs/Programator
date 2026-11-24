@@ -1,12 +1,17 @@
 # Compilación de Rust
 /target/
+# La de la copia de la biblioteca, si alguien la prueba sin --target-dir.
+/bibliotecas/*/target/
 **/*.rs.bk
 
 # Artefactos portables: pesan cientos de megas y no se versionan. El motor y el modelo se
 # descargan aparte y los coloca en estas carpetas el script «preparar-portable»; «descargas/»
 # guarda los paquetes comprimidos por si hay que rehacer la instalación sin volver a bajarlos.
 /modelos/
-/herramientas/
+# En herramientas/ va el motor; herramientas/publicacion/ son los guiones de publicación, que sí
+# se versionan.
+/herramientas/*
+!/herramientas/publicacion/
 /descargas/
 *.gguf
 *.exe
@@ -39,6 +44,9 @@ portable/
 .claude/
 .superpowers/
 
+# Lo que se trae de otros proyectos para el paquete (empaquetado/traer-vigilante.ps1).
+/terceros/
+
 # Temporales
 *.tmp
 
@@ -47,10 +55,9 @@ portable/
 __pycache__/
 *.pyc
 
-# Árbol curado que se publica en GitHub (celtidcs/Programator). Es un repositorio git propio que
-# genera «.gestor/preparar-publicacion.ps1»; vive aquí dentro desde el 10/11/2026 y no se versiona
-# en este repositorio.
-/Programator-publico/
+# La copia que se publica en GitHub, cuando se prepara dentro del proyecto: es un repositorio git
+# propio y no se versiona en este.
+/publicacion/
 
-# Experimento suelto de septiembre (capas_gpu = "auto"), ya incorporado al código
+# Pruebas sueltas fuera de la suite, que no se versionan.
 /pruebas_externas/

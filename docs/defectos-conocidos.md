@@ -5,7 +5,7 @@ Este documento recoge de forma explícita los defectos conocidos, las pruebas no
 
 Pruebas ignoradas en la suite automatizada
 
-La suite mecánica del proyecto contiene seis pruebas marcadas con el atributo «#[ignore]». No se ejecutan durante la verificación ordinaria con cargo test porque tocan la máquina real: las dos primeras, el hardware; la tercera, la red (src/actualizacion.rs, que pregunta a GitHub); y las tres últimas, la seguridad de Windows (tests/aislamiento_windows.rs: dos crean procesos de integridad baja, una de ellas en una carpeta donde el usuario solo tiene permiso de modificar, y la otra lee la tabla de conexiones de un Job; se ejecutan a mano en una máquina Windows de pruebas, nunca en el equipo de uso diario, con la orden cargo test --test aislamiento_windows -- --ignored). La de la carpeta donde solo se puede modificar no reproduce de verdad ese caso si se lanza desde una sesión de administrador: los privilegios de tomar posesión y de restaurar le dan el permiso que le faltaría, y pasa aunque se quite la corrección; sin ellos, pero con el testigo aún en integridad alta, falla incluso con ella, porque la carpeta la crea un administrador. Para medirlo haría falta un usuario estándar cuya carpeta solo tenga permiso de modificar. La corrección está comprobada en uso real, en una unidad con ese permiso. Las de hardware son las dos que siguen.
+La suite mecánica del proyecto contiene cinco pruebas marcadas con el atributo «#[ignore]». No se ejecutan durante la verificación ordinaria con cargo test porque tocan la máquina real: las dos primeras, el hardware; y las tres últimas, la seguridad de Windows (tests/aislamiento_windows.rs: dos crean procesos de integridad baja, una de ellas en una carpeta donde el usuario solo tiene permiso de modificar, y la tercera lee la tabla de conexiones de un Job; se ejecutan a mano en una máquina Windows de pruebas, nunca en el equipo de uso diario, con la orden cargo test --test aislamiento_windows -- --ignored). La de la carpeta donde solo se puede modificar no reproduce de verdad ese caso si se lanza desde una sesión de administrador: los privilegios de tomar posesión y de restaurar le dan el permiso que le faltaría, y pasa aunque se quite la corrección; sin ellos, pero con el testigo aún en integridad alta, falla incluso con ella, porque la carpeta la crea un administrador. Para medirlo haría falta un usuario estándar cuya carpeta solo tenga permiso de modificar. La corrección está comprobada en uso real, en una unidad con ese permiso. Las de hardware son las dos que siguen.
 
 La primera es la detección de tarjeta gráfica, en src/motor/hardware.rs. La prueba imprime_lo_que_ve_describir_gpu_en_esta_maquina imprime lo que Programator ve de la tarjeta, su nombre y su memoria VRAM total y libre, preguntando a nvidia-smi y, en Windows, si no contesta, al sistema gráfico. No comprueba nada por sí sola: lo que imprime se compara a mano con lo que se sabe de la tarjeta, y por eso solo tiene sentido en una máquina con tarjeta gráfica, no en los entornos de integración continua, que no tienen ninguna.
 
@@ -59,13 +59,6 @@ Si ahí sale algo razonable y el programa sigue diciendo que no sabe, es un defe
 Hay un detalle de la configuración que se olvida con facilidad: la clave binario de la sección [motor] viene escrita para Windows y termina en .exe. En Linux hay que dejarla en herramientas/llama-server, sin extensión, o el arranque fallará diciendo que no encuentra el motor.
 
 
-Mensajes que confunden
-
-Al arrancar sin versión publicada más nueva, dice «Programator 0.12.0 ya es la versión más reciente publicada en GitHub» también cuando esa versión aún no está publicada, como pasa con una compilada desde el repositorio antes de su publicación: lo que quiere decir es que en GitHub no hay ninguna más nueva.
-
-No cambia lo que hace Programator; está pendiente de corregir.
-
-
 Limitaciones estructurales pendientes de evolución
 
 Durante una jornada de trabajo real sobre un proyecto de verdad (23 de septiembre de 2026), se identificaron cuatro limitaciones del protocolo de comunicación que actualmente permanecen pospuestas para no alterar de forma abrupta el contrato con los agentes coordinadores.
@@ -73,20 +66,22 @@ Durante una jornada de trabajo real sobre un proyecto de verdad (23 de septiembr
 
 Limitación 1: detección de encargos por marcas en archivo continuo en lugar de archivos individuales
 
-Actualmente, los encargos se redactan dentro del archivo de buzón de cada agente, en una línea que empieza por Para Programator o, en la forma antigua que se sigue atendiendo, bajo un encabezado «## Para Programator». El arnés rastrea los avances de lectura midiendo el desplazamiento en bytes dentro del archivo, junto con una huella de lo ya leído.
+Actualmente, los encargos se redactan dentro del archivo de buzón de cada agente, en una línea que lleva Para Programator, con la P mayúscula y en cualquier punto de la línea, o, en la forma antigua que se sigue atendiendo, bajo un encabezado «## Para Programator». El arnés rastrea los avances de lectura midiendo el desplazamiento en bytes dentro del archivo, junto con una huella de lo ya leído.
 
 Consecuencia para el usuario: si un usuario o agente edita el contenido anterior de un buzón en lugar de añadir una sección al final, o si la herramienta de edición altera los saltos de línea del archivo, la huella deja de cuadrar y Programator relee el buzón entero, y vuelve a atender los encargos que sigan escritos en él aunque ya los hubiera atendido. Y si lo nuevo se añade dentro de una sección ya leída, sin su propia línea Para Programator, se pasa por alto.
 
 Cómo mitigarlo: redactar siempre cada nuevo encargo al final del buzón, en una intervención nueva que empiece con su «LATIDO:» y con su línea Para Programator, sin modificar el historial previo.
 
 
-Limitación 2: ausencia de cola formal de encargos y cancelación explícita
+Limitación 2: sin prioridades ni cancelación de encargos
 
-El arnés procesa los encargos secuencialmente en el orden en que los detecta durante el sondeo del canal. No existe un mecanismo formal para definir prioridades, cancelar un encargo que ya ha entrado en procesamiento o reorganizar la lista de tareas pendientes.
+Desde la 1.0.0 hay una cola de pendientes, .gestor/<agente>/pendientes.toml, para los encargos que no se pudieron atender porque el modelo no cargó a tiempo, el motor se cerró o la entrega no se pudo publicar; cada pasada atiende primero lo que hay en ella, y un encargo sale de la cola al publicarse su respuesta o al cerrarse tras ciclo.intentos_por_encargo intentos fallidos. Dentro de una pasada, los encargos se agrupan por el modelo que piden, empezando por el que ya está cargado, para cargar lo menos posible. Fuera de eso, los encargos se atienden uno tras otro, en el orden en que se detectan. No existe un mecanismo para definir prioridades, cancelar un encargo que ya ha entrado en procesamiento o reorganizar la cola a mano.
 
 Consecuencia para el usuario: si se publica un encargo erróneo, el modelo consumirá tiempo de inferencia en la tarjeta gráfica hasta completar el ciclo o agotar el cupo de herramientas, demorando la atención de encargos posteriores.
 
 Cómo mitigarlo: verificar cuidadosamente los requisitos y el alcance de cada encargo antes de publicarlo en el buzón.
+
+Un caso concreto de esta limitación: si en la misma vuelta hay encargos para el modelo y una petición de revisión, y el modelo todavía está cargando, la revisión también espera a que termine la carga, aunque no lo necesita. La pasada se corta sin dar por leído el canal para no perder ningún encargo, y contestar la revisión en ese momento haría que se contestara dos veces. La espera es la de la carga del modelo, de unos segundos a un par de minutos. Queda para la 1.1.0.
 
 
 Limitación 3: falta de catálogo persistente de entregas previas
@@ -111,4 +106,4 @@ Incidencia sobre la primera pasada del canal
 
 Conviene dejar constancia de que una incidencia observada en aquella jornada de uso real ha quedado descartada como defecto. La guía de usuario sugería erróneamente que en cada inicio del programa se ignoraban los textos preexistentes en el canal.
 
-La inspección del código confirmó que dicha instantánea inicial se ejecuta únicamente la primera vez que Programator se conecta a un proyecto nuevo, cuando el archivo de registro aún no existe. En cualquier arranque sucesivo, Programator conserva su memoria de lectura y atiende cualquier encargo publicado con posterioridad a la última revisión, garantizando un comportamiento predecible.
+Hoy la instantánea inicial solo se plantea al arrancar sin registro de lectura, .gestor/<agente>/lectura.json, y solo descarta lo anterior si Programator ya respondió alguna vez en ese canal, es decir, si su propio buzón tiene alguna intervención con su LATIDO. En un proyecto donde nunca ha respondido, que es el caso de un proyecto nuevo, la instantánea no da nada por visto y Programator atiende todo encargo dirigido a él, aunque se publicara antes de arrancar; da igual abrir antes el agente o Programator. El caso en que lo anterior se descarta es, por tanto, el de un canal con respuestas previas cuyo registro de lectura se ha perdido. En cualquier arranque con registro, Programator conserva su memoria de lectura y atiende cualquier encargo publicado con posterioridad a la última revisión.

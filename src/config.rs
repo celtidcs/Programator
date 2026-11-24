@@ -6,7 +6,13 @@ use crate::error::{Error, Resultado};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub mod atencion_rapida;
+mod auto_o_numero;
 pub mod modelo_por_defecto;
+pub mod soltar_modelo;
+
+pub use atencion_rapida::AtencionRapida;
+pub use soltar_modelo::SoltarModelo;
 
 /// Cuántas capas del modelo se piden a la GPU.
 ///
@@ -23,32 +29,7 @@ pub enum CapasGpu {
 
 impl<'de> Deserialize<'de> for CapasGpu {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Crudo {
-            Numero(u32),
-            Palabra(String),
-        }
-
-        // Solo intercepta el error de aquí: cuando el valor no es ni número ni cadena (un
-        // decimal, por ejemplo), serde agota las variantes de Crudo y contesta con el nombre de
-        // este enum auxiliar, en inglés, en un mensaje que llega tal cual al Director cuando
-        // edita el TOML a mano. El caso de la palabra que no es «auto» tiene su propio mensaje
-        // más abajo, y no pasa por este `map_err`: Crudo sí se deserializa con éxito como
-        // `Palabra`, así que el error no ocurre aquí.
-        let crudo = Crudo::deserialize(d).map_err(|_| {
-            serde::de::Error::custom(
-                "capas_gpu solo admite un número entero de capas o la palabra «auto»",
-            )
-        })?;
-
-        match crudo {
-            Crudo::Numero(n) => Ok(CapasGpu::Fijas(n)),
-            Crudo::Palabra(p) if p.eq_ignore_ascii_case("auto") => Ok(CapasGpu::Auto),
-            Crudo::Palabra(p) => Err(serde::de::Error::custom(format!(
-                "«{p}» no vale para capas_gpu: escribe un número o la palabra «auto»"
-            ))),
-        }
+        Ok(auto_o_numero::leer(d, "capas_gpu", "capas")?.map_or(CapasGpu::Auto, CapasGpu::Fijas))
     }
 }
 
@@ -66,8 +47,6 @@ pub struct Config {
     pub motor: MotorConfig,
     #[serde(default)]
     pub ciclo: Ciclo,
-    #[serde(default)]
-    pub poda: Poda,
     #[serde(default)]
     pub muestreo: Muestreo,
     #[serde(default)]
@@ -114,8 +93,10 @@ pub(crate) const fn preguntar_siempre_por_defecto() -> bool {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agente {
+    /// Con él se firma y de él sale su buzón: el nombre en minúsculas con «.md».
+    #[serde(default = "nombre_por_defecto")]
     pub nombre: String,
-    pub buzon: String,
+    #[serde(default = "plantilla_normas_por_defecto")]
     pub plantilla_normas: String,
     /// El texto que se le da al modelo como instrucciones de sistema, en cada encargo.
     ///
@@ -155,35 +136,74 @@ pub struct Agente {
     /// activa siempre, porque sin él no se puede saber por qué un modelo hizo lo que hizo.
     #[serde(default)]
     pub registro_de_conversacion: bool,
+    /// El vigilante del canal de Gestor Agentes que trae el paquete. Si el proyecto no tiene uno,
+    /// Programator lo deja en `.gestor/vigilante/` al arrancar. Por defecto:
+    /// "vigilante/gestor-vigilante.exe" en Windows y "vigilante/gestor-vigilante" en Linux.
+    #[serde(default = "vigilante_por_defecto")]
+    pub vigilante: String,
 }
+
+fn vigilante_por_defecto() -> String {
+    format!(
+        "{}/{}",
+        crate::arranque::vigilante::CARPETA_DEL_VIGILANTE,
+        crate::plataforma::NOMBRE_DEL_VIGILANTE
+    )
+}
+
+/// La plantilla de la guía para el equipo, junto al ejecutable (desde la 0.6.0, 22/09/2026).
+pub const GUIA_POR_DEFECTO: &str = "plantillas/como-encargar-a-programator.md";
 
 fn guia_por_defecto() -> String {
-    "plantillas/como-encargar-a-programator.md".to_string()
+    GUIA_POR_DEFECTO.to_string()
 }
+
+/// El registro de lo que midió el banco, junto al ejecutable (desde el 12/11/2026).
+pub const REGISTRO_DE_MODELOS_POR_DEFECTO: &str = "registro-de-modelos.toml";
 
 fn registro_de_modelos_por_defecto() -> String {
-    "registro-de-modelos.toml".to_string()
+    REGISTRO_DE_MODELOS_POR_DEFECTO.to_string()
 }
+
+/// La plantilla del recordatorio que va pegado a cada encargo (desde la 0.6.0, 22/09/2026).
+pub const RECORDATORIO_POR_DEFECTO: &str = "plantillas/recordatorio-de-encargo.md";
 
 fn recordatorio_por_defecto() -> String {
-    "plantillas/recordatorio-de-encargo.md".to_string()
+    RECORDATORIO_POR_DEFECTO.to_string()
 }
 
+/// La plantilla de las instrucciones que ve el modelo (desde la 0.6.0, 22/09/2026).
+pub const PREAMBULO_POR_DEFECTO: &str = "plantillas/preambulo-del-modelo.md";
+
 fn preambulo_por_defecto() -> String {
-    "plantillas/preambulo-del-modelo.md".to_string()
+    PREAMBULO_POR_DEFECTO.to_string()
+}
+
+/// El nombre con el que Programator se identifica en el canal.
+pub const NOMBRE_POR_DEFECTO: &str = "Programator";
+
+fn nombre_por_defecto() -> String {
+    NOMBRE_POR_DEFECTO.to_string()
+}
+
+/// La plantilla de instrucciones que se instala en un proyecto que no tiene las suyas.
+pub const PLANTILLA_NORMAS_POR_DEFECTO: &str = "plantillas/instrucciones-del-proyecto.md";
+
+fn plantilla_normas_por_defecto() -> String {
+    PLANTILLA_NORMAS_POR_DEFECTO.to_string()
 }
 
 impl Default for Agente {
     fn default() -> Self {
         Self {
-            nombre: "Programator".to_string(),
-            buzon: ".gestor/canal/programator.md".to_string(),
-            plantilla_normas: "plantillas/instrucciones-del-proyecto.md".to_string(),
+            nombre: nombre_por_defecto(),
+            plantilla_normas: plantilla_normas_por_defecto(),
             preambulo: preambulo_por_defecto(),
             recordatorio: recordatorio_por_defecto(),
             guia: guia_por_defecto(),
             registro_de_modelos: registro_de_modelos_por_defecto(),
             registro_de_conversacion: false,
+            vigilante: vigilante_por_defecto(),
         }
     }
 }
@@ -212,12 +232,38 @@ pub struct Verificacion {
     /// un arnés pensado para vivir días.
     #[serde(default = "tiempo_verificacion_por_defecto")]
     pub tiempo_maximo_segundos: u64,
+    /// Si no hay comprobador de `py`, buscar un Python y comprobar con él. Por defecto, sí.
+    #[serde(default = "comprobar_python_por_defecto")]
+    pub comprobar_python: bool,
+    /// La ruta del Python con que comprobar; vacía, se busca en el PATH.
+    #[serde(default)]
+    pub python: String,
+    /// Cuántos caracteres de lo que dice un comprobador que rechaza se le pasan al modelo.
+    #[serde(default = "maximo_salida_al_modelo_por_defecto")]
+    pub maximo_salida_al_modelo: usize,
+}
+
+/// Lo que ve el modelo de un comprobador que rechaza, si el TOML no dice otra cosa: 1200
+/// caracteres. Un error de `rustc` puede ocupar pantallas enteras y el contexto es finito; con esto
+/// sobra para saber qué falló y dónde. Es la cifra que el arnés usaba fija hasta la 1.1.0
+/// y está en el TOML para quien use otro modelo u otro contexto.
+pub const MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO: usize = 1200;
+
+const fn maximo_salida_al_modelo_por_defecto() -> usize {
+    MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO
+}
+
+/// Por defecto se busca Python.
+const fn comprobar_python_por_defecto() -> bool {
+    true
 }
 
 /// Cuánto se espera por defecto a un comprobador antes de cortarlo: 30 segundos.
 /// Única fuente de verdad compartida con el arnés (`TIEMPO_VERIFICACION_POR_DEFECTO`).
+pub const TIEMPO_VERIFICACION_POR_DEFECTO_SEGUNDOS: u64 = 30;
+
 pub(crate) const fn tiempo_verificacion_por_defecto() -> u64 {
-    30
+    TIEMPO_VERIFICACION_POR_DEFECTO_SEGUNDOS
 }
 
 impl Default for Verificacion {
@@ -227,6 +273,9 @@ impl Default for Verificacion {
         Self {
             comprobadores: std::collections::BTreeMap::new(),
             tiempo_maximo_segundos: tiempo_verificacion_por_defecto(),
+            comprobar_python: comprobar_python_por_defecto(),
+            python: String::new(),
+            maximo_salida_al_modelo: MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO,
         }
     }
 }
@@ -249,6 +298,9 @@ pub struct MotorConfig {
     pub margen_vram_mib: u64,
     #[serde(default = "cache_por_defecto")]
     pub cache_kv: String,
+    /// La atención rápida del motor (`--flash-attn`). Por defecto, `"on"`.
+    #[serde(default, rename = "flash_attn")]
+    pub atencion_rapida: AtencionRapida,
     /// Cuántas conversaciones simultáneas reserva el motor (`--parallel`).
     ///
     /// **Uno, y no el valor por defecto del motor.** Programator atiende los encargos en serie:
@@ -280,6 +332,24 @@ pub struct MotorConfig {
     /// Por defecto: 60 segundos.
     #[serde(default = "tiempo_escritura_motor_segundos_por_defecto")]
     pub tiempo_escritura_segundos: u64,
+    /// Cuándo se suelta el modelo de la tarjeta entre encargos. Por defecto, `"auto"`.
+    #[serde(default)]
+    pub soltar_modelo: SoltarModelo,
+    /// Tope de VRAM, en MiB, que el encaje no supera nunca. Sin él, el encaje usa toda la libre.
+    #[serde(default)]
+    pub vram_maxima_mib: Option<u64>,
+    /// Segundos que se espera a que cargue un modelo pedido a mitad de una pasada. Por defecto,
+    /// [`ESPERA_DE_CARGA_POR_DEFECTO_SEGUNDOS`].
+    #[serde(default = "espera_de_carga_por_defecto")]
+    pub espera_de_carga_segundos: u64,
+}
+
+/// Espera por defecto a que cargue un modelo pedido a mitad de una pasada: 300 segundos. Holgado
+/// frente a los 20 a 60 segundos que tarda el Devstral de 24B en una 4070 Ti SUPER.
+pub const ESPERA_DE_CARGA_POR_DEFECTO_SEGUNDOS: u64 = 300;
+
+pub(crate) const fn espera_de_carga_por_defecto() -> u64 {
+    ESPERA_DE_CARGA_POR_DEFECTO_SEGUNDOS
 }
 
 impl MotorConfig {
@@ -288,23 +358,30 @@ impl MotorConfig {
     pub fn nombre_del_modelo(&self) -> Option<String> {
         self.modelo
             .as_deref()
-            .and_then(|ruta| Path::new(ruta).file_stem())
-            .map(|nombre| nombre.to_string_lossy().into_owned())
+            .and_then(|ruta| crate::motor::fichero_de_modelo::nombre_de_modelo(Path::new(ruta)))
     }
 }
 
+/// El puerto de `llama-server` (desde el andamiaje del proyecto, 13/09/2026).
+pub const PUERTO_POR_DEFECTO: u16 = 8080;
+
 fn puerto_por_defecto() -> u16 {
-    8080
+    PUERTO_POR_DEFECTO
 }
+/// La ventana de contexto. 16384 y no 32768: medido el 22/09/2026, con 16k caben las cuarenta capas
+/// del Devstral y la generación sube a 23,0 tokens por segundo, contra 15,4 con el contexto doble.
+/// Las normas de la casa ocupan unos ocho mil tokens, así que sigue sobrando sitio para un encargo y
+/// su respuesta. Quien necesite más lo sube sabiendo lo que cuesta.
+pub const CONTEXTO_POR_DEFECTO: u32 = 16384;
+
 fn contexto_por_defecto() -> u32 {
-    // 16384 y no 32768: medido el 22/09/2026, con 16k caben las cuarenta capas del Devstral y la
-    // generación sube a 23,0 tokens por segundo, contra 15,4 con el contexto doble. Las normas de
-    // la casa ocupan unos ocho mil tokens, así que sigue sobrando sitio para un encargo y su
-    // respuesta. Quien necesite más lo sube sabiendo lo que cuesta.
-    16384
+    CONTEXTO_POR_DEFECTO
 }
+/// Conversaciones en paralelo: una, con la ventana de contexto entera para ella (desde la 0.6.0, 22/09/2026).
+pub const PARALELO_POR_DEFECTO: u32 = 1;
+
 fn paralelo_por_defecto() -> u32 {
-    1
+    PARALELO_POR_DEFECTO
 }
 /// Activado: es lo que hace que la misma prueba dé el mismo resultado. Cuesta reprocesar las instrucciones y el encargo una vez por conversación.
 pub fn empezar_en_frio_por_defecto() -> bool {
@@ -319,22 +396,35 @@ pub const MARGEN_VRAM_POR_DEFECTO_MIB: u64 = 512;
 fn margen_por_defecto() -> u64 {
     MARGEN_VRAM_POR_DEFECTO_MIB
 }
+/// El tipo del caché KV: la mitad de memoria que `f16` (desde el andamiaje del proyecto, 13/09/2026).
+pub const CACHE_KV_POR_DEFECTO: &str = "q8_0";
+
 fn cache_por_defecto() -> String {
-    "q8_0".to_string()
+    CACHE_KV_POR_DEFECTO.to_string()
 }
+/// Porcentaje de la ventana de contexto a partir del que se avisa de que se va a desbordar (25/09/2026).
+pub const UMBRAL_AVISO_CONTEXTO_POR_DEFECTO_PORCENTAJE: u32 = 70;
+
 fn umbral_contexto_por_defecto() -> u32 {
-    70
+    UMBRAL_AVISO_CONTEXTO_POR_DEFECTO_PORCENTAJE
 }
+/// Bytes que se cuentan por token al estimar la ocupación: lo habitual en texto latino (25/09/2026).
+pub const BYTES_POR_TOKEN_POR_DEFECTO: u32 = 4;
+
 fn bytes_por_token_por_defecto() -> u32 {
-    4
+    BYTES_POR_TOKEN_POR_DEFECTO
 }
 /// Tiempo máximo de lectura por defecto al comunicarse con el motor: 600 segundos (10 minutos).
+pub const TIEMPO_LECTURA_MOTOR_POR_DEFECTO_SEGUNDOS: u64 = 600;
+
 pub(crate) const fn tiempo_lectura_motor_segundos_por_defecto() -> u64 {
-    600
+    TIEMPO_LECTURA_MOTOR_POR_DEFECTO_SEGUNDOS
 }
 /// Tiempo máximo de escritura por defecto al enviar la petición al motor: 60 segundos.
+pub const TIEMPO_ESCRITURA_MOTOR_POR_DEFECTO_SEGUNDOS: u64 = 60;
+
 pub(crate) const fn tiempo_escritura_motor_segundos_por_defecto() -> u64 {
-    60
+    TIEMPO_ESCRITURA_MOTOR_POR_DEFECTO_SEGUNDOS
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -363,50 +453,83 @@ pub struct Ciclo {
     pub espera_reintento_motor_segundos: u64,
     /// Número máximo de veces seguidas que el modelo puede insistir en una misma herramienta
     /// denegada antes de abortar el encargo.
-    /// Por defecto: 2 (Regla de los Dos Intentos del §2.1).
+    /// Por defecto: 2 (Regla de los Dos Intentos).
     #[serde(default = "max_denegaciones_seguidas_por_defecto")]
     pub max_denegaciones_seguidas: u32,
+    /// Tras cuántos intentos fallidos se cierra un encargo de la cola de pendientes y se le
+    /// responde a quien lo pidió con el motivo. Por defecto, [`INTENTOS_POR_ENCARGO_POR_DEFECTO`].
+    #[serde(default = "intentos_por_encargo_por_defecto")]
+    pub intentos_por_encargo: u32,
+}
+
+/// Intentos fallidos tras los que se cierra un encargo: 2. Uno puede ser mala suerte; el segundo
+/// ya es algo que alguien tiene que mirar.
+pub const INTENTOS_POR_ENCARGO_POR_DEFECTO: u32 = 2;
+
+pub(crate) const fn intentos_por_encargo_por_defecto() -> u32 {
+    INTENTOS_POR_ENCARGO_POR_DEFECTO
 }
 
 /// Segundos mínimos entre dos sondeos del canal, se ponga lo que se ponga en el TOML.
 const INTERVALO_MINIMO_SEGUNDOS: u64 = 1;
 
+/// Techo de los tiempos en segundos del TOML que acaban sumados a la hora: un día. Más no tiene
+/// uso, y un valor enorme haría entrar en pánico esas sumas.
+const TECHO_DE_SEGUNDOS: u64 = 86_400;
+
 /// Nombre por defecto del fichero donde el arnés escribe su estado en cada sondeo.
 pub const FICHERO_LATIDO_POR_DEFECTO: &str = "latido.json";
 
+/// Segundos entre dos sondeos del canal si el TOML no dice otra cosa. Leer el canal no gasta
+/// tokens de nadie y es barato; con tres minutos, quien encargaba esperaba de media minuto y medio
+/// antes de que Programator viera el encargo.
+const INTERVALO_POR_DEFECTO_SEGUNDOS: u64 = 30;
+
 pub(crate) const fn intervalo_por_defecto() -> u64 {
-    180
+    INTERVALO_POR_DEFECTO_SEGUNDOS
 }
 /// Cupo máximo de herramientas por encargo por defecto: 12.
 /// Única fuente de verdad compartida con el arnés (`Limites::default`).
+pub const MAX_HERRAMIENTAS_POR_DEFECTO: u32 = 12;
+
 pub(crate) const fn max_herramientas_por_defecto() -> u32 {
-    12
+    MAX_HERRAMIENTAS_POR_DEFECTO
 }
 
 /// Única fuente del tope de repeticiones recordadas por defecto: 12 (coincide con el cupo de
 /// herramientas por encargo).
+pub const MAX_REPETICIONES_RECORDADAS_POR_DEFECTO: usize = 12;
+
 pub(crate) const fn max_repeticiones_recordadas_por_defecto() -> usize {
-    12
+    MAX_REPETICIONES_RECORDADAS_POR_DEFECTO
 }
-/// Reintentos por defecto ante un fallo del motor: 2 (coherente con la Regla de los Dos Intentos del §2.1).
+/// Reintentos por defecto ante un fallo del motor: 2 (coherente con la Regla de los Dos Intentos).
+pub const MAX_REINTENTOS_MOTOR_POR_DEFECTO: u32 = 2;
+
 pub(crate) const fn max_reintentos_motor_por_defecto() -> u32 {
-    2
+    MAX_REINTENTOS_MOTOR_POR_DEFECTO
 }
 /// Espera por defecto entre reintentos del motor: 5 segundos. Proporciona una ventana suficiente
 /// para que remita una contención transitoria de GPU (p. ej. renderizado o captura gráfica).
+pub const ESPERA_REINTENTO_MOTOR_POR_DEFECTO_SEGUNDOS: u64 = 5;
+
 pub(crate) const fn espera_reintento_motor_segundos_por_defecto() -> u64 {
-    5
+    ESPERA_REINTENTO_MOTOR_POR_DEFECTO_SEGUNDOS
 }
-/// Denegaciones seguidas toleradas por defecto antes de abortar: 2 (Regla de los Dos Intentos del §2.1).
+/// Denegaciones seguidas toleradas por defecto antes de abortar: 2 (Regla de los Dos Intentos).
 /// Única fuente de verdad compartida con el arnés (`Limites::default`).
+pub const MAX_DENEGACIONES_SEGUIDAS_POR_DEFECTO: u32 = 2;
+
 pub(crate) const fn max_denegaciones_seguidas_por_defecto() -> u32 {
-    2
+    MAX_DENEGACIONES_SEGUIDAS_POR_DEFECTO
 }
 /// Única fuente del tope de lectura por defecto: 16 KiB, medido (ver
 /// `arnes::herramientas::TOPE_LECTURA_POR_DEFECTO`, que se deriva de esta constante en vez de
 /// repetir la cifra).
+pub const TOPE_LECTURA_POR_DEFECTO_BYTES: usize = 16 * 1024;
+
 pub(crate) const fn tope_lectura_por_defecto() -> usize {
-    16 * 1024
+    TOPE_LECTURA_POR_DEFECTO_BYTES
 }
 fn fichero_latido_por_defecto() -> String {
     FICHERO_LATIDO_POR_DEFECTO.to_string()
@@ -423,29 +546,7 @@ impl Default for Ciclo {
             max_reintentos_motor: max_reintentos_motor_por_defecto(),
             espera_reintento_motor_segundos: espera_reintento_motor_segundos_por_defecto(),
             max_denegaciones_seguidas: max_denegaciones_seguidas_por_defecto(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Poda {
-    /// A partir de cuántas líneas activas conviene proponer la poda de un buzón.
-    ///
-    /// **Se mide en líneas y no en bytes porque así lo mide el equipo.** El §3.2 del protocolo fija
-    /// «un tope orientativo de 80 líneas activas» para las bandejas; contar bytes obligaría a cada
-    /// agente a traducir el criterio del otro, y un buzón se lee y se poda por líneas, no por peso.
-    #[serde(default = "umbral_por_defecto")]
-    pub umbral_lineas: usize,
-}
-
-fn umbral_por_defecto() -> usize {
-    80
-}
-
-impl Default for Poda {
-    fn default() -> Self {
-        Self {
-            umbral_lineas: umbral_por_defecto(),
+            intentos_por_encargo: intentos_por_encargo_por_defecto(),
         }
     }
 }
@@ -474,20 +575,36 @@ pub struct Muestreo {
     pub semilla: i64,
 }
 
+/// La temperatura de fábrica de `[muestreo]`: la de la evaluación del 22/09/2026. El banco usa la
+/// misma constante, no una copia propia.
+pub const TEMPERATURA_POR_DEFECTO: f32 = 0.2;
+
 fn temperatura_por_defecto() -> f32 {
-    0.2
+    TEMPERATURA_POR_DEFECTO
 }
+/// Fijado el 14/09/2026, al sacar el muestreo al TOML para que nada quede a valores ocultos.
+pub const TOP_K_POR_DEFECTO: u32 = 40;
+
 fn top_k_por_defecto() -> u32 {
-    40
+    TOP_K_POR_DEFECTO
 }
+/// Fijado el 14/09/2026, al sacar el muestreo al TOML para que nada quede a valores ocultos.
+pub const TOP_P_POR_DEFECTO: f32 = 0.95;
+
 fn top_p_por_defecto() -> f32 {
-    0.95
+    TOP_P_POR_DEFECTO
 }
+/// Fijado el 14/09/2026, al sacar el muestreo al TOML para que nada quede a valores ocultos.
+pub const MIN_P_POR_DEFECTO: f32 = 0.05;
+
 fn min_p_por_defecto() -> f32 {
-    0.05
+    MIN_P_POR_DEFECTO
 }
+/// Sin penalización: 1,0 deja las probabilidades como están. Fijado el 14/09/2026.
+pub const PENALIZACION_REPETICION_POR_DEFECTO: f32 = 1.0;
+
 fn penalizacion_repeticion_por_defecto() -> f32 {
-    1.0
+    PENALIZACION_REPETICION_POR_DEFECTO
 }
 
 /// La semilla de la evaluación del 22/09/2026, que es también la primera del banco: así una
@@ -537,10 +654,13 @@ fn comprobar_actualizaciones_por_defecto() -> bool {
     true
 }
 fn repositorio_actualizaciones_por_defecto() -> String {
-    "celtidcs/Programator".to_string()
+    crate::aviso_de_version::REPOSITORIO_DE_VERSIONES_POR_DEFECTO.to_string()
 }
+/// Lo que puede tardar como mucho la consulta a GitHub: el arranque no se calienta esperándola (01/10/2026).
+pub const TIEMPO_ESPERA_ACTUALIZACIONES_POR_DEFECTO_SEGUNDOS: u64 = 3;
+
 fn tiempo_espera_actualizaciones_por_defecto() -> u64 {
-    3
+    TIEMPO_ESPERA_ACTUALIZACIONES_POR_DEFECTO_SEGUNDOS
 }
 
 impl Default for Actualizaciones {
@@ -566,7 +686,33 @@ struct ClaveRetirada {
 }
 
 /// Las claves retiradas, cada una con la orden que la quitó.
-const CLAVES_RETIRADAS: [ClaveRetirada; 4] = [
+const CLAVES_RETIRADAS: [ClaveRetirada; 7] = [
+    // Retiradas el 22/11/2026: no se leían en ningún sitio.
+    ClaveRetirada {
+        seccion: "agente",
+        clave: "buzon",
+        porque: "Programator escribe siempre en el buzón que sale de su nombre, «[agente] nombre» \
+                 en minúsculas y con «.md»; esta clave no cambiaba nada.",
+        que_hacer: "bórrala; para cambiar de buzón, cambia el nombre.",
+    },
+    ClaveRetirada {
+        seccion: "poda",
+        clave: "umbral_lineas",
+        porque: "La poda se propone al cerrar cada encargo, sin contar líneas; esta clave no \
+                 cambiaba nada.",
+        que_hacer: "bórrala, y la sección [poda] si se queda vacía.",
+    },
+    // Retirada el 22/11/2026: la identidad sale solo de la cabecera del buzón y la lista era de
+    // nombres de fichero.
+    ClaveRetirada {
+        seccion: "revision",
+        clave: "buzones_que_ordenan",
+        porque: "Quien puede pedir una revisión se reconoce por la identidad que declara en la \
+                 primera línea de su buzón («# Bandeja de Claude 1»), no por el nombre del \
+                 fichero. Hasta que la cambies, nadie puede pedir una revisión por el canal.",
+        que_hacer: "cámbiala por «identidades_que_ordenan = [\"Claude 1\"]», con las identidades \
+                    de quienes pueden pedirla.",
+    },
     // Retirada el 13/11/2026: los históricos del canal son dos prefijos fijos.
     ClaveRetirada {
         seccion: "agente",
@@ -617,9 +763,16 @@ fn quitar_claves_retiradas(tabla: &mut toml::Table) -> Vec<String> {
         .collect()
 }
 
+/// El aviso de un tiempo del TOML que pasaba del techo.
+fn aviso_de_techo(clave: &str, valor: u64) -> String {
+    format!(
+        "⚠️ «{clave} = {valor}» es más de un día: se usa un día ({TECHO_DE_SEGUNDOS} segundos)."
+    )
+}
+
 fn aviso_de_clave_retirada(retirada: &ClaveRetirada) -> String {
     format!(
-        "⚠️ programator.toml trae «[{}] {}», que ya no vale.\n\
+        "⚠️ {NOMBRE_DEL_FICHERO_DE_CONFIGURACION} trae «[{}] {}», que ya no vale.\n\
          Consecuencia: no se tiene en cuenta. {}\n\
          Qué hacer: {}",
         retirada.seccion, retirada.clave, retirada.porque, retirada.que_hacer
@@ -641,6 +794,12 @@ fn interpretar_sin_claves_retiradas(texto: &str) -> Result<(Config, Vec<String>)
     Ok((config, avisos))
 }
 
+/// El error de un `programator.toml` que no se deja interpretar, con la ruta como la escribe el
+/// sistema: con `{:?}` saldría entre comillas y, en Windows, con las barras dobladas.
+fn toml_ininteligible(ruta: &Path, causa: &dyn std::fmt::Display) -> String {
+    format!("«{}» no se pudo interpretar: {causa}", ruta.display())
+}
+
 impl Config {
     /// Carga la configuración y valida que estén los campos sin valor razonable por defecto.
     pub fn cargar(ruta: &Path) -> Resultado<Self> {
@@ -650,10 +809,10 @@ impl Config {
         })?;
 
         let (mut config, avisos) = interpretar_sin_claves_retiradas(&texto)
-            .map_err(|e| Error::Configuracion(format!("{ruta:?} no se pudo interpretar: {e}")))?;
+            .map_err(|e| Error::Configuracion(toml_ininteligible(ruta, &e)))?;
 
         if config.motor.modelo.is_none() {
-            return Err(Error::Configuracion(
+            return Err(Error::ConfiguracionDelMotor(
                 "falta «modelo» en la sección [motor]: sin fichero GGUF no hay nada que arrancar"
                     .to_string(),
             ));
@@ -667,12 +826,34 @@ impl Config {
         if config.ciclo.intervalo_segundos < INTERVALO_MINIMO_SEGUNDOS {
             config.ciclo.intervalo_segundos = INTERVALO_MINIMO_SEGUNDOS;
         }
+        let mut avisos = avisos;
+        for (clave, valor) in [
+            (
+                "[ciclo] intervalo_segundos",
+                &mut config.ciclo.intervalo_segundos,
+            ),
+            (
+                "[verificacion] tiempo_maximo_segundos",
+                &mut config.verificacion.tiempo_maximo_segundos,
+            ),
+        ] {
+            if *valor > TECHO_DE_SEGUNDOS {
+                avisos.push(aviso_de_techo(clave, *valor));
+                *valor = TECHO_DE_SEGUNDOS;
+            }
+        }
 
         // Mismo criterio con el paralelismo del motor: un `0` en el TOML es un motor que no
         // atiende a nadie, y `llama-server` lo rechazaría al arrancar con un error que no dice de
         // dónde viene. Se corrige aquí, donde sí se sabe.
         if config.motor.paralelo == 0 {
             config.motor.paralelo = 1;
+        }
+
+        // Un `0` dejaría al modelo sin saber por qué se rechazó su propuesta: se vuelve al de
+        // fábrica.
+        if config.verificacion.maximo_salida_al_modelo == 0 {
+            config.verificacion.maximo_salida_al_modelo = MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO;
         }
 
         config.avisos = avisos;
@@ -700,6 +881,12 @@ impl Config {
         self
     }
 
+    /// La carpeta donde está instalado Programator: la del fichero de configuración en uso. Ahí se
+    /// resuelven sus rutas relativas y ahí se hace la revisión de modelos.
+    pub fn carpeta_de_instalacion(&self) -> &Path {
+        &self.base
+    }
+
     /// Resuelve una ruta relativa contra el directorio del fichero de configuración.
     pub fn resolver(&self, relativa: &str) -> PathBuf {
         let p = Path::new(relativa);
@@ -715,6 +902,22 @@ impl Config {
 mod pruebas {
     use super::*;
     use std::io::Write;
+
+    /// La ruta sale tal cual: con `{:?}` saldría entre comillas y, en Windows, con las barras
+    /// dobladas.
+    #[test]
+    fn el_toml_ininteligible_nombra_la_ruta_tal_cual() {
+        let ruta = Path::new("carpeta").join("programator.toml");
+        let texto = toml_ininteligible(&ruta, &"falta un igual");
+        assert_eq!(
+            texto,
+            format!(
+                "«{}» no se pudo interpretar: falta un igual",
+                ruta.display()
+            )
+        );
+        assert!(!texto.contains('"'), "{texto}");
+    }
 
     fn escribir(dir: &std::path::Path, contenido: &str) -> std::path::PathBuf {
         let ruta = dir.join("programator.toml");
@@ -734,7 +937,6 @@ ruta = "C:/proyectos/mi-proyecto"
 
 [agente]
 nombre = "Programator"
-buzon = ".gestor/canal/programator.md"
 plantilla_normas = "plantillas/instrucciones-del-proyecto.md"
 
 [motor]
@@ -760,11 +962,14 @@ modelo = "modelos/devstral.gguf"
             "Programator atiende los encargos de uno en uno: reservar caché para más secuencias \
              es VRAM que no se usa y capas que se van a la CPU"
         );
-        assert_eq!(config.ciclo.intervalo_segundos, 180);
+        assert_eq!(config.ciclo.intervalo_segundos, 30);
+        assert_eq!(
+            crate::arranque::cadencia_sondeo(config.ciclo.intervalo_segundos),
+            "cada 30 segundos"
+        );
         assert_eq!(config.ciclo.max_reintentos_motor, 2);
         assert_eq!(config.ciclo.espera_reintento_motor_segundos, 5);
         assert_eq!(config.ciclo.max_denegaciones_seguidas, 2);
-        assert_eq!(config.poda.umbral_lineas, 80);
     }
 
     #[test]
@@ -821,6 +1026,100 @@ modelo = "modelos/devstral.gguf"
         assert_eq!(sin_modelo.nombre_del_modelo(), None);
     }
 
+    /// Lo que `programator.ejemplo.toml` dice que vale cada clave sin tocar es lo que vale de
+    /// verdad sin escribirla. Fija los valores de fábrica antes de pasarlos a constantes.
+    #[test]
+    fn los_valores_por_defecto_son_los_que_documenta_el_ejemplo() {
+        let ejemplo: Config = toml::from_str(include_str!("../programator.ejemplo.toml")).unwrap();
+        let fabrica: Config = toml::from_str("[motor]\nmodelo = \"m.gguf\"\n").unwrap();
+
+        macro_rules! iguales {
+            ($($campo:ident . $clave:ident),+ $(,)?) => {
+                $(assert_eq!(
+                    ejemplo.$campo.$clave, fabrica.$campo.$clave,
+                    concat!(stringify!($campo), ".", stringify!($clave))
+                );)+
+            };
+        }
+        iguales!(
+            motor.puerto,
+            motor.contexto,
+            motor.capas_gpu,
+            motor.margen_vram_mib,
+            motor.cache_kv,
+            motor.atencion_rapida,
+            motor.paralelo,
+            motor.empezar_en_frio,
+            motor.umbral_aviso_contexto,
+            motor.bytes_por_token,
+            motor.tiempo_lectura_segundos,
+            motor.tiempo_escritura_segundos,
+            motor.soltar_modelo,
+            motor.espera_de_carga_segundos,
+            ciclo.intervalo_segundos,
+            ciclo.max_herramientas_por_encargo,
+            ciclo.tope_lectura_bytes,
+            ciclo.fichero_latido,
+            ciclo.max_repeticiones_recordadas,
+            ciclo.max_reintentos_motor,
+            ciclo.espera_reintento_motor_segundos,
+            ciclo.max_denegaciones_seguidas,
+            ciclo.intentos_por_encargo,
+            muestreo.temperatura,
+            muestreo.top_k,
+            muestreo.top_p,
+            muestreo.min_p,
+            muestreo.penalizacion_repeticion,
+            muestreo.semilla,
+            actualizaciones.comprobar,
+            actualizaciones.repositorio,
+            actualizaciones.tiempo_espera_segundos,
+            verificacion.tiempo_maximo_segundos,
+            verificacion.comprobar_python,
+            agente.nombre,
+            agente.plantilla_normas,
+            agente.preambulo,
+            agente.recordatorio,
+        );
+        // Las cifras de fábrica, para que pasarlas a constantes no cambie ninguna.
+        assert_eq!(
+            (
+                fabrica.motor.puerto,
+                fabrica.motor.contexto,
+                fabrica.motor.umbral_aviso_contexto,
+                fabrica.motor.bytes_por_token,
+                fabrica.motor.tiempo_lectura_segundos,
+                fabrica.motor.tiempo_escritura_segundos,
+            ),
+            (8080, 16384, 70, 4, 600, 60)
+        );
+        assert_eq!(
+            (
+                fabrica.ciclo.max_herramientas_por_encargo,
+                fabrica.ciclo.tope_lectura_bytes,
+                fabrica.ciclo.max_repeticiones_recordadas,
+                fabrica.ciclo.max_reintentos_motor,
+                fabrica.ciclo.espera_reintento_motor_segundos,
+                fabrica.ciclo.max_denegaciones_seguidas,
+            ),
+            (12, 16384, 12, 2, 5, 2)
+        );
+        assert_eq!(
+            (
+                fabrica.muestreo.top_k,
+                fabrica.muestreo.top_p,
+                fabrica.muestreo.min_p,
+                fabrica.muestreo.penalizacion_repeticion,
+            ),
+            (40, 0.95, 0.05, 1.0)
+        );
+        assert_eq!(fabrica.motor.cache_kv, "q8_0");
+        assert_eq!(fabrica.motor.paralelo, 1);
+        assert_eq!(fabrica.verificacion.tiempo_maximo_segundos, 30);
+        assert_eq!(fabrica.actualizaciones.tiempo_espera_segundos, 3);
+        assert_eq!(fabrica.actualizaciones.repositorio, "celtidcs/Programator");
+    }
+
     #[test]
     fn reintentos_motor_se_leen_del_toml() {
         let dir = tempfile::tempdir().unwrap();
@@ -862,6 +1161,27 @@ max_denegaciones_seguidas = 5
     }
 
     #[test]
+    fn python_se_busca_por_defecto_y_se_puede_apagar_o_fijar() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = dir.path().join("programator.toml");
+        std::fs::write(&ruta, "[motor]\nmodelo = \"x.gguf\"\n").unwrap();
+        let por_defecto = Config::cargar(&ruta).unwrap().verificacion;
+        std::fs::write(
+            &ruta,
+            "[motor]\nmodelo = \"x.gguf\"\n\n[verificacion]\ncomprobar_python = false\n\
+             python = \"C:/Python312/python.exe\"\n",
+        )
+        .unwrap();
+        let fijado = Config::cargar(&ruta).unwrap().verificacion;
+
+        assert!(por_defecto.comprobar_python);
+        assert!(por_defecto.python.is_empty());
+        assert!(!fijado.comprobar_python);
+        assert_eq!(fijado.python, "C:/Python312/python.exe");
+        assert!(Verificacion::default().comprobar_python);
+    }
+
+    #[test]
     fn sin_seccion_de_verificacion_no_hay_comprobadores_pero_si_tiempo_maximo() {
         let dir = tempfile::tempdir().unwrap();
         let ruta = escribir(dir.path(), "[motor]\nmodelo = \"m.gguf\"\n");
@@ -886,6 +1206,7 @@ modelo = "m.gguf"
 
 [verificacion]
 tiempo_maximo_segundos = 15
+maximo_salida_al_modelo = 500
 
 [verificacion.comprobadores]
 py = ["python", "-m", "py_compile", "{fichero}"]
@@ -896,6 +1217,7 @@ lua = ["luac", "-p", "{fichero}"]
         let config = Config::cargar(&ruta).unwrap();
 
         assert_eq!(config.verificacion.tiempo_maximo_segundos, 15);
+        assert_eq!(config.verificacion.maximo_salida_al_modelo, 500);
         assert_eq!(
             config.verificacion.comprobadores.get("py").unwrap(),
             &vec![
@@ -945,6 +1267,86 @@ paralelo = 0
     }
 
     #[test]
+    fn una_salida_al_modelo_de_cero_vuelve_a_la_de_fabrica() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            r#"
+[motor]
+modelo = "modelos/devstral.gguf"
+
+[verificacion]
+maximo_salida_al_modelo = 0
+"#,
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(
+            config.verificacion.maximo_salida_al_modelo,
+            MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO
+        );
+    }
+
+    /// Sin techo, un valor enorme llegaría a sumas de tiempo que entran en pánico.
+    #[test]
+    fn los_tiempos_de_mas_de_un_dia_se_bajan_a_un_dia_y_se_avisa() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\nmodelo = \"x.gguf\"\n\n[ciclo]\nintervalo_segundos = 9223372036854775807\n\n\
+             [verificacion]\ntiempo_maximo_segundos = 99999999999\n",
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.ciclo.intervalo_segundos, TECHO_DE_SEGUNDOS);
+        assert_eq!(
+            config.verificacion.tiempo_maximo_segundos,
+            TECHO_DE_SEGUNDOS
+        );
+        assert_eq!(config.avisos().len(), 2, "{:?}", config.avisos());
+        assert!(config.avisos()[0].contains("[ciclo] intervalo_segundos"));
+        assert!(config.avisos()[1].contains("[verificacion] tiempo_maximo_segundos"));
+    }
+
+    /// Un `[agente]` con una sola clave carga y toma el resto por defecto.
+    #[test]
+    fn un_agente_con_una_sola_clave_toma_el_resto_por_defecto() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\nmodelo = \"x.gguf\"\n\n[agente]\nregistro_de_conversacion = true\n",
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert!(config.agente.registro_de_conversacion);
+        assert_eq!(config.agente.nombre, Agente::default().nombre);
+        assert_eq!(
+            config.agente.plantilla_normas,
+            Agente::default().plantilla_normas
+        );
+    }
+
+    /// Dos claves que no se leían en ningún sitio.
+    #[test]
+    fn el_buzon_y_el_umbral_de_poda_ya_no_valen_y_lo_avisan() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            "[motor]\nmodelo = \"x.gguf\"\n\n[agente]\nbuzon = \"otro.md\"\n\n\
+             [poda]\numbral_lineas = 80\n",
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        let avisos = config.avisos().join("\n");
+        assert!(avisos.contains("[agente] buzon"), "{avisos}");
+        assert!(avisos.contains("[poda] umbral_lineas"), "{avisos}");
+    }
+
+    #[test]
     fn un_intervalo_de_cero_se_eleva_al_suelo_para_no_quemar_un_nucleo() {
         let dir = tempfile::tempdir().unwrap();
         let ruta = escribir(
@@ -986,6 +1388,16 @@ paralelo = 0
         assert!(
             fallo.to_string().contains("modelo"),
             "el error debe nombrar el campo que falta, y decía: {fallo}"
+        );
+        // Es un fallo del motor, para que el arranque dé el consejo del motor, y se lee como
+        // cualquier configuración inválida.
+        assert!(
+            matches!(fallo, Error::ConfiguracionDelMotor(_)),
+            "{fallo:?}"
+        );
+        assert!(
+            fallo.to_string().starts_with("configuración inválida: "),
+            "{fallo}"
         );
     }
 
@@ -1083,6 +1495,66 @@ semilla = 7
              modelo = \"modelos/x.gguf\"\n\
              [muestreo]\n\
              semilla = \"aleatoria\"\n",
+        );
+
+        assert!(Config::cargar(&ruta).is_err());
+    }
+
+    #[test]
+    fn las_claves_de_la_1_0_0_tienen_su_valor_por_defecto() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            r#"
+[motor]
+modelo = "modelos/devstral.gguf"
+"#,
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.motor.soltar_modelo, SoltarModelo::Auto);
+        assert_eq!(config.motor.vram_maxima_mib, None, "sin tope por defecto");
+        assert_eq!(config.motor.espera_de_carga_segundos, 300);
+        assert_eq!(config.ciclo.intentos_por_encargo, 2);
+        assert_eq!(Ciclo::default().intentos_por_encargo, 2);
+    }
+
+    #[test]
+    fn las_claves_de_la_1_0_0_se_leen_del_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            r#"
+[motor]
+modelo = "modelos/devstral.gguf"
+soltar_modelo = 0
+vram_maxima_mib = 8192
+espera_de_carga_segundos = 120
+
+[ciclo]
+intentos_por_encargo = 5
+"#,
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.motor.soltar_modelo, SoltarModelo::TrasMinutos(0));
+        assert_eq!(config.motor.vram_maxima_mib, Some(8192));
+        assert_eq!(config.motor.espera_de_carga_segundos, 120);
+        assert_eq!(config.ciclo.intentos_por_encargo, 5);
+    }
+
+    #[test]
+    fn soltar_modelo_invalido_no_carga() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            r#"
+[motor]
+modelo = "modelos/devstral.gguf"
+soltar_modelo = "nunca"
+"#,
         );
 
         assert!(Config::cargar(&ruta).is_err());
@@ -1222,6 +1694,25 @@ cache_kv = "q8_0"
         assert_eq!(config.motor.capas_gpu, CapasGpu::Fijas(99));
     }
 
+    /// Sin el `rename` del campo, la clave del TOML se ignoraría en silencio y todo seguiría en
+    /// verde.
+    #[test]
+    fn flash_attn_del_toml_llega_a_la_configuracion_del_motor() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            r#"
+[motor]
+modelo = "m.gguf"
+flash_attn = "off"
+"#,
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert_eq!(config.motor.atencion_rapida, AtencionRapida::Desactivada);
+    }
+
     #[test]
     fn fichero_latido_toma_valor_por_defecto_o_configurado() {
         let dir = tempfile::tempdir().unwrap();
@@ -1258,7 +1749,6 @@ ruta = "C:/proyectos/mi-proyecto"
 
 [agente]
 nombre = "Programator"
-buzon = ".gestor/canal/programator.md"
 plantilla_normas = "plantillas/instrucciones-del-proyecto.md"
 
 [motor]
@@ -1280,6 +1770,24 @@ modelo = "modelos/devstral.gguf"
         assert_eq!(config.avisos().len(), 1);
         assert!(config.avisos()[0].contains("[agente] prefijos_ignorados"));
         assert!(config.avisos()[0].contains("historico-"));
+    }
+
+    /// La identidad sale solo de la cabecera del buzón, así que la lista de nombres de fichero
+    /// deja de valer. Una configuración anterior puede traerla todavía.
+    #[test]
+    fn la_lista_de_buzones_que_ordenan_ya_no_vale_y_dice_la_nueva() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = escribir(
+            dir.path(),
+            &format!("{MINIMA}\n[revision]\nbuzones_que_ordenan = [\"claude\"]\n"),
+        );
+
+        let config = Config::cargar(&ruta).unwrap();
+
+        assert!(config.revision.identidades_que_ordenan.is_empty());
+        assert_eq!(config.avisos().len(), 1);
+        assert!(config.avisos()[0].contains("[revision] buzones_que_ordenan"));
+        assert!(config.avisos()[0].contains("identidades_que_ordenan"));
     }
 
     #[test]

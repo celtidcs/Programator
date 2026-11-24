@@ -10,12 +10,13 @@
 //! cuándo será el próximo sondeo.
 
 use crate::error::{Error, Resultado};
+use crate::terminal::Terminal;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// El estado en el que se encuentra el arnés en el momento del sondeo.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EstadoLatido {
     /// No hay encargos en curso; esperando al siguiente sondeo.
@@ -35,10 +36,22 @@ pub struct DetalleEncargo {
     pub resumen: String,
 }
 
-/// Longitud máxima de la línea de resumen del encargo en el latido para mantenerlo legible.
+/// Longitud máxima de una línea de resumen (la del encargo y la del latido del buzón), para que se
+/// lea de un vistazo.
 const TOPE_CARACTERES_RESUMEN: usize = 120;
-/// Caracteres a conservar antes de añadir los puntos suspensivos ("…").
+/// Caracteres que se conservan antes de añadir la elipsis «…».
 const CARACTERES_RECORTE_RESUMEN: usize = TOPE_CARACTERES_RESUMEN - 3;
+
+/// Una línea de resumen acotada: si pasa del tope, se recorta y se le añade «…». Única para el
+/// latido y el buzón, para que no tenga cada uno su copia del tope y del recorte.
+pub(crate) fn acotar_resumen(linea: &str) -> String {
+    if linea.chars().count() > TOPE_CARACTERES_RESUMEN {
+        let acotada: String = linea.chars().take(CARACTERES_RECORTE_RESUMEN).collect();
+        format!("{acotada}…")
+    } else {
+        linea.to_string()
+    }
+}
 /// Texto por defecto cuando el encargo no contiene líneas legibles.
 const TEXTO_ENCARGO_VACIO: &str = "encargo sin texto";
 
@@ -51,17 +64,7 @@ impl DetalleEncargo {
             .find(|l| !l.is_empty())
             .unwrap_or(TEXTO_ENCARGO_VACIO);
 
-        // Si la primera línea supera el tope, se trunca con puntos suspensivos para
-        // mantener el fichero de latido legible de un vistazo por una persona o agente.
-        let resumen = if primera_linea.chars().count() > TOPE_CARACTERES_RESUMEN {
-            let acotada: String = primera_linea
-                .chars()
-                .take(CARACTERES_RECORTE_RESUMEN)
-                .collect();
-            format!("{acotada}…")
-        } else {
-            primera_linea.to_string()
-        };
+        let resumen = acotar_resumen(primera_linea);
 
         Self {
             buzon: buzon.to_string(),
@@ -71,23 +74,50 @@ impl DetalleEncargo {
 }
 
 /// Foto del estado del arnés en un momento concreto.
+///
+/// Los campos son privados: un latido solo se hace con sus constructores
+/// (`en_reposo`, `en_atencion`, `en_error`), que no dejan un detalle de error sin estado de error.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Latido {
     /// Marca de tiempo de este latido.
-    pub marca_tiempo: String,
+    marca_tiempo: String,
     /// Estado actual del arnés.
-    pub estado: EstadoLatido,
+    estado: EstadoLatido,
     /// Encargo que se está atendiendo, si lo hay.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub encargo: Option<DetalleEncargo>,
+    encargo: Option<DetalleEncargo>,
     /// Momento estimado en que tendrá lugar el próximo sondeo.
-    pub proximo_sondeo: String,
+    proximo_sondeo: String,
     /// Detalle adicional del error, si el estado es `Error`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detalle_error: Option<String>,
+    detalle_error: Option<String>,
+    /// El modelo que Programator tiene cargado en su motor, si tiene alguno. Opcional, para que
+    /// los latidos de antes se sigan leyendo y los de ahora sin modelo no cambien.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    modelo_cargado: Option<String>,
 }
 
 impl Latido {
+    /// Estado actual del arnés.
+    pub fn estado(&self) -> EstadoLatido {
+        self.estado
+    }
+
+    /// Encargo que se está atendiendo, si lo hay.
+    pub fn encargo(&self) -> Option<&DetalleEncargo> {
+        self.encargo.as_ref()
+    }
+
+    /// Detalle del error, si el estado es `Error`.
+    pub fn detalle_error(&self) -> Option<&str> {
+        self.detalle_error.as_deref()
+    }
+
+    /// El modelo que Programator tiene cargado, si tiene alguno.
+    pub fn modelo_cargado(&self) -> Option<&str> {
+        self.modelo_cargado.as_deref()
+    }
+
     /// Crea un latido en estado de reposo, sin encargo activo.
     fn reposo(marca_tiempo: impl Into<String>, proximo_sondeo: impl Into<String>) -> Self {
         Self {
@@ -96,6 +126,7 @@ impl Latido {
             encargo: None,
             proximo_sondeo: proximo_sondeo.into(),
             detalle_error: None,
+            modelo_cargado: None,
         }
     }
 
@@ -111,6 +142,7 @@ impl Latido {
             encargo: Some(encargo),
             proximo_sondeo: proximo_sondeo.into(),
             detalle_error: None,
+            modelo_cargado: None,
         }
     }
 
@@ -127,7 +159,14 @@ impl Latido {
             encargo,
             proximo_sondeo: proximo_sondeo.into(),
             detalle_error: Some(detalle_error.into()),
+            modelo_cargado: None,
         }
+    }
+
+    /// El mismo latido, diciendo qué modelo tiene cargado el motor propio.
+    pub fn con_modelo_cargado(mut self, modelo: Option<String>) -> Self {
+        self.modelo_cargado = modelo;
+        self
     }
 
     /// Crea un latido en estado de reposo calculando los tiempos a partir del momento actual
@@ -183,18 +222,18 @@ impl Latido {
             })?;
         }
         let texto = serde_json::to_string_pretty(self)
-            .map_err(|e| Error::Configuracion(format!("no se pudo serializar el latido: {e}")))?;
+            .map_err(|e| Error::Configuracion(mensaje_latido_sin_serializar(&e)))?;
         std::fs::write(ruta, texto).map_err(|causa| Error::Escritura {
             ruta: ruta.to_path_buf(),
             causa,
         })
     }
 
-    /// Intenta guardar el latido en disco; si falla, emite por `stderr` la advertencia unificada
-    /// explicando qué falló, la consecuencia y qué hacer.
-    pub fn guardar_con_aviso(&self, ruta: &Path) {
+    /// Intenta guardar el latido en disco; si falla, avisa por la salida de errores de `terminal`
+    /// con la advertencia unificada explicando qué falló, la consecuencia y qué hacer.
+    pub fn guardar_con_aviso(&self, ruta: &Path, terminal: &dyn Terminal) {
         if let Err(e) = self.guardar(ruta) {
-            eprintln!("{}", advertencia_escritura_fallida(&e));
+            terminal.avisar(&advertencia_escritura_fallida(&e));
         }
     }
 }
@@ -209,9 +248,10 @@ pub fn advertencia_escritura_fallida(error: &Error) -> String {
     format!(
         "⚠️ No se pudo escribir el latido del arnés en disco: {error}.\n\
          Consecuencia: mientras no se actualice, los demás agentes y herramientas no podrán \
-         distinguir desde fuera si Programator está vivo, ocupado o detenido.\n\
+         distinguir desde fuera si el arnés está vivo, ocupado o detenido.\n\
          Qué hacer: comprueba que la carpeta del arnés exista y tenga permisos de escritura, o que \
-         ningún otro proceso mantenga bloqueado «latido.json»."
+         ningún otro proceso mantenga bloqueado el fichero del latido, que es el que nombra el \
+         error."
     )
 }
 
@@ -227,17 +267,50 @@ fn formatear_marca_tiempo(dt: DateTime<Local>) -> String {
 /// **Función pura:** no llama al reloj del sistema, lo que permite probar los cálculos de sondeo
 /// con valores deterministas.
 fn calcular_tiempos_sondeo(ahora: DateTime<Local>, intervalo_segundos: u64) -> (String, String) {
-    let proximo = ahora + chrono::Duration::seconds(intervalo_segundos as i64);
+    // Con sumas comprobadas: un intervalo enorme entraría en pánico, y uno por encima de
+    // `i64::MAX` se volvería negativo. Si no se puede sumar, el más lejano posible.
+    let proximo = i64::try_from(intervalo_segundos)
+        .ok()
+        .and_then(chrono::TimeDelta::try_seconds)
+        .and_then(|intervalo| ahora.checked_add_signed(intervalo))
+        .unwrap_or(DateTime::<Local>::MAX_UTC.with_timezone(&Local));
     (
         formatear_marca_tiempo(ahora),
         formatear_marca_tiempo(proximo),
     )
 }
 
+/// El latido no se pudo pasar a JSON.
+fn mensaje_latido_sin_serializar(causa: &serde_json::Error) -> String {
+    format!("no se pudo serializar el latido: {causa}")
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn el_resumen_se_acota_a_ciento_veinte_caracteres_con_elipsis() {
+        let justa = "a".repeat(TOPE_CARACTERES_RESUMEN);
+        assert_eq!(acotar_resumen(&justa), justa);
+
+        let larga = "á".repeat(TOPE_CARACTERES_RESUMEN + 1);
+        let acotada = acotar_resumen(&larga);
+        assert_eq!(acotada.chars().count(), TOPE_CARACTERES_RESUMEN - 2);
+        assert!(acotada.ends_with("áá…"), "{acotada}");
+    }
     use chrono::TimeZone;
+
+    /// Un intervalo enorme en el TOML no hace entrar en pánico la suma de fechas.
+    #[test]
+    fn un_intervalo_enorme_no_entra_en_panico_ni_va_hacia_atras() {
+        for enorme in [100_000_000_000_000_000, u64::MAX] {
+            let (inicio, proximo) = calcular_tiempos_sondeo(fecha_fija(10, 0, 0), enorme);
+            assert_eq!(inicio, formatear_marca_tiempo(fecha_fija(10, 0, 0)));
+            // La fecha más lejana que se puede escribir: el año va con signo, «+262143-…».
+            assert!(proximo.starts_with('+'), "{enorme}: {proximo}");
+        }
+    }
 
     fn fecha_fija(hora: u32, minuto: u32, segundo: u32) -> DateTime<Local> {
         Local
@@ -275,6 +348,21 @@ mod pruebas {
         assert!(json_error.contains(r#""detalle_error":"servidor caído""#));
         let recuperado_error: Latido = serde_json::from_str(&json_error).unwrap();
         assert_eq!(recuperado_error, latido_error);
+    }
+
+    #[test]
+    fn el_modelo_cargado_solo_aparece_si_lo_hay_y_los_latidos_de_antes_se_leen() {
+        let sin_modelo = Latido::reposo("2026-09-25 10:00:00", "2026-09-25 10:03:00");
+        let json = serde_json::to_string(&sin_modelo).unwrap();
+        assert!(!json.contains("modelo_cargado"), "{json}");
+        let de_antes: Latido = serde_json::from_str(&json).unwrap();
+        assert_eq!(de_antes.modelo_cargado, None);
+
+        let con_modelo = sin_modelo.con_modelo_cargado(Some("devstral".into()));
+        let json = serde_json::to_string(&con_modelo).unwrap();
+        assert!(json.contains(r#""modelo_cargado":"devstral""#), "{json}");
+        let releido: Latido = serde_json::from_str(&json).unwrap();
+        assert_eq!(releido, con_modelo);
     }
 
     #[test]
@@ -381,14 +469,17 @@ mod pruebas {
 
     #[test]
     fn advertencia_escritura_fallida_explica_fallo_consecuencia_y_accion() {
-        let err = Error::Escritura {
+        let fallo = Error::Escritura {
             ruta: std::path::PathBuf::from(".gestor/agente/latido.json"),
             causa: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "acceso denegado"),
         };
-        let texto = advertencia_escritura_fallida(&err);
+        let texto = advertencia_escritura_fallida(&fallo);
         assert!(texto.starts_with("⚠️ No se pudo escribir el latido"));
         assert!(texto.contains("Consecuencia:"));
-        assert!(texto.contains("no podrán distinguir desde fuera si Programator está vivo"));
+        assert!(texto.contains("no podrán distinguir desde fuera si el arnés está vivo"));
+        // El fichero lo nombra el error, que lleva la ruta configurada.
+        assert!(texto.contains(".gestor/agente/latido.json"), "{texto}");
+        assert!(!texto.contains("Programator"), "{texto}");
         assert!(texto.contains("Qué hacer:"));
         assert!(texto.contains("permisos de escritura"));
     }

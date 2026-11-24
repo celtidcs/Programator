@@ -4,6 +4,7 @@
 //! pobreza deliberada es lo que permite probar todos los desenlaces —sin GPU, sin motor, sin
 //! modelo— con cuatro literales y sin tocar el hardware.
 
+use crate::carpeta::Memoria;
 use crate::motor::hardware::Gpu;
 use crate::motor::proceso::MotorInstalado;
 use std::path::{Path, PathBuf};
@@ -48,7 +49,7 @@ pub struct DatosDeArranque<'a> {
     /// Hace falta aquí porque cambia qué fuentes siguen en juego cuando la carpeta no está fijada:
     /// con la bandera puesta, la última carpeta usada deja de contar, y nombrarla en el informe
     /// sería ofrecer una salida que el arnés ya no va a tomar.
-    pub preguntar_siempre: bool,
+    pub memoria: Memoria,
 }
 
 /// Ancho al que se alinean las etiquetas, para que las cifras queden en columna y se puedan
@@ -86,7 +87,7 @@ pub fn componer_informe(datos: &DatosDeArranque) -> String {
     // lo que resultaba confuso al leerlas separadas.
     lineas.push(fila(
         "Carpeta de trabajo:",
-        &describir_carpeta(datos.carpeta, datos.preguntar_siempre),
+        &describir_carpeta(datos.carpeta, datos.memoria),
     ));
     lineas.join("\n")
 }
@@ -95,12 +96,40 @@ fn fila(etiqueta: &str, valor: &str) -> String {
     format!("{etiqueta:<ANCHO_ETIQUETA$}{valor}")
 }
 
-fn describir_carpeta(carpeta: Option<&Path>, preguntar_siempre: bool) -> String {
+fn describir_carpeta(carpeta: Option<&Path>, memoria: Memoria) -> String {
     match carpeta {
         Some(c) => c.display().to_string(),
-        None if preguntar_siempre => SIN_CARPETA_PREGUNTANDO.to_string(),
+        None if memoria == Memoria::SePregunta => SIN_CARPETA_PREGUNTANDO.to_string(),
         None => SIN_CARPETA_CON_MEMORIA.to_string(),
     }
+}
+
+/// La línea «Encaje:» cuando falta el fichero del modelo. Sin él no hay nada que repartir, y hablar
+/// de capas (las 99 de cuando no se sabe) despista.
+pub const ENCAJE_SIN_FICHERO: &str = "no calculado: falta el fichero del modelo";
+
+/// La línea «Encaje:» cuando la configuración no nombra ningún modelo.
+pub const ENCAJE_SIN_MODELO: &str = "no calculado: la configuración no declara ningún modelo";
+
+/// La línea «Encaje:» con las capas que de verdad se le pasan a `llama-server`.
+///
+/// Con `capas_gpu` fija en el TOML, `capas` puede no coincidir con el número que menciona el
+/// aviso (redactado siempre desde el cálculo automático), así que en principio se dice aparte.
+/// Pero el aviso ya nombra ese mismo número en sus propias palabras cuando coincide —por ejemplo,
+/// «se piden 99 capas como hasta ahora» cuando `capas_gpu = "auto"` no pudo calcular nada—, y
+/// repetirlo entonces queda como un eco ridículo. Se comprueba con una búsqueda de texto: basta
+/// con que el aviso mencione la cifra en la forma «N capas» para no repetirla.
+pub fn linea_de_encaje(aviso: String, capas: u32) -> String {
+    if aviso.contains(&format!("{capas} capas")) {
+        aviso
+    } else {
+        format!("{aviso}; se pedirán {capas} capas")
+    }
+}
+
+/// Por qué no se pudo pesar un modelo cuya cabecera sí se leyó.
+pub fn modelo_sin_pesar(causa: &std::io::Error) -> String {
+    format!("no se ha podido pesar el fichero: {causa}")
 }
 
 /// La línea del informe cuando no hay carpeta fijada y `preguntar_siempre` está puesto.
@@ -171,8 +200,7 @@ fn describir_modelo(modelo: &ResumenModelo) -> String {
     }
 }
 
-/// Factor de conversión de bytes a gibibytes en coma flotante (§4.3).
-const BYTES_POR_GIB_F64: f64 = 1024.0 * 1024.0 * 1024.0;
+use crate::unidades::BYTES_POR_GIB_F64;
 
 /// Bytes a GiB con un decimal y **coma** decimal, que es como se escribe en español.
 ///
@@ -188,6 +216,18 @@ pub(crate) fn en_gib(bytes: u64) -> String {
 mod pruebas {
     use super::*;
     use crate::motor::hardware::Gpu;
+
+    #[test]
+    fn la_linea_de_encaje_no_repite_las_capas_que_el_aviso_ya_nombra() {
+        assert_eq!(
+            linea_de_encaje("caben 40 de 41".into(), 40),
+            "caben 40 de 41; se pedirán 40 capas"
+        );
+        assert_eq!(
+            linea_de_encaje("se piden 99 capas como hasta ahora".into(), 99),
+            "se piden 99 capas como hasta ahora"
+        );
+    }
     use std::path::Path;
 
     fn gpu() -> Gpu {
@@ -207,7 +247,7 @@ mod pruebas {
             ruta_motor: None,
             modelo: ResumenModelo::NoDeclarado,
             encaje: "",
-            preguntar_siempre: false,
+            memoria: Memoria::SeUsa,
         }
     }
 
@@ -269,7 +309,7 @@ mod pruebas {
     fn con_preguntar_siempre_el_informe_no_ofrece_la_ultima_carpeta_usada() {
         let datos = DatosDeArranque {
             carpeta: None,
-            preguntar_siempre: true,
+            memoria: Memoria::SePregunta,
             ..datos_completos()
         };
 
@@ -325,8 +365,8 @@ mod pruebas {
 
     #[test]
     fn con_ruta_de_motor_conocida_se_dice_cual_es() {
-        // En una máquina con dos `llama-server.exe` (Tarea A-2), decir «con CUDA» sin decir cuál
-        // deja al Director sin saber si está mirando el correcto.
+        // En una máquina con dos `llama-server.exe`, decir «con CUDA» sin decir cuál deja al
+        // usuario sin saber si está mirando el correcto.
         let datos = DatosDeArranque {
             motor: &MotorInstalado::ListoConCuda,
             ruta_motor: Some("herramientas/llama-server.exe"),
@@ -360,7 +400,7 @@ mod pruebas {
     #[test]
     fn un_motor_no_declarado_no_se_confunde_con_uno_que_falta() {
         // Un hueco de configuración («no hay nada que mirar») no es lo mismo que una pieza
-        // perdida («debería estar y no está»): confundirlos le haría pensar al Director que hay
+        // perdida («debería estar y no está»): confundirlos le haría pensar al usuario que hay
         // algo roto en el disco cuando en realidad es que `motor.binario` no está en el TOML.
         let datos = DatosDeArranque {
             motor: &MotorInstalado::NoDeclarado,
@@ -423,9 +463,8 @@ mod pruebas {
 
     #[test]
     fn un_modelo_que_falta_dice_que_ruta_se_esperaba() {
-        // El §3 de la especificación pone este desenlace como uno de sus dos ejemplos canónicos
-        // del informe («la carpeta a medio montar»): motor y modelo faltando a la vez, cada uno
-        // nombrando la ruta que se esperaba. En la línea de
+        // Uno de los dos desenlaces típicos del informe es «la carpeta a medio montar»: motor y
+        // modelo faltando a la vez, cada uno nombrando la ruta que se esperaba. En la línea de
         // `un_motor_que_falta_dice_que_ruta_se_esperaba`.
         let datos = DatosDeArranque {
             modelo: ResumenModelo::Falta {

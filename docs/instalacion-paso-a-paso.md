@@ -154,12 +154,21 @@ No hace falta el script para nada. Esto es lo que tiene que haber cuando termina
         ggml-cuda.dll          y el resto de bibliotecas del paquete
     modelos/
         devstral-small-2-24b-Q4_K_M.gguf
+    vigilante/                 (opcional)
+        gestor-vigilante.exe   (o «gestor-vigilante» en Linux)
+        Licencia.txt
+        LEEME.txt
+    banco/                     (opcional)
+        banco.toml
+        encargos/
 
 Las dos carpetas, herramientas/ y modelos/, se llaman así porque es lo que dice el fichero de configuración de ejemplo. Si prefieres otros nombres u otras rutas, cambia las claves binario y modelo de la sección [motor] y colócalas donde quieras: se admiten rutas absolutas.
+
+Las dos últimas son opcionales y vienen en el paquete portable, así que, si montas la carpeta a mano, puedes copiarlas de él. La carpeta vigilante/ trae el vigilante del canal de Gestor Agentes, que Programator deja al arrancar en la carpeta .gestor/vigilante del proyecto si allí no hay uno; sin ella Programator arranca igual, lo dice en la terminal, y el agente que dirige tendrá que mirar el buzón de Programator de vez en cuando para enterarse de sus respuestas. La carpeta banco/ es el banco de modelos, con su configuración y sus encargos, y solo hace falta para medir modelos con la orden --banco, que recibe su ruta; para trabajar como ayudante en un proyecto no se usa.
 
 
 Cuando termine
 
 La carpeta descargas/ guarda los paquetes comprimidos del motor. Se puede borrar sin más: solo sirve para no tener que volver a bajarlos si algún día rehaces la instalación.
 
-A partir de ahí, la puesta en marcha está contada en plantillas/LEEME-portable.md, las limitaciones que conviene conocer antes de usarlo en serio están en el documento docs/defectos-conocidos.md (en el paquete portable, DEFECTOS-CONOCIDOS.md), y las comprobaciones que hay que hacer a mano porque ninguna prueba automática enciende la tarjeta están en docs/pruebas-manuales.md, que no viene en el paquete y está en el repositorio.
+A partir de ahí, la puesta en marcha está contada en plantillas/LEEME-portable.md (en el paquete portable, LEEME.md), las limitaciones que conviene conocer antes de usarlo en serio están en el documento docs/defectos-conocidos.md (en el paquete portable, DEFECTOS-CONOCIDOS.md), y las comprobaciones que hay que hacer a mano porque ninguna prueba automática enciende la tarjeta están en docs/pruebas-manuales.md, que no viene en el paquete y está en el repositorio.

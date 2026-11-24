@@ -7,8 +7,11 @@ use std::time::Duration;
 
 use super::buscar::{self, BusquedaHecha};
 use super::catalogo::HuggingFace;
-use super::descarga::{espacio_libre, url_del_fichero, Aviso, Fuente, FuenteHttp};
+use super::descarga::{
+    agente_de_descarga, espacio_libre, url_del_fichero, Aviso, Fuente, FuenteHttp,
+};
 use super::proponer::{self, PropuestaHecha};
+use super::reponer::AvisoDeReposicion;
 use super::retirada::{self, Retirada};
 use super::traer::{self, Traido};
 use crate::config::Config;
@@ -16,24 +19,42 @@ use crate::error::{Error, Resultado};
 use crate::motor::hardware::describir_gpu;
 use crate::registro::modelo;
 
-/// Busca candidatos en Hugging Face y deja la lista en la carpeta del mes.
-pub fn buscar(config: &Config) -> Resultado<BusquedaHecha> {
+/// Busca candidatos en Hugging Face y deja la lista en la carpeta del mes. Antes de clasificar,
+/// repone los modelos útiles del registro que faltan, y `avisar` cuenta cómo va.
+pub fn buscar(
+    config: &Config,
+    avisar: &mut dyn FnMut(AvisoDeReposicion),
+) -> Resultado<BusquedaHecha> {
     exigir_la_revision_bien_configurada(config)?;
-    let registro = modelo::leer(&config.resolver(&config.agente.registro_de_modelos))?;
-    let catalogo = HuggingFace {
-        api: config.revision.api.clone(),
-        tiempo_espera: Duration::from_secs(config.revision.tiempo_espera_segundos),
+    let ajustes = &config.revision;
+    let catalogo = HuggingFace::nuevo(
+        ajustes.api.clone(),
+        Duration::from_secs(ajustes.tiempo_espera_segundos),
+    );
+    let agente = agente_de_descarga(Duration::from_secs(ajustes.tiempo_espera_segundos));
+    let fuente_de = |repositorio: &str, fichero: &str| -> Box<dyn Fuente> {
+        Box::new(FuenteHttp::nueva(
+            url_del_fichero(&ajustes.sitio, repositorio, fichero),
+            agente.clone(),
+        ))
     };
     let entorno = buscar::Entorno {
         catalogo: &catalogo,
         tarjeta: describir_gpu(),
         margen_vram_mib: config.motor.margen_vram_mib,
-        registro: &registro,
-        carpeta_de_revisiones: config.resolver(&config.revision.carpeta),
-        carpeta_de_modelos: config.resolver(&config.revision.carpeta_de_modelos),
+        ruta_del_registro: config.resolver(&config.agente.registro_de_modelos),
+        carpeta_de_revisiones: config.resolver(&ajustes.carpeta),
+        carpeta_de_modelos: config.resolver(&ajustes.carpeta_de_modelos),
         ahora: chrono::Local::now().naive_local(),
+        para_reponer: buscar::ParaReponer {
+            fuente_de: &fuente_de,
+            espacio_libre: &espacio_libre,
+            margen_disco_mib: ajustes.margen_disco_mib,
+            avisar_cada_mib: ajustes.avisar_cada_mib,
+            modelo_en_uso: config.motor.nombre_del_modelo(),
+        },
     };
-    buscar::buscar(&config.revision, &entorno)
+    buscar::buscar(ajustes, &entorno, avisar)
 }
 
 /// Escribe la propuesta del mes con el modelo en uso de la configuración.
@@ -88,12 +109,12 @@ pub fn descargar(
 ) -> Resultado<Traido> {
     exigir_la_revision_bien_configurada(config)?;
     let ajustes = &config.revision;
-    let tiempo_espera = Duration::from_secs(ajustes.tiempo_espera_segundos);
+    let agente = agente_de_descarga(Duration::from_secs(ajustes.tiempo_espera_segundos));
     let fuente_de = |repositorio: &str, fichero: &str| -> Box<dyn Fuente> {
-        Box::new(FuenteHttp {
-            url: url_del_fichero(&ajustes.sitio, repositorio, fichero),
-            tiempo_espera,
-        })
+        Box::new(FuenteHttp::nueva(
+            url_del_fichero(&ajustes.sitio, repositorio, fichero),
+            agente.clone(),
+        ))
     };
     let entorno = traer::Entorno {
         carpeta_de_revisiones: config.resolver(&ajustes.carpeta),

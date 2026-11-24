@@ -80,6 +80,13 @@ fn normalizar(ruta: &Path) -> PathBuf {
     salida
 }
 
+/// Si hay algo en disco con ese nombre, aunque sea un enlace roto. `exists()` sigue los enlaces y
+/// da falso ante uno roto: el ascenso lo saltaría y la escritura lo seguiría luego fuera del
+/// ámbito. Parar en él hace que la canonización falle y la ruta se deniegue.
+pub(crate) fn hay_algo_en(ruta: &Path) -> bool {
+    ruta.symlink_metadata().is_ok()
+}
+
 /// Recorre `ruta` hacia arriba hasta el primer ancestro que existe en disco. Devuelve ese
 /// ancestro junto con los componentes finales que todavía no existen, en el orden en que hay
 /// que volver a añadirlos. Termina como muy tarde en la raíz del sistema de ficheros, pero en la
@@ -88,7 +95,7 @@ fn normalizar(ruta: &Path) -> PathBuf {
 fn ancestro_mas_profundo(ruta: &Path) -> (PathBuf, Vec<OsString>) {
     let mut restantes = Vec::new();
     let mut actual = ruta.to_path_buf();
-    while !actual.exists() {
+    while !hay_algo_en(&actual) {
         match actual.file_name() {
             Some(nombre) => {
                 restantes.push(nombre.to_os_string());
@@ -189,5 +196,45 @@ mod pruebas {
         let fallo = ambito.resolver("enlace/fichero-nuevo.txt").unwrap_err();
 
         assert!(matches!(fallo, crate::error::Error::FueraDeAmbito(_)));
+    }
+
+    /// `exists()` da falso ante un enlace roto: si el ascenso lo saltara como si no hubiera nada,
+    /// la escritura seguiría luego el enlace fuera del proyecto.
+    #[cfg(windows)]
+    #[test]
+    fn deniega_una_union_de_directorio_rota() {
+        let dir = tempfile::tempdir().unwrap();
+        let otro = tempfile::tempdir().unwrap();
+        let destino = otro.path().join("borrado");
+        std::fs::create_dir(&destino).unwrap();
+        let enlace = dir.path().join("enlace");
+        let estado = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                enlace.to_str().unwrap(),
+                destino.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        assert!(estado.success(), "no se pudo crear la unión de prueba");
+        std::fs::remove_dir(&destino).unwrap();
+        let ambito = Ambito::nuevo(dir.path()).unwrap();
+
+        assert!(ambito.resolver("enlace/nuevo.txt").is_err());
+        assert!(ambito.resolver("enlace").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deniega_un_enlace_simbolico_roto_hacia_fuera() {
+        let dir = tempfile::tempdir().unwrap();
+        let otro = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(otro.path().join("nuevo.rs"), dir.path().join("enlace.rs"))
+            .unwrap();
+        let ambito = Ambito::nuevo(dir.path()).unwrap();
+
+        assert!(ambito.resolver("enlace.rs").is_err());
     }
 }

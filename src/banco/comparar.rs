@@ -14,16 +14,19 @@ use super::tanda::{carpeta_del_banco, CARPETA_DE_TRABAJO};
 use crate::arnes::espacio;
 use crate::error::{Error, Resultado};
 use crate::ficheros::leer;
+use crate::terminal::Terminal;
 
 /// Compara dos tandas e imprime el veredicto.
-pub fn comparar(tanda_a: &Path, tanda_b: &Path, agente: &str) -> Resultado<()> {
+pub fn comparar(
+    tanda_a: &Path,
+    tanda_b: &Path,
+    agente: &str,
+    terminal: &dyn Terminal,
+) -> Resultado<()> {
     let a = leer_para_comparar(tanda_a, agente)?;
     let b = leer_para_comparar(tanda_b, agente)?;
     let veredicto = comparacion::comparar(&a, &b);
-    println!(
-        "{}",
-        mensajes::mensaje_comparacion(&veredicto, tanda_a, tanda_b)
-    );
+    terminal.decir(&mensajes::mensaje_comparacion(&veredicto, tanda_a, tanda_b));
     Ok(())
 }
 

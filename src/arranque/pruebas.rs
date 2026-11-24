@@ -1,5 +1,5 @@
 //! Pruebas unitarias de `arranque`: sondeo de novedades en el canal, composición y publicación de normas
-//! y guía para el equipo, redacción de avisos explicativos de consola y comprobación de registro previo.
+//! y guía para el equipo y redacción de avisos explicativos de consola.
 
 use super::*;
 use crate::error::Error;
@@ -215,9 +215,9 @@ fn un_fichero_nuevo_en_una_subcarpeta_se_detecta() {
     let mut huella = None;
     hay_novedades(dir.path(), &mut huella).unwrap();
 
-    let msg = dir.path().join("msg");
-    std::fs::create_dir_all(&msg).unwrap();
-    std::fs::write(msg.join("001.md"), "primer mensaje").unwrap();
+    let subcarpeta = dir.path().join("msg");
+    std::fs::create_dir_all(&subcarpeta).unwrap();
+    std::fs::write(subcarpeta.join("001.md"), "primer mensaje").unwrap();
 
     assert_eq!(
         hay_novedades(dir.path(), &mut huella).unwrap(),
@@ -266,13 +266,13 @@ fn dos_ficheros_con_el_mismo_nombre_en_carpetas_distintas_no_se_confunden() {
 #[test]
 fn un_fichero_borrado_dentro_de_una_subcarpeta_se_detecta() {
     let dir = tempfile::tempdir().unwrap();
-    let msg = dir.path().join("msg");
-    std::fs::create_dir_all(&msg).unwrap();
-    std::fs::write(msg.join("001.md"), "uno").unwrap();
+    let subcarpeta = dir.path().join("msg");
+    std::fs::create_dir_all(&subcarpeta).unwrap();
+    std::fs::write(subcarpeta.join("001.md"), "uno").unwrap();
     let mut huella = None;
     hay_novedades(dir.path(), &mut huella).unwrap();
 
-    std::fs::remove_file(msg.join("001.md")).unwrap();
+    std::fs::remove_file(subcarpeta.join("001.md")).unwrap();
 
     assert_eq!(
         hay_novedades(dir.path(), &mut huella).unwrap(),
@@ -395,68 +395,84 @@ fn un_cambio_real_ocurrido_durante_el_bloqueo_se_detecta_al_recuperarse() {
 #[test]
 fn mensaje_fallo_arranque_explica_fallo_consecuencia_y_accion_segun_error() {
     // Caso 1: lectura de programator.toml
-    let err_toml = Error::Lectura {
+    let fallo_toml = Error::Lectura {
         ruta: std::path::PathBuf::from("programator.toml"),
         causa: std::io::Error::new(std::io::ErrorKind::NotFound, "no encontrado"),
     };
-    let txt1 = mensaje_fallo_arranque(&err_toml);
-    assert!(txt1.starts_with("🔴 Programator no pudo arrancar"));
-    assert!(txt1.contains("Consecuencia:"));
-    assert!(txt1.contains("Qué hacer:"));
-    assert!(txt1.contains("programator.ejemplo.toml"));
+    let texto_1 = mensaje_fallo_arranque(&fallo_toml);
+    assert!(texto_1.starts_with("🔴 Programator no pudo arrancar"));
+    assert!(texto_1.contains("Consecuencia:"));
+    assert!(texto_1.contains("Qué hacer:"));
+    assert!(texto_1.contains("programator.ejemplo.toml"));
 
     // Caso 2: configuración con problema de carpeta
-    let err_carpeta = Error::Configuracion("la carpeta de trabajo no existe".to_string());
-    let txt2 = mensaje_fallo_arranque(&err_carpeta);
-    assert!(txt2.contains("--ruta <DIRECTORIO>"));
+    let fallo_carpeta =
+        Error::ConfiguracionDeLaCarpeta("la carpeta de trabajo no existe".to_string());
+    let texto_2 = mensaje_fallo_arranque(&fallo_carpeta);
+    assert!(texto_2.contains("--ruta <DIRECTORIO>"));
 
     // Caso 3: configuración con problema de motor
-    let err_motor = Error::Configuracion("no hay ningún motor escuchando en el puerto".to_string());
-    let txt3 = mensaje_fallo_arranque(&err_motor);
-    assert!(txt3.contains("--diagnostico"));
+    let fallo_motor =
+        Error::ConfiguracionDelMotor("no hay ningún motor escuchando en el puerto".to_string());
+    let texto_3 = mensaje_fallo_arranque(&fallo_motor);
+    assert!(texto_3.contains("--diagnostico"));
+    assert!(texto_3.contains("[motor]"));
+
+    // Caso 4: un fallo de configuración cualquiera con «carpeta», «motor» o «modelo» en la ruta
+    // (`D:\proyectos\modelos-3d\…`) lleva el consejo general: el consejo no sale del texto.
+    let fallo_con_ruta = Error::Configuracion(
+        "«D:\\proyectos\\modelos-3d\\carpeta-del-motor\\latido.json» está corrupto".to_string(),
+    );
+    let texto_4 = mensaje_fallo_arranque(&fallo_con_ruta);
+    assert!(
+        texto_4.contains("la sintaxis de «programator.toml»"),
+        "{texto_4}"
+    );
+    assert!(!texto_4.contains("[carpeta]"), "{texto_4}");
+    assert!(!texto_4.contains("[motor]"), "{texto_4}");
 }
 
 #[test]
 fn mensaje_fallo_publicar_guia_explica_fallo_consecuencia_y_accion() {
-    let err = Error::Escritura {
+    let fallo = Error::Escritura {
         ruta: std::path::PathBuf::from(".gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md"),
         causa: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denegado"),
     };
-    let msg = mensaje_fallo_publicar_guia(&err);
-    assert!(msg.starts_with("⚠️ No se pudo publicar la guía para el equipo"));
-    assert!(msg.contains("Consecuencia:"));
-    assert!(msg.contains("Qué hacer:"));
+    let mensaje = mensaje_fallo_publicar_guia(&fallo);
+    assert!(mensaje.starts_with("⚠️ No se pudo publicar la guía para el equipo"));
+    assert!(mensaje.contains("Consecuencia:"));
+    assert!(mensaje.contains("Qué hacer:"));
 }
 
 #[test]
 fn mensaje_canal_parcialmente_ilegible_explica_fallo_consecuencia_y_accion() {
-    let msg = mensaje_canal_parcialmente_ilegible();
-    assert!(msg.starts_with("⚠️ Parte del canal no se pudo leer"));
-    assert!(msg.contains("Consecuencia:"));
-    assert!(msg.contains("Qué hacer:"));
-    assert!(msg.contains("no hace falta hacer nada"));
+    let mensaje = mensaje_canal_parcialmente_ilegible();
+    assert!(mensaje.starts_with("⚠️ Parte del canal no se pudo leer"));
+    assert!(mensaje.contains("Consecuencia:"));
+    assert!(mensaje.contains("Qué hacer:"));
+    assert!(mensaje.contains("no hace falta hacer nada"));
 }
 
 #[test]
 fn mensaje_fallo_pasada_ciclo_explica_fallo_consecuencia_y_accion() {
-    let err = Error::MotorSinRespuesta("GPU en contención".to_string());
-    let msg = mensaje_fallo_pasada_ciclo(&err);
-    assert!(msg.starts_with("⚠️ La pasada de este ciclo falló"));
-    assert!(msg.contains("Consecuencia:"));
-    assert!(msg.contains("Qué hacer:"));
-    assert!(msg.contains("contención temporal de GPU"));
+    let fallo = Error::MotorSinRespuesta("GPU en contención".to_string());
+    let mensaje = mensaje_fallo_pasada_ciclo(&fallo);
+    assert!(mensaje.starts_with("⚠️ La pasada de este ciclo falló"));
+    assert!(mensaje.contains("Consecuencia:"));
+    assert!(mensaje.contains("Qué hacer:"));
+    assert!(mensaje.contains("contención temporal de GPU"));
 }
 
 #[test]
 fn mensaje_fallo_sondeo_canal_explica_fallo_consecuencia_y_accion() {
-    let err = Error::Lectura {
+    let fallo = Error::Lectura {
         ruta: std::path::PathBuf::from(".gestor/canal"),
         causa: std::io::Error::new(std::io::ErrorKind::TimedOut, "tiempo de espera agotado"),
     };
-    let msg = mensaje_fallo_sondeo_canal(&err);
-    assert!(msg.starts_with("⚠️ No se pudo sondear el canal"));
-    assert!(msg.contains("Consecuencia:"));
-    assert!(msg.contains("Qué hacer:"));
+    let mensaje = mensaje_fallo_sondeo_canal(&fallo);
+    assert!(mensaje.starts_with("⚠️ No se pudo sondear el canal"));
+    assert!(mensaje.contains("Consecuencia:"));
+    assert!(mensaje.contains("Qué hacer:"));
 }
 
 #[test]
@@ -482,48 +498,29 @@ fn cadencia_sondeo_expresa_tiempo_en_unidad_natural_y_cubre_casos_de_corte() {
 
 #[test]
 fn mensaje_listo_primer_arranque_informa_punto_de_partida_y_cadencia_sin_jerga_interna() {
-    let msg = mensaje_listo_primer_arranque(180);
-    assert!(msg.contains("punto de partida sin atender encargos anteriores"));
-    assert!(msg.contains("Programator ya está escuchando"));
-    assert!(msg.contains("cualquier encargo que se publique a partir de ahora será atendido"));
-    assert!(msg.contains("cada 3 minutos"));
+    let mensaje = mensaje_listo_primer_arranque(180);
+    assert!(mensaje.contains("punto de partida sin atender encargos anteriores"));
+    assert!(mensaje.contains("Programator ya está escuchando"));
+    assert!(mensaje.contains("cualquier encargo que se publique a partir de ahora será atendido"));
+    assert!(mensaje.contains("cada 3 minutos"));
     // Sin jerga técnica interna dirigida a operadores
-    assert!(!msg.contains("registro vacío"));
-    assert!(!msg.contains("primera pasada"));
+    assert!(!mensaje.contains("registro vacío"));
+    assert!(!mensaje.contains("primera pasada"));
 
     // Caso singular 1 segundo
-    let msg_1s = mensaje_listo_primer_arranque(1);
-    assert!(msg_1s.contains("cada segundo"));
+    let mensaje_1s = mensaje_listo_primer_arranque(1);
+    assert!(mensaje_1s.contains("cada segundo"));
 }
 
 #[test]
 fn mensaje_listo_reinicio_informa_escucha_activa_y_cadencia() {
-    let msg = mensaje_listo_reinicio(180);
-    assert!(msg.contains("Programator está escuchando el canal"));
-    assert!(msg.contains("cualquier encargo nuevo será atendido"));
-    assert!(msg.contains("cada 3 minutos"));
+    let mensaje = mensaje_listo_reinicio(180);
+    assert!(mensaje.contains("Programator está escuchando el canal"));
+    assert!(mensaje.contains("cualquier encargo nuevo será atendido"));
+    assert!(mensaje.contains("cada 3 minutos"));
 
-    let msg_1s = mensaje_listo_reinicio(1);
-    assert!(msg_1s.contains("cada segundo"));
-}
-
-#[test]
-fn hay_registro_previo_distingue_inexistente_vacio_y_con_datos() {
-    let dir = tempfile::tempdir().unwrap();
-    let ruta = dir.path().join("lectura.json");
-
-    // 1. Inexistente -> false
-    assert!(!hay_registro_previo(&ruta));
-
-    // 2. Registro vacío guardado -> false
-    let mut reg = crate::protocolo::RegistroLectura::default();
-    reg.guardar(&ruta).unwrap();
-    assert!(!hay_registro_previo(&ruta));
-
-    // 3. Registro con datos de lectura -> true
-    reg.delta("claude.md", "hola");
-    reg.guardar(&ruta).unwrap();
-    assert!(hay_registro_previo(&ruta));
+    let mensaje_1s = mensaje_listo_reinicio(1);
+    assert!(mensaje_1s.contains("cada segundo"));
 }
 
 #[test]
@@ -533,37 +530,50 @@ fn mensaje_version_compone_nombre_y_version() {
 
 #[test]
 fn mensaje_argumentos_orientan_al_usuario() {
-    let err_arg = mensaje_argumento_no_entendido("--invento");
-    assert!(err_arg.contains("No entiendo «--invento»"));
+    let no_entendido = mensaje_argumento_no_entendido("--invento");
+    assert!(no_entendido.contains("No entiendo «--invento»"));
     // El nombre se compone según la plataforma, así que la prueba lo compone igual en vez de
     // fijar el de Windows: lo que se afirma es que el mensaje enseña a pedir ayuda, y eso vale
     // en los dos sistemas.
-    assert!(err_arg.contains(&format!("{NOMBRE_DEL_EJECUTABLE} --ayuda")));
+    assert!(no_entendido.contains(&format!("{NOMBRE_DEL_EJECUTABLE} --ayuda")));
 
-    let err_falta = mensaje_argumento_falta_valor("--ruta");
-    assert!(err_falta.contains("«--ruta» necesita un valor detrás"));
-    assert!(err_falta.contains(&format!("Ejemplo: {NOMBRE_DEL_EJECUTABLE} --ruta")));
-    assert!(err_falta.contains(EJEMPLO_DE_RUTA));
+    let falta_valor = mensaje_argumento_falta_valor("--ruta");
+    assert!(falta_valor.contains("«--ruta» necesita un valor detrás"));
+    assert!(falta_valor.contains(&format!("Ejemplo: {NOMBRE_DEL_EJECUTABLE} --ruta")));
+    assert!(falta_valor.contains(EJEMPLO_DE_RUTA));
 }
 
 #[test]
 fn mensajes_de_inicio_y_guia_formatean_correctamente() {
     let ruta = std::path::Path::new("O:/proyecto");
-    let msg_carpeta = mensaje_carpeta_de_trabajo(ruta, "de la línea de órdenes (--ruta)");
-    assert!(msg_carpeta.contains("Carpeta de trabajo:"));
-    assert!(msg_carpeta.contains("de la línea de órdenes (--ruta)"));
+    let texto_carpeta = mensaje_carpeta_de_trabajo(ruta, "de la línea de órdenes (--ruta)");
+    assert!(texto_carpeta.contains("Carpeta de trabajo:"));
+    assert!(texto_carpeta.contains("de la línea de órdenes (--ruta)"));
 
     let destino = std::path::Path::new("O:/proyecto/.gestor/PROGRAMATOR.md");
-    let msg_normas = mensaje_instrucciones_instaladas(destino);
-    assert!(msg_normas.contains("Instaladas las instrucciones del proyecto en"));
+    let texto_normas = mensaje_instrucciones_instaladas(destino);
+    assert!(texto_normas.contains("Instaladas las instrucciones del proyecto en"));
 
-    let msg_guia = mensaje_guia_publicada();
-    assert!(msg_guia.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"));
+    let texto_guia = mensaje_guia_publicada();
+    assert!(texto_guia.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"));
 
-    let msg_orientacion = mensaje_orientacion_modelo_pago();
-    assert!(msg_orientacion.contains("Cómo empezar:"));
-    assert!(msg_orientacion.contains("Abre tu modelo de pago habitual"));
-    assert!(msg_orientacion.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"));
+    let texto_orientacion = mensaje_orientacion_modelo_pago();
+    assert!(texto_orientacion.contains("Cómo empezar:"));
+    assert!(texto_orientacion.contains("Abre tu modelo de pago habitual"));
+    assert!(texto_orientacion.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"));
+    assert!(texto_orientacion.contains(&super::vigilante::orden_para_el_agente()));
+    assert!(texto_orientacion.contains("«# Bandeja de <tu identidad>»"));
+
+    let texto_personas = mensaje_guia_para_personas();
+    assert!(texto_personas.contains("LEEME.md"), "{texto_personas}");
+    assert!(
+        texto_personas.contains("docs/Manual de uso.md"),
+        "{texto_personas}"
+    );
+    assert!(
+        texto_personas.contains("COMO-ENCARGAR-A-PROGRAMATOR.md"),
+        "{texto_personas}"
+    );
 }
 
 #[test]
@@ -588,4 +598,14 @@ fn mensajes_de_ciclo_y_desenlace_formatean_correctamente() {
         mensaje_desenlace_atendidos(3, 1),
         "Encargos atendidos: 3 (fallos al publicar: 1)."
     );
+}
+
+/// Para que el texto del arranque no salga apelotonado, cada bloque termina en una sola línea, y
+/// al imprimirlo queda una en blanco debajo.
+#[test]
+fn cada_bloque_del_arranque_deja_una_linea_en_blanco_debajo() {
+    assert_eq!(bloque("aviso"), "aviso\n");
+    assert_eq!(bloque("aviso\n"), "aviso\n");
+    assert_eq!(bloque("aviso\n\n\n"), "aviso\n");
+    assert_eq!(format!("{}\n", bloque("uno\ndos")), "uno\ndos\n\n");
 }

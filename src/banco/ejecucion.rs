@@ -7,16 +7,19 @@
 //! Cada encargo y cada semilla trabajan en una carpeta nueva, para que nada de uno contamine al
 //! siguiente.
 
+use crate::protocolo::respuesta::CABECERA_DE_BANDEJA;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::ficha::{Encargo, CARPETA_PARTIDA, NOMBRE_ENUNCIADO};
-use crate::arnes::ciclo::{Limites, Plazo};
+use crate::arnes::ciclo::Limites;
 use crate::arnes::espacio::ruta_de_las_normas;
-use crate::arnes::herramientas::CARPETA_DE_CANDIDATOS;
-use crate::arnes::sesion::{ejecutar_pasada, Ajustes, DesenlacePasada, EstadoMotor};
+use crate::arnes::herramientas::carpeta_de_candidatos;
+use crate::arnes::sesion::{
+    ejecutar_pasada, tomar_instantanea_inicial, Ajustes, DesenlacePasada, EstadoMotor,
+};
 use crate::error::{Error, Resultado};
 use crate::ficheros::{copiar_arbol, crear_carpeta, entradas, escribir, leer, leer_si_existe};
 use crate::motor::proceso::EstadoServidor;
@@ -35,9 +38,10 @@ pub fn texto_del_encargo(agente: &str, id: &str, enunciado: &str) -> String {
     format!("## Para {agente}: {id}\n\n{}\n", enunciado.trim_end())
 }
 
-/// La primera línea del buzón de quien encarga, antes de que llegue el encargo.
+/// La primera línea del buzón de quien encarga, antes de que llegue el encargo: la cabecera de
+/// bandeja del protocolo, de la que Programator saca la identidad a la que responde.
 fn encabezado_del_buzon(buzon: &str) -> String {
-    format!("# {buzon}\n")
+    format!("{CABECERA_DE_BANDEJA}{buzon}\n")
 }
 
 /// Lo que se pasa de fuera para ejecutar un encargo.
@@ -51,33 +55,8 @@ pub struct Preparacion<'a> {
     pub tiempo_maximo: Duration,
 }
 
-/// El tiempo, inyectable para probar las esperas sin esperar.
-pub trait Reloj {
-    fn transcurrido(&self) -> Duration;
-    fn esperar(&mut self, cuanto: Duration);
-}
-
-/// El reloj de verdad.
-pub struct RelojReal {
-    inicio: Instant,
-}
-
-impl RelojReal {
-    pub fn desde_ahora() -> Self {
-        Self {
-            inicio: Instant::now(),
-        }
-    }
-}
-
-impl Reloj for RelojReal {
-    fn transcurrido(&self) -> Duration {
-        self.inicio.elapsed()
-    }
-    fn esperar(&mut self, cuanto: Duration) {
-        std::thread::sleep(cuanto);
-    }
-}
+/// El reloj vive en `crate::reloj`; se reexporta aquí para quien ya lo tomaba del banco.
+pub use crate::reloj::{Reloj, RelojReal};
 
 /// La suma del consumo de todas las respuestas de un encargo.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -154,9 +133,8 @@ pub fn preparar_carpeta(
     preparacion: &Preparacion,
 ) -> Resultado<()> {
     if carpeta.exists() {
-        return Err(Error::Banco(format!(
-            "la carpeta de trabajo «{}» ya existe; cada encargo empieza en una nueva",
-            carpeta.display()
+        return Err(Error::Banco(super::mensajes::carpeta_de_trabajo_ya_existe(
+            carpeta,
         )));
     }
     crear_carpeta(&carpeta.join(CARPETA_DEL_CANAL))?;
@@ -196,19 +174,14 @@ pub fn pasar_encargo(
         })
     };
 
-    // El buzón de quien encarga existe ya, solo con su encabezado, antes de la primera pasada: es
-    // lo que esa pasada fotografía. Con el canal vacío no habría nada que fotografiar, el registro
-    // seguiría vacío y la pasada siguiente volvería a ser «primera».
+    // El buzón de quien encarga existe ya, solo con su encabezado, y Programator toma su foto
+    // inicial como al arrancar: el encargo que se escribe después es lo único nuevo.
     let buzon = carpeta
         .join(CARPETA_DEL_CANAL)
         .join(format!("{}.md", preparacion.buzon_que_encarga));
     let encabezado = encabezado_del_buzon(preparacion.buzon_que_encarga);
     escribir(&buzon, &encabezado)?;
-
-    match ejecutar_pasada(carpeta, preparacion.agente, ajustes, &mut asegurar_medido)? {
-        DesenlacePasada::PrimeraPasada => {}
-        otro => return Err(no_detectado(encargo, &otro)),
-    }
+    tomar_instantanea_inicial(carpeta, preparacion.agente)?;
 
     let enunciado = leer(&encargo.carpeta.join(NOMBRE_ENUNCIADO))?;
     let texto = texto_del_encargo(preparacion.agente, &encargo.ficha.id, &enunciado);
@@ -222,12 +195,11 @@ pub fn pasar_encargo(
 
     let inicio = reloj.transcurrido();
     // El tiempo máximo corta también el ciclo, no solo la cuenta del final: en la tanda del
-    // 11/11/2026 hubo pasadas de 1327 s con un tope de 900 s. El plazo va con el reloj de verdad,
-    // que es el que gasta el motor; sin hora representable no hay plazo y solo se cuenta al final.
+    // 11/11/2026 hubo pasadas de 1327 s con un tope de 900 s. El plazo va con el reloj inyectado,
+    // que en uso real es el de verdad, el que gasta el motor; sin hora representable no hay plazo
+    // y solo se cuenta al final.
     let limites = Limites {
-        plazo: Instant::now()
-            .checked_add(preparacion.tiempo_maximo)
-            .map(Plazo::hasta),
+        plazo: reloj.plazo_dentro_de(preparacion.tiempo_maximo),
         ..ajustes.limites.clone()
     };
     let ajustes = &Ajustes {
@@ -237,10 +209,10 @@ pub fn pasar_encargo(
     let a_tiempo = loop {
         match ejecutar_pasada(carpeta, preparacion.agente, ajustes, &mut asegurar_medido)? {
             DesenlacePasada::Atendidos(_) => {
-                break reloj.transcurrido() - inicio <= preparacion.tiempo_maximo;
+                break reloj.transcurrido().saturating_sub(inicio) <= preparacion.tiempo_maximo;
             }
             DesenlacePasada::MotorCargando => {
-                if reloj.transcurrido() - inicio > preparacion.tiempo_maximo {
+                if reloj.transcurrido().saturating_sub(inicio) > preparacion.tiempo_maximo {
                     break false;
                 }
                 reloj.esperar(Duration::from_secs(ajustes.intervalo_segundos));
@@ -248,7 +220,7 @@ pub fn pasar_encargo(
             otro => return Err(no_detectado(encargo, &otro)),
         }
     };
-    let duracion = reloj.transcurrido() - inicio;
+    let duracion = reloj.transcurrido().saturating_sub(inicio);
 
     let consumo = *acumulado.borrow();
     Recogida::de_la_carpeta(carpeta, preparacion.agente, a_tiempo, consumo, duracion)
@@ -273,7 +245,7 @@ impl Recogida {
                     .join(CARPETA_DEL_CANAL)
                     .join(format!("{}.md", agente.to_lowercase())),
             )?,
-            entregas: ficheros_de(&carpeta.join(CARPETA_DE_CANDIDATOS))?,
+            entregas: ficheros_de(&carpeta.join(carpeta_de_candidatos(agente)))?,
             consumo,
             duracion,
         })
@@ -281,9 +253,9 @@ impl Recogida {
 }
 
 fn no_detectado(encargo: &Encargo, desenlace: &DesenlacePasada) -> Error {
-    Error::Banco(format!(
-        "{}: la pasada no fue la esperada ({desenlace:?}); el encargo no llegó al ciclo",
-        encargo.ficha.id
+    Error::Banco(super::mensajes::encargo_no_detectado(
+        &encargo.ficha.id,
+        desenlace,
     ))
 }
 
@@ -301,32 +273,46 @@ fn ficheros_de(carpeta: &Path) -> Resultado<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod pruebas {
+    /// Si el buzón del banco empezara por «# banco», como la identidad sale solo de la cabecera,
+    /// cada encargo de la tanda avisaría en la terminal de que no avisaría a quien encargó.
+    #[test]
+    fn el_buzon_del_banco_lleva_una_cabecera_de_la_que_sale_su_identidad() {
+        let encabezado = encabezado_del_buzon("banco");
+
+        let identidad = crate::protocolo::respuesta::identidad_del_buzon(&encabezado);
+
+        // Con la regla de Gestor, «banco» sin número es «banco 1».
+        assert_eq!(
+            identidad.as_ref().map(|i| i.to_string()).as_deref(),
+            Some("banco 1"),
+            "{encabezado}"
+        );
+    }
+
     use super::*;
     use crate::arnes::ciclo::Limites;
     use crate::banco::ficha::FichaEncargo;
     use crate::config::Verificacion;
     use crate::motor::{MotorDoble, SolicitudHerramienta};
 
-    /// Un reloj que solo avanza cuando se espera.
-    struct RelojFalso {
-        ahora: Duration,
-        esperas: usize,
+    use crate::reloj::RelojDeMentira;
+
+    /// Un reloj que solo avanza cuando se espera o cuando lo adelanta un doble.
+    fn reloj() -> RelojDeMentira {
+        RelojDeMentira::default()
     }
 
-    impl Reloj for RelojFalso {
-        fn transcurrido(&self) -> Duration {
-            self.ahora
-        }
-        fn esperar(&mut self, cuanto: Duration) {
-            self.ahora += cuanto;
-            self.esperas += 1;
-        }
+    /// Un motor que tarda `cada_respuesta` en el reloj de mentira cada vez que responde.
+    struct MotorQueTarda {
+        interno: MotorDoble,
+        reloj: RelojDeMentira,
+        cada_respuesta: Duration,
     }
 
-    fn reloj() -> RelojFalso {
-        RelojFalso {
-            ahora: Duration::ZERO,
-            esperas: 0,
+    impl Motor for MotorQueTarda {
+        fn responder(&mut self, conversacion: &[Mensaje]) -> Resultado<Respuesta> {
+            self.reloj.adelantar(self.cada_respuesta);
+            self.interno.responder(conversacion)
         }
     }
 
@@ -381,7 +367,7 @@ mod pruebas {
         preparar_carpeta(&carpeta, encargo, &preparacion())?;
         let limites = Limites::default();
         let verificacion = Verificacion::default();
-        let ajustes = Ajustes::con_limites(&limites, &verificacion);
+        let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
         pasar_encargo(&carpeta, encargo, &preparacion(), &ajustes, asegurar, reloj)
     }
 
@@ -457,7 +443,7 @@ mod pruebas {
         preparar_carpeta(&carpeta, &encargo, &preparacion).unwrap();
         let limites = Limites::default();
         let verificacion = Verificacion::default();
-        let ajustes = Ajustes::con_limites(&limites, &verificacion);
+        let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
 
         let recogida = pasar_encargo(
             &carpeta,
@@ -475,6 +461,42 @@ mod pruebas {
             "{}",
             recogida.respuesta
         );
+    }
+
+    /// El plazo del ciclo se lee del reloj inyectado, no de `Instant::now()`.
+    /// Con el reloj de verdad, la primera respuesta no gasta tiempo y el modelo llegaría a entregar.
+    #[test]
+    fn el_plazo_del_ciclo_va_con_el_reloj_inyectado_y_corta_al_motor_que_tarda() {
+        let dir = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(dir.path(), "E03", &[]);
+        let reloj = reloj();
+        let motor = MotorQueTarda {
+            interno: MotorDoble::con_guion(vec![
+                pedir("listar", serde_json::json!({"ruta": "."})),
+                pedir(
+                    "escribir_propuesta",
+                    serde_json::json!({"nombre": "hola.rs", "contenido": "fn main() {}\n"}),
+                ),
+                Respuesta::Texto("Fin.".into()),
+            ]),
+            reloj: reloj.clone(),
+            cada_respuesta: preparacion().tiempo_maximo + Duration::from_secs(1),
+        };
+        let mut motor = Some(motor);
+        let mut asegurar = || match motor.take() {
+            Some(m) => Ok(EstadoMotor::Disponible(Box::new(m) as Box<dyn Motor>)),
+            None => Err(Error::Banco("dos veces".into())),
+        };
+
+        let recogida = pasar(dir.path(), &encargo, &mut asegurar, &mut reloj.clone()).unwrap();
+
+        assert!(recogida.entregas.is_empty(), "el motor no debió seguir");
+        assert!(
+            recogida.respuesta.contains("se acabó el tiempo máximo"),
+            "{}",
+            recogida.respuesta
+        );
+        assert!(!recogida.a_tiempo);
     }
 
     #[test]
@@ -529,7 +551,7 @@ mod pruebas {
 
         let recogida = pasar(dir.path(), &encargo, &mut asegurar, &mut reloj).unwrap();
 
-        assert_eq!(reloj.esperas, 2);
+        assert_eq!(reloj.esperas(), 2);
         assert!(recogida.a_tiempo);
         assert!(recogida.respuesta.contains("Hecho."));
     }
@@ -587,7 +609,7 @@ mod pruebas {
         );
         assert_eq!(uno.entregas.len(), 1);
         assert_eq!(dos.entregas.len(), 1);
-        assert_eq!(std::fs::read_to_string(&dos.entregas[0]).unwrap(), "dos");
+        assert_eq!(std::fs::read_to_string(&dos.entregas[0]).unwrap(), "dos\n");
     }
 
     #[test]
@@ -600,5 +622,30 @@ mod pruebas {
         let error = preparar_carpeta(&carpeta, &encargo, &preparacion()).unwrap_err();
 
         assert!(error.to_string().contains("ya existe"));
+    }
+
+    /// El banco recoge las entregas de la carpeta del agente que se configuró (`c12c248`), no de
+    /// la de fábrica: con otro nombre, lo de `.gestor/candidatos/programator` no es suyo.
+    #[test]
+    fn recoge_las_entregas_del_agente_con_su_nombre_y_no_las_de_fabrica() {
+        let dir = tempfile::tempdir().unwrap();
+        let propias = dir.path().join(carpeta_de_candidatos("Cobalto"));
+        let ajenas = dir.path().join(carpeta_de_candidatos("Programator"));
+        std::fs::create_dir_all(&propias).unwrap();
+        std::fs::create_dir_all(&ajenas).unwrap();
+        std::fs::write(propias.join("suya.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(ajenas.join("ajena.rs"), "fn main() {}\n").unwrap();
+
+        let recogida = Recogida::de_la_carpeta(
+            dir.path(),
+            "Cobalto",
+            true,
+            ConsumoAcumulado::default(),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+        assert!(recogida.entrega("suya.rs").is_some());
+        assert!(recogida.entrega("ajena.rs").is_none());
     }
 }

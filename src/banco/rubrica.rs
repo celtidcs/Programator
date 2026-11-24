@@ -108,7 +108,11 @@ pub fn leer_nota(texto: &str) -> Result<NotaDeRubrica, String> {
     else {
         return Err(format!("no tiene la línea «{PREFIJO_DE_NOTA}»"));
     };
-    let valor = linea.trim_start()[PREFIJO_DE_NOTA.len()..].trim();
+    let valor = linea
+        .trim_start()
+        .strip_prefix(PREFIJO_DE_NOTA)
+        .unwrap_or_default()
+        .trim();
     if valor.is_empty() {
         return Ok(NotaDeRubrica::Pendiente);
     }
@@ -124,7 +128,8 @@ pub fn leer_nota(texto: &str) -> Result<NotaDeRubrica, String> {
 
 /// La nota de un fichero de rúbrica; si no vale, un error que dice qué fichero es.
 pub fn leer_fichero(ruta: &Path) -> Resultado<NotaDeRubrica> {
-    leer_nota(&leer(ruta)?).map_err(|motivo| Error::Banco(format!("{}: {motivo}", ruta.display())))
+    leer_nota(&leer(ruta)?)
+        .map_err(|motivo| Error::Banco(super::mensajes::rubrica_que_no_vale(ruta, &motivo)))
 }
 
 #[cfg(test)]

@@ -4,10 +4,11 @@
 //! renderizado o captura gráfica), no se aborta a la primera: se comprueba la salud del servidor
 //! y, si responde, se reintenta hasta el número de veces configurado.
 //!
-//! **Restricción de diseño (§4.2):** Este módulo no duerme (`thread::sleep`) ni lee el reloj.
+//! **Restricción de diseño:** Este módulo no duerme (`thread::sleep`) ni lee el reloj.
 //! Devuelve una `DecisionReintento` pura que el orquestador (`atender_encargo`) ejecuta. Esto
 //! permite probar exhaustivamente toda la lógica de reintentos de forma instantánea y determinista.
 
+use super::mensajes;
 use crate::motor::proceso::EstadoServidor;
 use std::time::Duration;
 
@@ -23,16 +24,6 @@ pub enum DecisionReintento {
     },
     /// No se debe reintentar: se corta el encargo y se aborta con el mensaje explicativo.
     Abortar(String),
-}
-
-/// Cuántas veces se le preguntó al motor, en palabras. Sin reintentos, cada desenlace lo dice a su
-/// manera (`sin_reintentos`); con uno o más, siempre igual.
-fn detalle_de_intentos(reintentos_realizados: u32, sin_reintentos: &str) -> String {
-    match reintentos_realizados {
-        0 => sin_reintentos.to_string(),
-        1 => "1 reintento (2 intentos en total)".to_string(),
-        n => format!("{n} reintentos ({} intentos en total)", n + 1),
-    }
 }
 
 /// Evalúa si corresponde reintentar la llamada al motor o abortar el encargo.
@@ -51,12 +42,11 @@ pub fn evaluar_reintento(
     espera: Duration,
 ) -> DecisionReintento {
     match salud {
-        EstadoServidor::NoDisponible => {
-            let detalle_intentos = detalle_de_intentos(reintentos_realizados, "1 intento");
-            DecisionReintento::Abortar(format!(
-                "🔴 Programator no pudo completar el encargo: el motor no respondió tras {detalle_intentos} y la comprobación de salud indica que {salud}. Último error del motor: {error}"
-            ))
-        }
+        EstadoServidor::NoDisponible => DecisionReintento::Abortar(mensajes::motor_no_disponible(
+            reintentos_realizados,
+            salud,
+            error,
+        )),
         EstadoServidor::Listo | EstadoServidor::Cargando => {
             if reintentos_realizados < max_reintentos {
                 DecisionReintento::Reintentar {
@@ -64,10 +54,10 @@ pub fn evaluar_reintento(
                     espera,
                 }
             } else {
-                let detalle_intentos =
-                    detalle_de_intentos(reintentos_realizados, "0 reintentos (1 intento en total)");
-                DecisionReintento::Abortar(format!(
-                    "🔴 Programator no pudo completar el encargo: el motor no respondió tras {detalle_intentos}. Última comprobación de salud: {salud}. Último error del motor: {error}"
+                DecisionReintento::Abortar(mensajes::motor_sin_respuesta(
+                    reintentos_realizados,
+                    salud,
+                    error,
                 ))
             }
         }
@@ -133,7 +123,7 @@ mod pruebas {
         match decision {
             DecisionReintento::Abortar(motivo) => {
                 assert!(motivo.contains("1 intento"));
-                assert!(motivo.contains("NoDisponible"));
+                assert!(motivo.contains("el servidor no está disponible"));
                 assert!(motivo.contains("conexión rechazada"));
             }
             otro => panic!("se esperaba Abortar, se obtuvo {otro:?}"),
@@ -151,7 +141,7 @@ mod pruebas {
             DecisionReintento::Abortar(motivo) => {
                 assert!(motivo.contains("2 reintentos"));
                 assert!(motivo.contains("3 intentos en total"));
-                assert!(motivo.contains("Listo"));
+                assert!(motivo.contains("el servidor está listo y responde"));
                 assert!(motivo.contains("GPU timeout"));
             }
             otro => panic!("se esperaba Abortar, se obtuvo {otro:?}"),
@@ -168,7 +158,7 @@ mod pruebas {
             DecisionReintento::Abortar(motivo) => {
                 assert!(motivo.contains("0 reintentos"));
                 assert!(motivo.contains("1 intento en total"));
-                assert!(motivo.contains("Listo"));
+                assert!(motivo.contains("el servidor está listo y responde"));
             }
             otro => panic!("se esperaba Abortar, se obtuvo {otro:?}"),
         }

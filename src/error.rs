@@ -20,6 +20,17 @@ pub enum Error {
     #[error("configuración inválida: {0}")]
     Configuracion(String),
 
+    /// Un fallo de configuración de la carpeta de trabajo. Se lee igual que `Configuracion`, pero
+    /// el consejo del arranque sale de la variante y no de buscar palabras en el texto, que
+    /// lleva rutas del usuario.
+    #[error("configuración inválida: {0}")]
+    ConfiguracionDeLaCarpeta(String),
+
+    /// Un fallo de configuración del motor: su binario, su modelo o su arranque. Se lee igual que
+    /// `Configuracion`, por la misma razón que `ConfiguracionDeLaCarpeta`.
+    #[error("configuración inválida: {0}")]
+    ConfiguracionDelMotor(String),
+
     #[error("ruta fuera del ámbito permitido: «{0}»")]
     FueraDeAmbito(PathBuf),
 
@@ -43,6 +54,9 @@ pub enum Error {
 
     #[error("revisión de modelos: {0}")]
     Revision(String),
+
+    #[error("cola de encargos pendientes: {0}")]
+    Pendientes(String),
 }
 
 /// Alias corto para los resultados del proyecto.

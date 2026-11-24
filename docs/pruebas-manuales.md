@@ -14,7 +14,7 @@ Tercero, un aviso sobre la carpeta de trabajo: si «[carpeta] ruta» falta en tu
 
 Qué prueba hoy el binario, y qué no (léelo antes de seguir)
 
-Tal como queda en la 0.12.0, programator.exe carga la configuración, resuelve la carpeta de trabajo, instala sus instrucciones (PROGRAMATOR.md) si hacen falta, crea .gestor/canal/ si no existe, informa siempre al arrancar de la GPU vista, el motor, el modelo y el encaje calculado, y entra en un bucle que sondea el canal, atiende los encargos y arranca llama-server cuando hace falta. Las Pruebas A, B, C y D de más abajo se pueden ejecutar sin GPU (los tres primeros pasos de la D no requieren GPU ni modelo). La sección «Pendientes (requieren GPU)» y las pruebas de la E en adelante documentan las que necesitan motor y modelo reales o una máquina de pruebas, para que no se pierda su criterio de aceptación.
+Tal como queda en la 1.0.0, programator.exe carga la configuración, informa siempre al arrancar de la GPU vista, el motor, el modelo, el encaje calculado y los modelos disponibles, resuelve la carpeta de trabajo, instala sus instrucciones (PROGRAMATOR.md) si hacen falta, crea .gestor/canal/ si no existe y entra en un bucle que sondea el canal y atiende los encargos. Al arrancar no lanza llama-server ni carga ningún modelo: lo hace al atender el primer encargo que lo necesita. Las Pruebas A, B, C y D de más abajo se pueden ejecutar sin GPU (los tres primeros pasos de la D no requieren GPU ni modelo). La sección «Pendientes (requieren GPU)» y las pruebas de la E en adelante documentan las que necesitan motor y modelo reales o una máquina de pruebas, para que no se pierda su criterio de aceptación.
 
 
 Prueba A — arranque, normas de la casa y estructura del canal
@@ -30,19 +30,19 @@ Prueba B — el diálogo de carpeta cuando falta la configuración
 
 Primero, quita o comenta «[carpeta] ruta» en programator.toml. Después, ejecuta programator.exe. La señal de éxito es que se abre un diálogo nativo titulado «Elige la carpeta de trabajo de Programator». Elige una carpeta cualquiera: el programa continúa igual que en la Prueba A.
 
-Luego repite la prueba, pero cancela el diálogo en vez de elegir una carpeta. La señal de éxito es que el programa termina de inmediato con un mensaje en la consola que empieza por «🔴 Programator no pudo arrancar:» y menciona que no se eligió carpeta de trabajo, y que su código de salida es distinto de cero (se ve con echo $LASTEXITCODE en PowerShell tras ejecutarlo).
+Luego repite la prueba, pero cancela el diálogo en vez de elegir una carpeta. La señal de éxito es que el programa termina de inmediato con un mensaje en la consola que dice «Programator no pudo arrancar:» y menciona que no se eligió carpeta de trabajo, y que su código de salida es distinto de cero (se ve con echo $LASTEXITCODE en PowerShell tras ejecutarlo).
 
 
 Prueba C — el sondeo detecta novedades, incluidas las subcarpetas
 
-Primero, para agilizar la prueba, pon «[ciclo] intervalo_segundos = 5» en tu programator.toml; así no esperas los 180 segundos por defecto. Después, ejecuta Programator sobre la carpeta de pruebas de la Prueba A. Con el programa corriendo, añade un fichero directamente dentro de <carpeta>/.gestor/canal/, por ejemplo codex.md. La señal de éxito es que en menos de un intervalo aparece en la consola «Novedades en el canal: atendiendo…».
+Primero, para agilizar la prueba, pon «[ciclo] intervalo_segundos = 5» en tu programator.toml; así no esperas los 30 segundos por defecto, y al terminar quita la línea. Después, ejecuta Programator sobre la carpeta de pruebas de la Prueba A. Con el programa corriendo, añade un fichero directamente dentro de <carpeta>/.gestor/canal/, por ejemplo codex.md. La señal de éxito es que en menos de un intervalo aparece en la consola «Novedades en el canal: atendiendo…».
 
-Repite añadiendo un fichero dentro de una subcarpeta del canal, por ejemplo .gestor/canal/msg/001.md (créala si no existe): también debe aparecer el aviso. Esto es importante porque el canal real del equipo tiene justo esa subcarpeta de mensajes. Repite después borrando ese mismo fichero: también debe detectarse. Cuando termines, para el programa con Ctrl+C.
+Repite añadiendo un fichero dentro de una subcarpeta del canal, por ejemplo .gestor/canal/msg/001.md (créala si no existe): también debe aparecer el aviso. El canal real que se comprobó en uso es plano, sin subcarpetas, pero Programator baja a ellas para no quedarse dormido en un proyecto que sí organice así su canal. Repite después borrando ese mismo fichero: también debe detectarse. Cuando termines, para el programa con Ctrl+C.
 
 
-Prueba D — los cuatro comandos de la línea de órdenes
+Prueba D — la ayuda, la versión, un argumento inventado y el diagnóstico
 
-Cubre --ayuda, --version, --diagnostico y un argumento inventado, en ese orden. Las tres primeras comprobaciones no requieren GPU ni modelo; la de --diagnostico con el informe completo sí necesita la carpeta portable/ montada con llama-server y el Devstral real configurados, porque es la única forma de ver el encaje calculado contra hardware de verdad.
+La línea de órdenes admite más formas, todas listadas en --ayuda; esta prueba cubre cuatro: --ayuda, --version, un argumento inventado y --diagnostico, en ese orden. Las tres primeras comprobaciones no requieren GPU ni modelo; la de --diagnostico con el informe completo sí necesita la carpeta portable/ montada con llama-server y el Devstral real configurados, porque es la única forma de ver el encaje calculado contra hardware de verdad.
 
 Antes de nada, recompila y actualiza el binario de portable/. Ejecuta cargo build --release desde la raíz del paquete y copia target/release/programator.exe sobre portable/programator.exe. Sin este paso estarías probando el binario que hubiera allí de antes, sin poder distinguir si falló la versión nueva o si ejecutaste el binario viejo.
 
@@ -51,13 +51,13 @@ Primero, pide la ayuda, y por separado su forma corta:
     programator.exe --ayuda
     programator.exe -h
 
-La señal de éxito es que en la consola sale un texto que empieza por «Programator 0.12.0 — arnés que convierte...», incluye las formas de uso, entre ellas --ayuda, --version, --diagnostico y la invocación sin argumentos, y termina limpiamente, sin arrancar ningún ciclo ni abrir el diálogo de carpeta. Las dos formas, --ayuda y -h, deben imprimir el mismo texto.
+La señal de éxito es que en la consola sale un texto que empieza por «Programator 1.0.0 — arnés que convierte...», incluye las formas de uso, entre ellas --ayuda, --version, --diagnostico y la invocación sin argumentos, y termina limpiamente, sin arrancar ningún ciclo ni abrir el diálogo de carpeta. Las dos formas, --ayuda y -h, deben imprimir el mismo texto.
 
 Segundo, pide la versión:
 
 programator.exe --version
 
-La señal de éxito es que la única línea que aparece es «Programator 0.12.0», y el programa termina de inmediato.
+La señal de éxito es que la única línea que aparece es «Programator 1.0.0», y el programa termina de inmediato.
 
 Tercero, pásale un argumento inventado; cualquiera sirve:
 
@@ -73,9 +73,7 @@ Cuarto, pide el diagnóstico, con programator.toml apuntando a la carpeta portab
 
 programator.exe --diagnostico
 
-Qué tiene que verse: --diagnostico no abre ningún diálogo, tenga o no fijada «[carpeta] ruta» en el TOML. La consola imprime el informe completo directamente y nada de bucle detrás (el programa termina solo, sin esperar Ctrl+C), con estas cinco líneas.
-
-La línea «Carpeta de trabajo:» lleva la ruta fijada en el TOML o, si no la tiene, el texto que dice que no está fijada y que se elegiría con un diálogo al arrancar de verdad (con --diagnostico nunca se llega a abrir).
+Qué tiene que verse: --diagnostico no abre ningún diálogo, tenga o no fijada «[carpeta] ruta» en el TOML. La consola imprime el informe completo directamente y nada de bucle detrás (el programa termina solo, sin esperar Ctrl+C). Antes del informe pueden salir los avisos de la configuración (claves retiradas, el Python con el que se comprobarán los .py) y la línea de la comprobación de versión en GitHub. El informe empieza por «Programator 1.0.0 — asistente de código local en segundo plano» y sigue con estas cinco líneas, en este orden: «GPU:», «Motor:», «Modelo:», «Encaje:» y «Carpeta de trabajo:». Si se midió la GPU, debajo va la lista «Modelos disponibles en <carpeta de modelos> para <tarjeta>, contando la tarjeta entera libre (el encaje de arriba cuenta la memoria libre ahora):».
 
 La línea «GPU:» lleva el nombre de la tarjeta y la VRAM libre y total en GiB.
 
@@ -83,9 +81,13 @@ La línea «Motor:» dice «llama-server con CUDA, en <ruta de «motor.binario»
 
 La línea «Modelo:» nombra el fichero del Devstral, con «40 capas», y su peso en GiB.
 
-La línea «Encaje:» lleva el aviso que redacta motor::encaje::redactar_aviso. No es un texto fijo: si el modelo cabe entero dice algo del tipo «el modelo entero cabe en <GPU> (<libres> libres): sus 40 capas piden <tanto> y van a la GPU»; si no cabe entero, dice cuántas de las 40 van a la GPU y cuántas se quedan en CPU. Siempre va seguido de «; se pedirán N capas», con las que de verdad se le pasarán a llama-server. Nunca 0 capas con VRAM de sobra ni más de 40 (41 contando la capa de salida aparte).
+La línea «Encaje:» lleva el aviso que redacta motor::encaje::redactar_aviso. No es un texto fijo: si el modelo cabe entero dice algo del tipo «el modelo entero cabe en <GPU> (<libres> libres): sus 40 capas piden <tanto> y van a la GPU»; si no cabe entero, dice cuántas de las 40 van a la GPU y cuántas se quedan en CPU; si el banco ya midió ese modelo en esta tarjeta con el mismo contexto y la misma caché, dice que usa las capas que midió el banco. Cuando el aviso no nombra ya la cifra, va seguido de «; se pedirán N capas», con las que de verdad se le pasarán a llama-server. Nunca 0 capas con VRAM de sobra ni más de 40 (41 contando la capa de salida aparte).
 
-Si el informe dice otra cosa (el motor sale SIN CUDA, el modelo no aparece con sus 40 capas, o el encaje no cuadra con lo de arriba), hay que parar y no dar la verificación por buena: es la comprobación pendiente de esta versión contra la GPU real, y hasta que se ejecute con éxito el cálculo del encaje solo se ha visto probado en frío.
+La línea «Carpeta de trabajo:» lleva la ruta fijada en el TOML o, si no la tiene, el texto «NO FIJA» con lo que se haría al arrancar de verdad: elegirla en la ventana emergente o, si «[carpeta] preguntar_siempre = false», usar la última carpeta guardada (con --diagnostico nunca se llega a abrir la ventana).
+
+La lista de modelos disponibles tiene una línea por cada .gguf de la carpeta de modelos, con si cabe en la tarjeta y, si el banco lo midió, qué clases atiende.
+
+Si el informe dice otra cosa (el motor sale SIN CUDA, el modelo no aparece con sus 40 capas, o el encaje no cuadra con lo de arriba), hay que parar y no dar la verificación por buena.
 
 
 Prueba E — el peso real del modelo cuadra con el fichero, y el aviso de encaje es coherente
@@ -98,21 +100,21 @@ cargo test --lib motor::gguf -- --ignored --nocapture el_peso_del_devstral_real_
 
 La señal de éxito es «test result: ok» y, en la salida (visible gracias a --nocapture), una línea «inicio_datos + fin_datos = ... | tamaño del fichero = ...» con la suma igual o unos pocos bytes por debajo del tamaño del fichero (menos de 32, la alineación habitual). Si el assert! falla porque la diferencia es mayor o la suma supera al fichero, algún tamaño de la tabla de tipos (motor::tipos_tensor) está mal. Si el fichero no está en el equipo, la prueba lo dice por consola y pasa sin comprobar nada: no es una señal de éxito, es que no se pudo ejecutar.
 
-Después, arranca programator.exe con ese modelo configurado en «[motor] modelo». La señal de éxito es que la consola imprime una línea «Arrancando el motor — encaje: ...» antes de lanzar llama-server, y que el número de capas que menciona es coherente con las 40 que tiene Devstral («sus 40 capas piden ... y van a la GPU», «caben N de 40 capas», o un reparto parcial con menos de 41), nunca 0 con una GPU con VRAM de sobra ni un número mayor que 41. También es una degradación legítima, y no un fallo, que el aviso caiga a las 99 capas de siempre si no pudo medir la GPU o pesar el modelo: el §8 de la especificación lo contempla como desenlace correcto, no como avería.
+Después, arranca programator.exe con ese modelo configurado en «[motor] modelo» y publica un encargo en el canal: llama-server no se lanza al arrancar, sino al atender el primer encargo. La señal de éxito es que, al atenderlo, la consola imprime una línea «Arrancando el motor — encaje: ...» antes de lanzar llama-server, y que el número de capas que menciona es coherente con las 40 que tiene Devstral («sus 40 capas piden ... y van a la GPU», «caben N de 40 capas», o un reparto parcial con menos de 41), nunca 0 con una GPU con VRAM de sobra ni un número mayor que 41. También es una degradación legítima, y no un fallo, que el aviso caiga a las 99 capas de siempre si no pudo medir la GPU o pesar el modelo: es un desenlace correcto, no una avería.
 
 
 Pendientes (requieren GPU)
 
-Las siguientes tres pruebas están documentadas para no perder el criterio de aceptación original. El ciclo que necesitan ya está encadenado (programator.exe arranca llama-server y llama al modelo desde la 0.3.0, ver la sección de arriba): lo que falta no es código, es ejecutarlas con motor y modelo reales sobre una GPU dedicada. Repásalas antes de darlas por buenas si algo de lo descrito cambia.
+Las siguientes tres pruebas están documentadas para no perder el criterio de aceptación original. El ciclo que necesitan ya está encadenado (programator.exe arranca llama-server y llama al modelo desde la 0.3.0, y hoy lo arranca al atender el primer encargo, ver la sección de arriba): lo que falta no es código, es ejecutarlas con motor y modelo reales sobre una GPU dedicada. Repásalas antes de darlas por buenas si algo de lo descrito cambia.
 
 
 Prueba pendiente 1: el motor arranca y responde
 
-Primero, coloca llama-server.exe en herramientas/ y el .gguf del modelo en modelos/, y comprueba que tu programator.toml los referencia con esas rutas. Después, ejecuta programator.exe.
+Primero, coloca llama-server.exe en herramientas/ y el .gguf del modelo en modelos/, y comprueba que tu programator.toml los referencia con esas rutas. Después, ejecuta programator.exe y publica un encargo en el canal, en una intervención con su línea «Para Programator: …». Programator no lanza llama-server al arrancar, sino al atender el primer encargo: hasta entonces no hay proceso llama-server ni el puerto responde, y eso no es un fallo.
 
 Dónde mirar la salida: llama-server no escribe ningún fichero de registro. Todo lo que imprime sale en la misma consola donde corre Programator, mezclado con sus propios mensajes («Carpeta de trabajo: ...», «Novedades en el canal: ...»). No busques un log en disco: no existe.
 
-Señal de que el servidor está arriba: el texto exacto que imprime llama-server al terminar de cargar varía entre versiones, así que no lo uses como única señal. La comprobación objetiva es que el puerto configurado (8080 por defecto) empiece a aceptar conexiones TCP. Desde otra consola, en PowerShell, ejecuta:
+Señal de que el servidor está arriba, una vez publicado el encargo: el texto exacto que imprime llama-server al terminar de cargar varía entre versiones, así que no lo uses como única señal. La comprobación objetiva es que el puerto configurado (8080 por defecto) empiece a aceptar conexiones TCP. Desde otra consola, en PowerShell, ejecuta:
 
 Test-NetConnection -ComputerName 127.0.0.1 -Port 8080
 
@@ -150,9 +152,9 @@ Paso 1. Comprobar lo que ofrece el encaje:
 
 portable\programator.exe --diagnostico
 
-Con el contexto por defecto (16384) y una RTX 4070 Ti SUPER con la tarjeta libre, debe ofrecer 39 de 40 capas. Si ofrece 35, el contexto sigue en 32768: míralo en tu programator.toml.
+Con el contexto por defecto (16384) y el margen de VRAM por defecto (512 MiB, «[motor] margen_vram_mib»), la línea «Encaje:» dice cuántas de las 40 capas se pedirán. La cifra depende de la memoria libre de la tarjeta en ese momento y, si el banco ya midió ese modelo en esta tarjeta con el mismo contexto y la misma caché, de esa medida, así que aquí no se da una fija: anótala. Las 39 de 40 que se esperaban antes en una RTX 4070 Ti SUPER libre eran con el margen antiguo de 1024 MiB y ya no sirven de referencia. Si ofrece claramente menos de lo que la tarjeta libre debería admitir, mira «[motor] contexto» en tu programator.toml.
 
-Paso 2. Arrancar el ciclo, publicar un encargo cualquiera y mirar la primera línea que escribe el motor al cargar:
+Paso 2. Arrancar el ciclo y publicar un encargo cualquiera. Con la tarjeta en el mismo estado, la línea «Arrancando el motor — encaje: …» tiene que pedir las mismas capas que dijo --diagnostico en el paso 1. Después, mirar la primera línea que escribe el motor al cargar:
 
 srv load_model: initializing, n_slots = 1, n_ctx_slot = 16384
 
@@ -215,7 +217,7 @@ Después, poner «preguntar_siempre = true» (que es el valor de fábrica) y arr
 
 Paso 5: la ventana declarada es la real. Abrir .gestor\canal\COMO-ENCARGAR-A-PROGRAMATOR.md y comprobar que la cifra de tokens que declara es la misma que «[motor] contexto» del TOML en vigor. Para asegurarse de que no es coincidencia, cambiar contexto en el TOML, rearrancar y ver que la guía cambia con él.
 
-Paso 6: la línea del canal no engaña. Encargarle un fichero de una extensión que no tenga comprobador configurado. Cuando entregue, su buzón debe decir «⚠️ SIN COMPROBAR — no hay comprobador configurado para «.xx»», nombrando la extensión. Si dice «sin verificar», la 0.9.0 ha retrocedido.
+Paso 6: la línea del canal no engaña. Encargarle un fichero de una extensión que no tenga comprobador configurado. Cuando entregue, su buzón debe decir «SIN COMPROBAR — no hay comprobador configurado para «.xx»», nombrando la extensión. Si dice «sin verificar», la 0.9.0 ha retrocedido.
 
 Paso 7: no rompe lo que ya estaba. En una carpeta que ya tenga su PROGRAMATOR.md en la raíz, arrancar y comprobar que ese fichero se sigue usando, no se modifica y no se crea un segundo en .gestor\programator\.
 
@@ -226,7 +228,7 @@ Por qué existe. Las pruebas automáticas del banco pasan los encargos con un mo
 
 Antes de nada, dónde. Esta prueba ocupa la tarjeta durante horas y ejecuta código del modelo en el equipo donde corre Programator: Programator no usa ninguna otra máquina. Conviene hacerla en una máquina de pruebas, nunca en el equipo de uso diario, y dejarla limpia al acabar.
 
-Paso 0: binario nuevo y configuración. Como en la prueba H, copiar el ejecutable recién compilado sobre el portable. Copiar evaluacion\banco\banco.ejemplo.toml a evaluacion\banco\banco.toml y descomentar la sección [comprobacion_local], con los nombres que pida ese sistema. Comprobar con --diagnostico que el modelo cabe entero en la VRAM libre: si no cabe, la velocidad medida no sirve de referencia.
+Paso 0: binario nuevo y configuración. Como en la prueba H, copiar el ejecutable recién compilado sobre el portable. Copiar evaluacion\banco\banco.ejemplo.toml a evaluacion\banco\banco.toml. Las pruebas ocultas van encendidas por defecto, también sin sección [comprobacion_local]; solo hace falta descomentarla para poner en [comprobacion_local.nombres] los nombres que pida ese sistema, y no puede llevar «activa = false». Comprobar con --diagnostico que el modelo cabe entero en la VRAM libre: si no cabe, la velocidad medida no sirve de referencia.
 
 Paso 1: la tanda. Desde la raíz del repositorio:
 
@@ -250,13 +252,13 @@ Paso 5: repetible. Fijar capas_gpu en banco.toml y pasar una segunda tanda con l
 
 portable\programator.exe --banco-comparar evaluacion\banco\resultados\<tanda-1> evaluacion\banco\resultados\<tanda-2>
 
-Tiene que decir «✅ Las dos tandas son repetición una de otra», con todas las pasadas idénticas. Si dice que no son comparables, el motivo va primero (otras capas, otra versión…). Si alguna pasada se separa, nombra la vuelta: se abren las dos conversaciones de esa pasada en trabajo/<id>-semilla-<s>/.gestor/programator/ y se mira qué cambió antes de comparar modelos. La excepción declarada es una pasada cortada por el tiempo máximo, que depende del reloj y sale marcada.
+Tiene que decir «Las dos tandas son repetición una de otra», con todas las pasadas idénticas. Si dice que no son comparables, el motivo va primero (otras capas, otra versión…). Si alguna pasada se separa, nombra la vuelta: se abren las dos conversaciones de esa pasada en trabajo/<id>-semilla-<s>/.gestor/programator/ y se mira qué cambió antes de comparar modelos. La excepción declarada es una pasada cortada por el tiempo máximo, que depende del reloj y sale marcada.
 
 Paso 6: el registro de modelos. Con todas las rúbricas de una tanda puntuadas:
 
 portable\programator.exe --registro-anotar evaluacion\banco\resultados\<tanda>
 
-Tiene que decir «✅ Anotado en …registro-de-modelos.toml», con el modelo, la tarjeta y las notas de las tres familias, que tienen que coincidir con las del informe.md de la tanda. Repetir la orden tiene que decir que sustituye a la entrada anterior y que ninguna cifra cambia. Con una tanda anterior al 12/11/2026 tiene que negarse, porque no guarda la tarjeta.
+Tiene que decir «Anotado en …registro-de-modelos.toml», con el modelo, la tarjeta y las notas de las tres familias, que tienen que coincidir con las del informe.md de la tanda. Repetir la orden tiene que decir que sustituye a la entrada anterior y que ninguna cifra cambia. Con una tanda anterior al 12/11/2026 tiene que negarse, porque no guarda la tarjeta.
 
 Después se arranca Programator sobre una carpeta de prueba y se abre .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md. La sección «En qué acierta y en qué no, medido» tiene que traer la tabla del registro, con la fecha y la tarjeta de la tanda, y no nombrar el proyecto privado en que se midió al principio. Con otro contexto en programator.toml que el de la tanda, tiene que llevar el aviso «Ojo».
 
@@ -267,11 +269,11 @@ Por qué existe. Las pruebas automáticas de la comprobación local usan un lanz
 
 Nunca en el equipo de uso diario. Se ejecuta código del modelo sin revisar. Se hace en una máquina Windows de pruebas, que se deja limpia al acabar.
 
-Paso 0: lo que hay. En la máquina de pruebas: el ejecutable, evaluacion\banco\encargos\, una tanda ya pasada con su resultados.toml, pasadas.toml y trabajo\, y un banco.toml con [comprobacion_local] descomentada (de banco.ejemplo.toml) y los nombres que pida ese Windows. Anotar qué herramientas hay: bash de Git for Windows, Python, Node, .NET, Lua, SQLite y Rust.
+Paso 0: lo que hay. En la máquina de pruebas: el ejecutable, evaluacion\banco\encargos\, una tanda ya pasada con su resultados.toml, pasadas.toml y trabajo\, y un banco.toml copiado de banco.ejemplo.toml con [comprobacion_local.nombres] descomentada y los nombres que pida ese Windows. Anotar qué herramientas hay: bash de Git for Windows, Python, Node, .NET, Lua, SQLite y Rust.
 
-Paso 1: sin la sección no ejecuta nada. Con [comprobacion_local] comentada, programator --banco-comprobar <tanda> termina sin crear comprobacion\, y las notas de oficio salen «no evaluado». Con una sección [comprobacion] de las de antes, se niega a arrancar y dice que se cambie por [comprobacion_local].
+Paso 1: apagadas no ejecuta nada. Las pruebas ocultas van encendidas por defecto: comentar o quitar [comprobacion_local] no las apaga. Se apagan con «activa = false» en [comprobacion_local] de banco.toml. Así, programator --banco-comprobar <tanda> termina sin crear comprobacion\ y sin ejecutar código del modelo. Cada encargo de código cuyas pruebas no pudieron dar nota y que trae rubrica.md deja su fichero en rubricas\, con el código entregado, para puntuarlo leyéndolo; solo los que no traen rubrica.md salen «no evaluado», con el motivo. Con una sección [comprobacion] de las de antes, se niega a arrancar y dice que se cambie por [comprobacion_local].
 
-Paso 2: la comprobación. Con [comprobacion_local] descomentada, y sin pedir autorización (ejecutar en el equipo donde corre es para lo que nació Programator):
+Paso 2: la comprobación. Quitado el «activa = false», y sin pedir autorización (ejecutar en el equipo donde corre es para lo que nació Programator):
 
 programator --banco-comprobar <tanda>
 
@@ -281,7 +283,7 @@ Paso 3: el bash de WSL se rechaza. Si la máquina tiene WSL, poner en interprete
 
 Hecha el 12/11/2026 en una máquina Windows de pruebas. Las 51 notas coinciden con las de Linux, sin rastro fuera. El paso 3 no se pudo hacer porque la máquina no tenía WSL. Lo que conviene saber para repetirla es lo siguiente.
 
-Un Windows recién instalado no trae Git, Node, .NET, Lua ni SQLite. Sin el bash de Git no empieza. Sin las demás, sus encargos salen «no evaluado». Se pueden instalar con winget, y al terminar se deja la máquina como estaba.
+Un Windows recién instalado no trae Git, Node, .NET, Lua ni SQLite. Sin el bash de Git no empieza. Sin las demás, sus encargos se quedan sin nota de las pruebas ocultas y pasan a rubricas\, para puntuarlos leyendo el código (los encargos de código del banco traen todos su rubrica.md; uno sin ella saldría «no evaluado»). Se pueden instalar con winget, y al terminar se deja la máquina como estaba.
 
 En ese Windows hacen falta python3 = "python" y "lua5.4" = "lua" en [comprobacion_local.nombres].
 
@@ -313,7 +315,7 @@ Por qué existe. Las pruebas automáticas de la revisión usan un catálogo fals
 
 En el portable de uso real, y sin pedir permisos. Quien dirige abre los dos y lee el informe. Las pruebas ocultas de las tandas se ejecutan en ese mismo equipo, el único que usa Programator, sin autorización de ninguna clase.
 
-Paso 0: lo que hay. Copiar el ejecutable nuevo al portable. En el programator.toml del portable, buzones_que_ordenan = ["claude"]; en banco/banco.toml, [comprobacion_local]. Si el programator.toml aún trae maquina_autorizada u otra clave de la máquina en [revision], Programator arranca igual y avisa de cada una. Anotar el modelo en uso y qué hay en modelos/.
+Paso 0: lo que hay. Copiar el ejecutable nuevo al portable. En el programator.toml del portable, identidades_que_ordenan = ["Agente 1"] (y el buzón del agente empieza por # Bandeja de Agente 1); en banco/banco.toml, sin «activa = false» en [comprobacion_local], para que las pruebas ocultas sigan encendidas como vienen por defecto. Si el programator.toml aún trae maquina_autorizada u otra clave de la máquina en [revision], Programator arranca igual y avisa de cada una. Anotar el modelo en uso y qué hay en modelos/.
 
 Paso 1: quien dirige abre los dos. Programator sobre la carpeta del portable y el modelo de pago sobre la misma carpeta. Le pide al de pago que mire si hay modelos mejores.
 
@@ -326,6 +328,74 @@ Paso 4: puntuar y cerrar. Un «revisión: cerrar» con rúbricas sin nota no hac
 Paso 5: la retirada. Para verla sin tocar los modelos de verdad: un .gguf falso dentro de modelos/, con una entrada de registro que no gane nada. El cierre lo anota con su motivo y lo borra.
 
 Paso 6: el informe. El de pago deja revisiones/AAAA-MM/informe.md y lo resume en su buzón. Quien dirige lo lee y no ha tenido que autorizar nada.
+
+
+Prueba L — el modelo de cada clase, la memoria y soltar el modelo (1.0.0)
+
+Por qué existe. Las pruebas automáticas de la 1.0.0 usan motores de mentira: ninguna carga dos modelos de verdad, ni mide la memoria de la tarjeta, ni suelta un llama-server real. Solo esta prueba ve la junta entera con la GPU.
+
+Paso 0: lo que hay. Dos modelos en modelos/, los dos medidos por el banco en esta tarjeta y anotados en el registro, que ganen clases distintas: la tabla «Qué modelo atiende cada clase de encargo» de COMO-ENCARGAR-A-PROGRAMATOR.md tiene que mostrar dos modelos distintos en negrita. En programator.toml, soltar_modelo = 1, para no esperar los quince minutos de «auto», y intervalo_segundos con su valor por defecto, 30 (sin la línea, o quitando la que la cambie). Anotar la memoria libre de la tarjeta antes de arrancar.
+
+Paso 1: arrancar. Programator sobre una carpeta de prueba. Programator no lanza llama-server al arrancar: el latido no dice modelo_cargado hasta el primer encargo, y lo dice en cuanto hay un motor propio cargado.
+
+Paso 2: dos encargos, dos clases. En una misma intervención, dos encargos para Programator con líneas Clase: de clases que ganen modelos distintos, y un tercero sin línea Clase:. Se tiene que ver en la terminal y en el administrador de tareas que llama-server se carga como mucho una vez por modelo, que los encargos del modelo ya cargado van primero, y que nunca hay dos llama-server a la vez.
+
+Paso 3: lo que dice cada entrega. Cada una lleva su línea Memoria: con el modelo que la atendió, sus capas y las tres cifras de memoria, separadas por puntos medios. El historial de encaje de la carpeta del agente tiene la misma línea con su hora. Comparar la memoria libre al terminar con la del administrador de tareas.
+
+Paso 4: una clase que no existe. Un encargo con Clase: inventada se atiende con el modelo por defecto y su entrega lo avisa con la lista de clases que valen.
+
+Paso 5: soltar. Sin encargos nuevos, al minuto o poco más la terminal dice que suelta el modelo, el administrador de tareas ya no muestra llama-server, la memoria de la tarjeta vuelve a la del paso 0 y el latido deja de decir modelo_cargado. Un encargo nuevo lo vuelve a cargar.
+
+Paso 6: la cola de pendientes. Con espera_de_carga_segundos = 1, en una misma intervención, dos encargos de clases con modelos distintos, uno del modelo que ya está cargado. Ese se atiende primero; el otro pide cambiar de modelo, y como la carga tarda más de un segundo, no se pierde: queda en pendientes.toml y se atiende en una vuelta posterior. El primer encargo de una pasada no sirve para esto: si su modelo aún carga, la pasada espera a la vuelta siguiente sin pasar por la cola. Volver a dejar espera_de_carga_segundos como estaba.
+
+Al terminar, devolver soltar_modelo a su valor.
+
+
+Prueba M — el trato con el agente que encarga y los avisos de la 1.0.0
+
+Por qué existe. Las pruebas automáticas componen estas líneas y estos avisos con textos de prueba; ninguna los ve en un canal de verdad, con un agente escribiendo, el vigilante del proyecto y un Python del equipo. Los pasos que atienden un encargo necesitan el motor y un modelo reales. Los pasos 1, 8 y 11 no los necesitan, y el 6 necesita una GPU que Programator pueda medir, pero no carga ningún modelo.
+
+Paso 0: lo que hay. El ejecutable recién compilado copiado sobre el portable, como en la prueba H, y una carpeta de proyecto de prueba vacía, distinta de la carpeta de instalación de Programator. En programator.toml, «[revision] identidades_que_ordenan = ["Agente 1"]».
+
+Paso 1: el vigilante. Arrancar Programator con --ruta sobre la carpeta de prueba. La consola tiene que decir «Dejado el vigilante del canal en <carpeta>\.gestor\vigilante\gestor-vigilante.exe: avisa al agente cuando Programator responde», y el fichero tiene que estar ahí (gestor-vigilante, sin extensión, en Linux). Cerrar y volver a arrancar: esa línea ya no sale, y el fichero no se ha sustituido. Si el paquete no trae el vigilante y el proyecto no tiene uno, sale en su lugar un aviso de que el agente tendrá que mirar el canal por su cuenta.
+
+Paso 2: da igual quién abre antes. Con Programator cerrado y una carpeta de prueba nueva, en la que Programator nunca ha respondido, escribir el buzón del agente, .gestor\canal\agente1.md, con «# Bandeja de Agente 1» como primera línea y debajo una intervención con su línea «Para Programator: …». Arrancar después Programator: tiene que atender ese encargo sin que nadie vuelva a tocar el canal. Repetir en el otro orden, con Programator ya en marcha antes de publicar el encargo: también se atiende.
+
+Paso 3: la respuesta despierta a quien encargó. En el buzón de Programator, .gestor\canal\programator.md, la respuesta al encargo del paso 2 lleva, tras su línea LATIDO, la línea «Para Agente 1: respuesta a <nombre del encargo>», donde el nombre es lo que iba tras los dos puntos de «Para Programator:». Con el vigilante lanzado por el agente con la identidad Agente 1 («.gestor/vigilante/gestor-vigilante --hasta-cambio --agente "Agente 1"»), la respuesta lo despierta.
+
+Paso 4: el acuse con la etiqueta propia. Publicar un encargo cuya línea encargue también a otro agente, por ejemplo «Para Agente 2: X1-A. Para Programator: PG-A cuenta las líneas». La respuesta tiene que llevar «Para Agente 1: respuesta a cuenta las líneas» y, debajo, «RECIBIDO <hora>: PG-A», con la hora de la respuesta: la etiqueta es la del propio «Para Programator:», no la X1-A del primer destinatario, y no se repite en la línea Para. Un encargo sin etiqueta se responde sin línea RECIBIDO.
+
+Paso 5: sin cabecera no se despierta a nadie. Publicar un encargo desde un buzón cuya primera línea no sea «# Bandeja de <identidad>», por ejemplo claude-1.md sin cabecera. La respuesta se publica igual, sin línea Para, y lleva al final de su texto un aviso de que la primera línea de «claude-1.md» no es «# Bandeja de <tu identidad>» y de que esa respuesta no avisará a nadie. La consola dice además que el buzón «claude-1.md» no empieza por «# Bandeja de <identidad>». Tampoco despierta a nadie un buzón llamado claude.md sin cabecera: el nombre del fichero no cuenta.
+
+Paso 6: sin modelos o sin ninguno que quepa. Con una GPU medida, apuntar «[revision] carpeta_de_modelos» a una carpeta vacía y arrancar. La lista de modelos disponibles dice que no hay ninguno, y la consola avisa de que no hay ningún modelo en esa carpeta, explica qué hacer sin descargar nada por su cuenta y dice que se ha avisado en el canal. En programator.md tiene que aparecer una intervención con «Para Agente 1: no hay ningún modelo en la carpeta de modelos». Después, devolver la carpeta de modelos y poner un «[motor] vram_maxima_mib» tan bajo que ningún modelo pueda tener tres cuartos de sus capas en la tarjeta: el aviso dice entonces que ningún modelo cabe, y la línea del canal es «Para Agente 1: ningún modelo cabe en esta tarjeta». Con «identidades_que_ordenan» vacía, la consola dice que no se avisa en el canal porque falta esa clave. Al terminar, quitar vram_maxima_mib.
+
+Paso 7: la revisión se pide en la carpeta de instalación. Desde el buzón de Agente 1 en la carpeta de prueba, que no es la de instalación, publicar «Para Programator: revisión: buscar». La respuesta tiene que decir que la revisión no se atiende y que se hace en la carpeta donde está instalado Programator, nombrándola, con que hay que cerrar Programator y abrirlo allí junto con el agente que la vaya a llevar. No busca nada. El mismo aviso del paso 6, en la carpeta de prueba, también nombra la carpeta de instalación como el sitio adonde ir.
+
+Paso 8: la versión instalada más nueva que la publicada. Con red y «[actualizaciones] comprobar» en su valor por defecto, mientras la última versión publicada en GitHub sea anterior a la instalada, el arranque tiene que decir «No hay en GitHub ninguna versión de Programator más nueva que la <instalada>», y no que ya es la más reciente. Sin red, tiene que decir que no se pudo comprobar, con la causa, y seguir arrancando igual.
+
+Paso 9: el latido vuelve a reposo al publicar. Mientras Programator atiende un encargo, .gestor\programator\latido.json dice «atendiendo». En cuanto la respuesta aparece en programator.md, tiene que decir «reposo», sin esperar al final de la vuelta. Si el encargo se aborta, se queda en «error».
+
+Paso 10: las propuestas de Python. Con un Python instalado y sin comprobador de .py en «[verificacion.comprobadores]», el arranque dice que las propuestas .py se comprueban con ese Python, compilando su sintaxis sin ejecutarlas. Encargar una propuesta .py: la respuesta tiene que decir que pasa la comprobación o que no la pasa, y no SIN COMPROBAR, y el fichero, en .gestor\candidatos\programator\, tiene que acabar en salto de línea. Después, poner en «[verificacion] python» una ruta que no exista y rearrancar: la consola avisa de que no se encontró Python, nombrando lo que probó, y de que las propuestas .py quedarán SIN COMPROBAR; y una propuesta .py nueva sale en la respuesta con «SIN COMPROBAR — no hay comprobador configurado para «.py»». Al terminar, quitar esa línea.
+
+Paso 11: las claves retiradas solo avisan. Añadir a programator.toml «buzon = "x.md"» en [agente], «umbral_lineas = 100» en una sección [poda] y «buzones_que_ordenan = ["claude.md"]» en [revision], y arrancar. Programator tiene que arrancar igual y avisar de cada una: que programator.toml la trae y ya no vale, la consecuencia y qué hacer. La de buzones_que_ordenan dice además que hay que cambiarla por identidades_que_ordenan. Al terminar, quitar las tres.
+
+
+Prueba N — reponer un modelo útil que falta (1.1.0)
+
+Por qué existe. Las pruebas automáticas de la reposición usan un Hugging Face y una descarga de mentira: ninguna baja un modelo de verdad, ni comprueba su huella contra el fichero real, ni arranca Programator con un modelo menos. Se hace con la tarjeta, en una copia del portable, para no tocar el que usas a diario.
+
+Paso 0: lo que hay. En la copia, un registro con al menos un modelo que gane alguna clase en esta tarjeta y no sea el de programator.toml, y su fichero en modelos/. Anotar su nombre, su huella del registro y el tamaño del fichero. En programator.toml, «[revision] identidades_que_ordenan = ["Agente 1"]».
+
+Paso 1: el aviso. Sacar ese fichero de modelos/ (moverlo fuera de la copia, no borrarlo) y arrancar Programator en la carpeta de instalación de la copia. La consola tiene que decir, en un bloque aparte, que falta en «modelos» un modelo que es el mejor en algo, nombrarlo con la clase que gana y explicar que lo repone «revisión: buscar». Ni un byte descargado: el arranque no sale a Hugging Face.
+
+Paso 2: el origen. Si el modelo se midió antes de la 1.1.0, su entrada del registro no tiene origen. Pedir «revisión: buscar» desde el buzón de Agente 1. Si alguna de las búsquedas de [revision] da su repositorio, el registro gana su tabla origen, con el repositorio y el fichero de Hugging Face. Si no la da y ninguna lista de candidatos guardada lo tiene, la respuesta lo pone «sin reponer» porque no se sabe de dónde salió: en ese caso, añadir a [revision] busquedas una que lo encuentre y repetir.
+
+Paso 3: la reposición. La respuesta de «revisión: buscar» empieza por el bloque «Reposición:» con «repuesto» y ese fichero, y candidatos.md, en revisiones/AAAA-MM/, tiene el apartado «Modelos del registro que faltaban». El fichero vuelve a modelos/ con el nombre del registro, no con el de Hugging Face, y con el mismo tamaño. Comprobar su SHA-256 contra la huella anotada (en Windows, «certutil -hashfile <fichero> SHA256»). En los candidatos, ese fichero sale como «ya en el registro» y no se ofrece para probar.
+
+Paso 4: sin aviso. Volver a arrancar Programator: el aviso del paso 1 ya no sale.
+
+Al terminar, borrar la copia del portable.
+
 
 
 Aviso: solo el cierre con Ctrl+C mata a llama-server

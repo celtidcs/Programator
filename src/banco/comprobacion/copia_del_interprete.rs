@@ -21,6 +21,7 @@ use crate::error::{Error, Resultado};
 use crate::ficheros::{
     borrar_si_existe, copiar_arbol, crear_carpeta, escribir, leer_si_existe, renombrar,
 };
+use crate::terminal::Terminal;
 
 /// Dónde está el bash dentro de una instalación de Git for Windows.
 const BASH_EN_GIT: [&str; 2] = ["bin", "bash.exe"];
@@ -92,7 +93,13 @@ pub fn hay_que_copiar(marca_actual: &str, marca_guardada: &str) -> bool {
 
 /// El bash de una copia hecha en `copia`.
 pub fn bash_de_la_copia(copia: &Path) -> PathBuf {
-    copia.join(BASH_EN_GIT[0]).join(BASH_EN_GIT[1])
+    bash_de_git(copia)
+}
+
+/// El lanzador `bin\bash.exe` de una instalación de Git con raíz en `raiz`. La única ruta del bash
+/// de Git: `interprete.rs` usa esta, no una copia propia.
+pub(super) fn bash_de_git(raiz: &Path) -> PathBuf {
+    raiz.join(BASH_EN_GIT[0]).join(BASH_EN_GIT[1])
 }
 
 /// Dónde está la biblioteca de msys en la instalación de Git de `raiz`.
@@ -139,13 +146,13 @@ fn copiar(raiz: &Path, copia: &Path, marca: &str) -> Resultado<()> {
 }
 
 /// Deja lista la copia de Git de `raiz` en `copia` y devuelve si hubo que copiar.
-pub fn asegurar_la_copia(raiz: &Path, copia: &Path) -> Resultado<bool> {
+pub fn asegurar_la_copia(raiz: &Path, copia: &Path, terminal: &dyn Terminal) -> Resultado<bool> {
     let marca = marca_en_disco(raiz)?;
     let guardada = leer_si_existe(&copia.join(NOMBRE_DE_LA_MARCA))?;
     if !hay_que_copiar(&marca, &guardada) {
         return Ok(false);
     }
-    println!("{}", mensajes::mensaje_copiando_el_interprete(raiz, copia));
+    terminal.decir(&mensajes::mensaje_copiando_el_interprete(raiz, copia));
     copiar(raiz, copia, &marca)?;
     Ok(true)
 }
@@ -155,6 +162,7 @@ pub fn asegurar_la_copia(raiz: &Path, copia: &Path) -> Resultado<bool> {
 pub fn con_la_copia(
     local: &ComprobacionLocal,
     carpeta_del_banco: &Path,
+    terminal: &dyn Terminal,
 ) -> Resultado<(ComprobacionLocal, Option<String>)> {
     if local.aislamiento != Aislamiento::IntegridadBaja || local.copia_del_interprete.is_empty() {
         return Ok((local.clone(), None));
@@ -171,10 +179,12 @@ pub fn con_la_copia(
         return Ok((local.clone(), Some(aviso)));
     };
     let copia = carpeta_de_la_copia(carpeta_del_banco, &local.copia_del_interprete)?;
-    asegurar_la_copia(&raiz, &copia)?;
+    asegurar_la_copia(&raiz, &copia, terminal)?;
     let mut con_copia = local.clone();
     let mut orden = interprete.clone();
-    orden[0] = bash_de_la_copia(&copia).display().to_string();
+    if let Some(programa) = orden.first_mut() {
+        *programa = bash_de_la_copia(&copia).display().to_string();
+    }
     con_copia.interprete = Some(orden);
     Ok((con_copia, None))
 }
@@ -182,6 +192,7 @@ pub fn con_la_copia(
 #[cfg(test)]
 mod pruebas {
     use super::*;
+    use crate::terminal::TerminalDeMentira;
 
     /// Un Git de mentira: lo que se copia, lo que no y la biblioteca de msys.
     fn git_de_mentira(raiz: &Path) {
@@ -248,7 +259,7 @@ mod pruebas {
         git_de_mentira(&raiz);
         let copia = dir.path().join("banco").join("interprete-aislado");
 
-        assert!(asegurar_la_copia(&raiz, &copia).unwrap());
+        assert!(asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap());
 
         for presente in [
             "bin/bash.exe",
@@ -276,17 +287,17 @@ mod pruebas {
         let raiz = dir.path().join("Git");
         git_de_mentira(&raiz);
         let copia = dir.path().join("copia");
-        asegurar_la_copia(&raiz, &copia).unwrap();
+        asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap();
         std::fs::write(copia.join("etc/profile"), "tocado").unwrap();
 
-        assert!(!asegurar_la_copia(&raiz, &copia).unwrap());
+        assert!(!asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap());
         assert_eq!(
             std::fs::read_to_string(copia.join("etc/profile")).unwrap(),
             "tocado"
         );
 
         std::fs::write(raiz.join("usr/bin/msys-2.0.dll"), "msys de otra version").unwrap();
-        assert!(asegurar_la_copia(&raiz, &copia).unwrap());
+        assert!(asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap());
         assert_eq!(
             std::fs::read_to_string(copia.join("etc/profile")).unwrap(),
             "perfil"
@@ -300,8 +311,12 @@ mod pruebas {
         git_de_mentira(&raiz);
         let banco = dir.path().join("banco");
 
-        let (local, aviso) =
-            con_la_copia(&local_aislado(&raiz.join("bin/bash.exe")), &banco).unwrap();
+        let (local, aviso) = con_la_copia(
+            &local_aislado(&raiz.join("bin/bash.exe")),
+            &banco,
+            &TerminalDeMentira::default(),
+        )
+        .unwrap();
 
         let copia = banco.join("interprete-aislado");
         assert_eq!(aviso, None);
@@ -323,7 +338,7 @@ mod pruebas {
         let local = local_aislado(&raiz.join("bin/bash.exe"));
         let relativa = Path::new("banco-de-una-prueba-de-ruta-relativa");
 
-        let resultado = con_la_copia(&local, relativa);
+        let resultado = con_la_copia(&local, relativa, &TerminalDeMentira::default());
         let quedo = relativa.exists();
         borrar_si_existe(relativa).unwrap();
 
@@ -342,7 +357,7 @@ mod pruebas {
         let raiz = dir.path().join("Git");
         git_de_mentira(&raiz);
         let copia = dir.path().join("copia");
-        asegurar_la_copia(&raiz, &copia).unwrap();
+        asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap();
         let actual = std::fs::read_to_string(copia.join(NOMBRE_DE_LA_MARCA)).unwrap();
         let sin_forma: String = actual
             .lines()
@@ -352,7 +367,7 @@ mod pruebas {
         std::fs::write(copia.join(NOMBRE_DE_LA_MARCA), sin_forma).unwrap();
         std::fs::remove_dir_all(copia.join("ucrt64")).unwrap();
 
-        assert!(asegurar_la_copia(&raiz, &copia).unwrap());
+        assert!(asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap());
         assert!(copia.join("ucrt64/bin").is_dir());
     }
 
@@ -373,7 +388,8 @@ mod pruebas {
         };
 
         for local in [sin_aislar, sin_carpeta] {
-            let (resultado, aviso) = con_la_copia(&local, &banco).unwrap();
+            let (resultado, aviso) =
+                con_la_copia(&local, &banco, &TerminalDeMentira::default()).unwrap();
             assert_eq!(resultado, local);
             assert_eq!(aviso, None);
         }
@@ -385,7 +401,8 @@ mod pruebas {
         let dir = tempfile::tempdir().unwrap();
         let local = local_aislado(Path::new("C:/msys64/usr/bin/bash.exe"));
 
-        let (resultado, aviso) = con_la_copia(&local, dir.path()).unwrap();
+        let (resultado, aviso) =
+            con_la_copia(&local, dir.path(), &TerminalDeMentira::default()).unwrap();
 
         assert_eq!(resultado, local);
         let aviso = aviso.unwrap();

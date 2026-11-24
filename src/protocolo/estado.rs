@@ -8,7 +8,8 @@
 //! `- <Agente>, <AAAA-MM-DD HH:MM>: <ruta>[, <ruta>…] — <motivo>`, y `Ninguna.` si no hay ninguna.
 
 use super::saneado::{neutralizar_marcas, sanear_saltos};
-use crate::error::{Error, Resultado};
+use crate::error::Resultado;
+use crate::ficheros::{escribir, leer};
 use std::path::Path;
 
 /// El encabezado con que se crea la sección si `estado.md` no la tiene.
@@ -88,20 +89,6 @@ pub fn retirar_reserva(ruta_estado: &Path, linea: &str) -> Resultado<()> {
     escribir(ruta_estado, &sin_la_linea(&texto, linea))
 }
 
-fn leer(ruta: &Path) -> Resultado<String> {
-    std::fs::read_to_string(ruta).map_err(|causa| Error::Lectura {
-        ruta: ruta.to_path_buf(),
-        causa,
-    })
-}
-
-fn escribir(ruta: &Path, texto: &str) -> Resultado<()> {
-    std::fs::write(ruta, texto).map_err(|causa| Error::Escritura {
-        ruta: ruta.to_path_buf(),
-        causa,
-    })
-}
-
 /// Si `linea` es el título de la sección «Reservas activas».
 pub fn es_titulo_de_la_seccion(linea: &str) -> bool {
     linea
@@ -168,7 +155,18 @@ pub fn con_la_linea(estado: &str, linea: &str) -> String {
             lineas.push(linea.to_string());
         }
     }
-    format!("{}\n", lineas.join("\n"))
+    unidas(&lineas, estado)
+}
+
+/// Las líneas unidas con el mismo fin de línea que traía `original`: un `estado.md` escrito en
+/// Windows con CRLF no se convierte a LF por anotar una reserva.
+fn unidas(lineas: &[String], original: &str) -> String {
+    let fin = if original.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    format!("{}{fin}", lineas.join(fin))
 }
 
 /// Dónde acaba la sección que empieza en `titulo`: en el siguiente encabezado o al final.
@@ -188,7 +186,7 @@ pub fn sin_la_linea(estado: &str, linea: &str) -> String {
         .filter(|l| l.trim() != linea.trim())
         .map(str::to_string)
         .collect();
-    let texto = format!("{}\n", lineas.join("\n"));
+    let texto = unidas(&lineas, estado);
     if lineas_de_la_seccion(&texto).is_empty() {
         if let Some(titulo) = lineas.iter().position(|l| es_titulo_de_la_seccion(l)) {
             let fin = fin_de_la_seccion(&lineas, titulo);
@@ -204,7 +202,7 @@ pub fn sin_la_linea(estado: &str, linea: &str) -> String {
                 }
             }
         }
-        return format!("{}\n", lineas.join("\n"));
+        return unidas(&lineas, estado);
     }
     texto
 }
@@ -230,6 +228,20 @@ mod pruebas {
             linea_de_reserva(&reserva("src/main.rs", "refactor del arranque")),
             "- Programator, 2026-11-13 15:40: src/main.rs — refactor del arranque"
         );
+    }
+
+    /// Anotar y quitar una reserva no pasa un `estado.md` con CRLF a LF.
+    #[test]
+    fn un_estado_con_crlf_conserva_sus_finales_de_linea() {
+        let estado = format!("# Estado\r\n\r\n{SECCION}\r\n\r\n{SIN_RESERVAS}\r\n");
+        let linea = "- Programator, 2026-11-13 15:40: a.rs — m";
+
+        let con = con_la_linea(&estado, linea);
+        assert!(con.contains(&format!("{linea}\r\n")), "{con:?}");
+        assert!(!con.replace("\r\n", "").contains('\n'), "{con:?}");
+
+        let sin = sin_la_linea(&con, linea);
+        assert_eq!(sin, estado);
     }
 
     #[test]
@@ -362,11 +374,11 @@ mod pruebas {
                 .any(|l| l == "- Programator, 2026-11-13 15:40: x.md — urgente"),
             "debe añadir la segunda reserva"
         );
-        let count = texto
+        let cuantas = texto
             .lines()
             .filter(|l| l.starts_with("- Programator, 2026-11-13 15:40: x.md"))
             .count();
-        assert_eq!(count, 2, "debe haber exactamente 2 reservas distintas");
+        assert_eq!(cuantas, 2, "debe haber exactamente 2 reservas distintas");
     }
 
     #[test]
@@ -379,11 +391,14 @@ mod pruebas {
         anotar_reserva(&ruta, &reserva("x.md", "urgente")).unwrap();
 
         let texto = std::fs::read_to_string(&ruta).unwrap();
-        let count = texto
+        let cuantas = texto
             .lines()
             .filter(|l| *l == "- Programator, 2026-11-13 15:40: x.md — urgente")
             .count();
-        assert_eq!(count, 1, "la deduplicación exacta debe seguir funcionando");
+        assert_eq!(
+            cuantas, 1,
+            "la deduplicación exacta debe seguir funcionando"
+        );
     }
 
     const PLANTILLA_DE_GESTOR: &str = "# Estado\n\n## Papeles\n\n- Jefe de proyecto: Claude 1.\n\n\

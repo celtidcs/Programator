@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 /// El acuse de hasta dónde se leyó cada buzón.
 const NOMBRE_DEL_REGISTRO: &str = "lectura.json";
 
+/// La cola de encargos que llegaron y todavía no tienen respuesta publicada.
+const NOMBRE_DE_LOS_PENDIENTES: &str = "pendientes.toml";
+
 /// El historial acumulativo de cómo se repartió el modelo entre GPU y CPU en cada arranque.
 const NOMBRE_DEL_ENCAJE_HISTORICO: &str = "encaje-historico.log";
 
@@ -38,6 +41,11 @@ pub fn carpeta_del_agente(carpeta: &Path, agente: &str) -> PathBuf {
 /// Dónde se guarda el registro de lectura del canal.
 pub fn ruta_del_registro(carpeta: &Path, agente: &str) -> PathBuf {
     carpeta_del_agente(carpeta, agente).join(NOMBRE_DEL_REGISTRO)
+}
+
+/// Dónde se guarda la cola de encargos pendientes, junto al registro de lectura.
+pub fn ruta_de_los_pendientes(carpeta: &Path, agente: &str) -> PathBuf {
+    carpeta_del_agente(carpeta, agente).join(NOMBRE_DE_LOS_PENDIENTES)
 }
 
 /// Dónde se guarda el latido del arnés en cada sondeo.

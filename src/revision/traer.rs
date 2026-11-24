@@ -1,5 +1,5 @@
 //! `--descargar-modelo <repositorio> <fichero>`: traer a la carpeta de modelos un candidato de la
-//! búsqueda más reciente (especificación, §4).
+//! búsqueda más reciente.
 //!
 //! Solo se baja lo que está en la lista, con la huella y el tamaño de la lista, no con lo que diga
 //! el servidor en ese momento: así un error al teclear no baja cualquier cosa.
@@ -45,25 +45,73 @@ pub fn traer(
             fichero,
         )));
     };
-    let destino = entorno.carpeta_de_modelos.join(&candidato.fichero);
-    if destino.exists() {
-        let que_hay = ficheros::huella_sha256(&destino)?;
-        if que_hay.eq_ignore_ascii_case(huella) {
-            return Ok(Traido::YaEstaba(destino));
-        }
-        return Err(Error::Revision(mensajes::ya_hay_otro(&destino)));
+    let pedido = FicheroPedido {
+        repositorio,
+        fichero_en_el_sitio: &candidato.fichero,
+        destino: &entorno.carpeta_de_modelos.join(&candidato.fichero),
+        huella,
+        tamano,
+    };
+    traer_fichero(&pedido, entorno, avisar)
+}
+
+/// Un fichero que se trae con la huella y el tamaño que ya se saben.
+pub(crate) struct FicheroPedido<'a> {
+    pub repositorio: &'a str,
+    /// Su nombre en el repositorio.
+    pub fichero_en_el_sitio: &'a str,
+    /// Dónde se deja.
+    pub destino: &'a Path,
+    pub huella: &'a str,
+    pub tamano: u64,
+}
+
+/// Si en el destino ya está el fichero con su huella, no se baja; si hay otro con ese nombre, no
+/// se pisa; si no, se descarga.
+pub(crate) fn traer_fichero(
+    pedido: &FicheroPedido,
+    entorno: &Entorno,
+    avisar: &mut dyn FnMut(Aviso),
+) -> Resultado<Traido> {
+    let destino = pedido.destino;
+    match que_hay_en(destino, pedido.huella)? {
+        EnElDestino::ElMismo => return Ok(Traido::YaEstaba(destino.to_path_buf())),
+        EnElDestino::Otro => return Err(Error::Revision(mensajes::ya_hay_otro(destino))),
+        EnElDestino::Nada => {}
     }
-    let fuente = (entorno.fuente_de)(repositorio, &candidato.fichero);
+    let fuente = (entorno.fuente_de)(pedido.repositorio, pedido.fichero_en_el_sitio);
     let descarga = Descarga {
         fuente: fuente.as_ref(),
-        destino: &destino,
-        huella_sha256: huella,
-        tamano,
+        destino,
+        huella_sha256: pedido.huella,
+        tamano: pedido.tamano,
         margen_disco: entorno.margen_disco_mib.saturating_mul(BYTES_POR_MIB),
         avisar_cada: entorno.avisar_cada_mib.saturating_mul(BYTES_POR_MIB),
         espacio_libre: entorno.espacio_libre,
     };
     descargar(&descarga, avisar).map(Traido::Descargado)
+}
+
+/// Lo que hay ya en el destino de una descarga.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnElDestino {
+    Nada,
+    /// Un fichero con la huella pedida.
+    ElMismo,
+    /// Un fichero con otra huella: no se pisa.
+    Otro,
+}
+
+pub(crate) fn que_hay_en(destino: &Path, huella: &str) -> Resultado<EnElDestino> {
+    if !destino.exists() {
+        return Ok(EnElDestino::Nada);
+    }
+    let que_hay = ficheros::huella_sha256(destino)?;
+    Ok(if que_hay.eq_ignore_ascii_case(huella) {
+        EnElDestino::ElMismo
+    } else {
+        EnElDestino::Otro
+    })
 }
 
 /// El candidato con ese repositorio y ese fichero en la lista de la revisión más reciente.
@@ -87,34 +135,14 @@ fn de_la_lista(
 mod pruebas {
     use std::cell::Cell;
 
-    use sha2::{Digest, Sha256};
-
     use super::*;
-    use crate::revision::descarga::Apertura;
     use crate::revision::lista::{EntradaDeLaLista, ListaDeCandidatos};
-
-    const CONTENIDO: &[u8] = b"un modelo";
+    use crate::revision::pruebas_comunes::{
+        sobra_espacio, FuenteFija, CONTENIDO_DE_LA_FUENTE_FIJA as CONTENIDO,
+    };
 
     fn huella(bytes: &[u8]) -> String {
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    }
-
-    struct FuenteFija;
-
-    impl Fuente for FuenteFija {
-        fn abrir(&self, _: u64) -> Resultado<Apertura> {
-            Ok(Apertura {
-                reanuda: false,
-                lector: Box::new(CONTENIDO),
-            })
-        }
-    }
-
-    fn sobra_espacio(_: &Path) -> Resultado<u64> {
-        Ok(u64::MAX)
+        crate::ficheros::huella_sha256_de_bytes(bytes)
     }
 
     /// Escribe una lista con un candidato en `revisiones/<mes>`.
@@ -228,5 +256,22 @@ mod pruebas {
         assert!(fallo.contains("m.gguf"), "{fallo}");
         assert_eq!(std::fs::read(modelos.join("m.gguf")).unwrap(), b"otra cosa");
         assert_eq!(pedidas.get(), 0);
+    }
+
+    #[test]
+    fn que_hay_en_compara_la_huella_sin_distinguir_mayusculas() {
+        let raiz = tempfile::tempdir().unwrap();
+        let destino = raiz.path().join("m.gguf");
+        assert_eq!(que_hay_en(&destino, "ab").unwrap(), EnElDestino::Nada);
+        std::fs::write(&destino, b"un modelo").unwrap();
+        let en_mayusculas = huella(b"un modelo").to_uppercase();
+        assert_eq!(
+            que_hay_en(&destino, &en_mayusculas).unwrap(),
+            EnElDestino::ElMismo
+        );
+        assert_eq!(
+            que_hay_en(&destino, &huella(b"otra cosa")).unwrap(),
+            EnElDestino::Otro
+        );
     }
 }

@@ -3,11 +3,13 @@
 
 pub mod canal;
 pub mod carpetas;
+pub mod destinatarios;
 pub mod encargo;
 pub mod estado;
 pub mod latido;
 pub mod lectura;
 pub mod poda;
+pub mod respuesta;
 pub mod saneado;
 
 pub use canal::{
@@ -19,6 +21,6 @@ pub use estado::{anotar_reserva, retirar_reserva};
 pub use latido::{DetalleEncargo, EstadoLatido, Latido};
 pub use lectura::{Delta, RegistroLectura};
 pub use poda::{
-    componer, guardar_propuesta_poda, proponer_poda_por_cierre, trocear, verificar_integridad,
-    Bloque, Clasificacion, Propuesta,
+    componer, guardar_propuesta_poda, nombre_del_buzon, proponer_poda_por_cierre, trocear,
+    verificar_integridad, Bloque, Clasificacion, Propuesta,
 };

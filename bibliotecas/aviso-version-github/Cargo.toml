@@ -1,0 +1,41 @@
+[package]
+name = "aviso-version-github"
+version = "0.2.3"
+edition = "2021"
+description = "Comprueba si hay una versión más nueva de un programa publicada en GitHub o en GitHub Enterprise Server."
+authors = ["celtidcs <261796974+celtidcs@users.noreply.github.com>"]
+readme = "README.md"
+keywords = ["github", "version", "actualizacion", "aviso"]
+categories = ["network-programming"]
+# Misma licencia que el programa del que sale: copyleft, para que lo que se construya encima
+# vuelva a todos. El texto íntegro está en LICENSE.
+license = "GPL-3.0-or-later"
+# Se usa por ruta desde los programas que la necesitan; no se sube a crates.io.
+publish = false
+
+[dependencies]
+# Lectura de los ajustes guardados y de la respuesta de la API de GitHub.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Consulta HTTPS. Solo rustls con las raíces de webpki-roots; sin gzip ni nada más.
+# ureq es MIT/Apache-2.0; rustls, Apache-2.0/MIT/ISC; webpki-roots, CDLA-Permissive-2.0.
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+
+# En Windows, la consulta lee además el proxy configurado en las opciones de internet (registro
+# HKCU, valores ProxyEnable y ProxyServer) cuando no hay variables HTTPS_PROXY y similares, que
+# siguen mandando. Lo hace ureq con la característica win-system-proxy, que solo añade winreg
+# (MIT, según https://github.com/gentoo90/winreg-rs/blob/master/Cargo.toml). Fuentes:
+# https://docs.rs/crate/ureq/3.4.2/features y https://docs.rs/crate/ureq/3.4.2/source/src/proxy.rs.
+# Las características se unen con la entrada general, así que en Linux y macOS no cambia nada.
+[target.'cfg(windows)'.dependencies]
+ureq = { version = "3.4", default-features = false, features = ["rustls", "win-system-proxy"] }
+
+# La integración de referencia de documentacion/norma-de-integracion.md. Con test = true,
+# cargo test ejecuta también sus pruebas, así que la plantilla no puede quedarse atrás.
+[[example]]
+name = "integracion_de_referencia"
+test = true
+
+[dev-dependencies]
+# La barrera del proxy lee este manifiesto como TOML real.
+toml = "1.1.4"

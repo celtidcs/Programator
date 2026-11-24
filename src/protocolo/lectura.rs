@@ -7,14 +7,13 @@
 
 use crate::error::{Error, Resultado};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 /// El error de un fichero de estado del arnés (el registro de lectura, el latido) que está en
 /// disco pero no se deja leer como JSON. Un solo sitio lo redacta para los dos.
 pub(crate) fn fichero_corrupto(ruta: &Path, causa: &serde_json::Error) -> Error {
-    Error::Configuracion(format!("{ruta:?} está corrupto: {causa}"))
+    Error::Configuracion(mensaje_fichero_corrupto(ruta, causa))
 }
 
 /// Lo que hay de nuevo en un buzón desde la última vez.
@@ -62,7 +61,7 @@ impl RegistroLectura {
             })?;
         }
         let texto = serde_json::to_string_pretty(self)
-            .map_err(|e| Error::Configuracion(format!("no se pudo serializar el registro: {e}")))?;
+            .map_err(|e| Error::Configuracion(mensaje_registro_sin_serializar(&e)))?;
         std::fs::write(ruta, texto).map_err(|causa| Error::Escritura {
             ruta: ruta.to_path_buf(),
             causa,
@@ -84,7 +83,9 @@ impl RegistroLectura {
                 if entrada.bytes_leidos <= bytes.len()
                     && huella(&bytes[..entrada.bytes_leidos]) == entrada.huella_prefijo =>
             {
-                let nuevo = &contenido[entrada.bytes_leidos..];
+                // El prefijo es el mismo que se leyó entero, así que su final cae entre dos
+                // caracteres; `get` lo comprueba en vez de suponerlo.
+                let nuevo = contenido.get(entrada.bytes_leidos..).unwrap_or_default();
                 if nuevo.is_empty() {
                     Delta::Nada
                 } else {
@@ -106,15 +107,37 @@ impl RegistroLectura {
     }
 }
 
+/// La huella que se guarda en `lectura.json`: el algoritmo delante, para poder cambiarlo.
 fn huella(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("sha256:{:x}", hasher.finalize())
+    format!("sha256:{}", crate::ficheros::huella_sha256_de_bytes(bytes))
+}
+
+/// Un fichero de estado del arnés que está en disco pero no se deja leer como JSON.
+fn mensaje_fichero_corrupto(ruta: &Path, causa: &serde_json::Error) -> String {
+    format!("«{}» está corrupto: {causa}", ruta.display())
+}
+
+/// El registro de lectura no se pudo pasar a JSON.
+fn mensaje_registro_sin_serializar(causa: &serde_json::Error) -> String {
+    format!("no se pudo serializar el registro: {causa}")
 }
 
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// La ruta, como la escribe el sistema, no con `{:?}`.
+    #[test]
+    fn el_fichero_corrupto_nombra_la_ruta_tal_cual() {
+        let ruta = Path::new("carpeta").join("latido.json");
+        let causa = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let texto = fichero_corrupto(&ruta, &causa).to_string();
+        assert!(
+            texto.contains(&format!("«{}» está corrupto", ruta.display())),
+            "{texto}"
+        );
+        assert!(!texto.contains('"'), "{texto}");
+    }
 
     #[test]
     fn un_buzon_nunca_leido_devuelve_el_contenido_completo() {
@@ -171,6 +194,9 @@ mod pruebas {
         let mut registro = RegistroLectura::default();
         registro.delta("claude.md", "contenido\n");
         registro.guardar(&ruta).unwrap();
+        // El formato en disco de la 1.0.0 guarda la huella con su prefijo.
+        let en_disco = std::fs::read_to_string(&ruta).unwrap();
+        assert!(en_disco.contains("\"sha256:"), "{en_disco}");
 
         let mut recuperado = RegistroLectura::cargar(&ruta).unwrap();
 

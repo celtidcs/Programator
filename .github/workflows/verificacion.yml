@@ -61,3 +61,8 @@ jobs:
 
       - name: Pruebas
         run: cargo test
+
+      # La norma de integración de aviso-version-github (N2.3): Programator no es un workspace,
+      # así que las pruebas de la copia se lanzan aparte, sin dejar target/ dentro de ella.
+      - name: Pruebas de la copia de aviso-version-github
+        run: cargo test --manifest-path bibliotecas/aviso-version-github/Cargo.toml --target-dir target/aviso-version-github

@@ -51,8 +51,9 @@ impl Trampa {
         let escucha = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .and_then(|escucha| escucha.local_addr().map(|dir| (escucha, dir.port())))
             .map_err(|causa| {
-                Error::Banco(format!(
-                    "no se pudo abrir el proxy trampa en 127.0.0.1: {causa}"
+                Error::Banco(crate::banco::mensajes::proxy_trampa_sin_abrir(
+                    Ipv4Addr::LOCALHOST,
+                    &causa,
                 ))
             })?;
         let (escucha, puerto) = escucha;
@@ -78,12 +79,7 @@ impl Trampa {
 
     /// Lo anotado desde la última vez que se preguntó.
     pub fn recoger(&self) -> Vec<String> {
-        match self.anotados.lock() {
-            Ok(mut anotados) => std::mem::take(&mut *anotados),
-            // Un hilo que entró en pánico con el cerrojo puesto deja la lista como estaba, que
-            // sigue siendo válida.
-            Err(envenenado) => std::mem::take(&mut *envenenado.into_inner()),
-        }
+        anotados_hasta_ahora(&self.anotados)
     }
 }
 
@@ -105,10 +101,27 @@ fn escuchar(escucha: TcpListener, anotados: &Anotados, parar: &AtomicBool) {
         }
         let Ok(conexion) = conexion else { continue };
         let destino = leer_destino(conexion).unwrap_or_else(|| DESTINO_DESCONOCIDO.to_string());
-        if let Ok(mut lista) = anotados.lock() {
-            lista.push(destino);
-        }
+        anotar(anotados, destino);
     }
+}
+
+/// Saca lo anotado y deja la lista vacía.
+fn anotados_hasta_ahora(anotados: &Anotados) -> Vec<String> {
+    match anotados.lock() {
+        Ok(mut anotados) => std::mem::take(&mut *anotados),
+        // Un hilo que entró en pánico con el cerrojo puesto deja la lista como estaba, que
+        // sigue siendo válida.
+        Err(envenenado) => std::mem::take(&mut *envenenado.into_inner()),
+    }
+}
+
+/// Anota un destino. Con el cerrojo envenenado, la lista sigue siendo válida (como en
+/// [`anotados_hasta_ahora`]): perder un intento de salir a la red ocultaría una trampa.
+fn anotar(anotados: &Anotados, destino: String) {
+    anotados
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(destino);
 }
 
 /// Lee la primera línea y cierra la conexión al soltarla.
@@ -126,6 +139,23 @@ mod pruebas {
     use super::*;
     use std::io::Write;
     use std::time::Instant;
+
+    /// Con el cerrojo envenenado, lo anotado no se pierde en silencio.
+    #[test]
+    fn un_cerrojo_envenenado_no_pierde_lo_anotado() {
+        let anotados: Anotados = Arc::new(Mutex::new(Vec::new()));
+        let otro = Arc::clone(&anotados);
+        let _ = std::thread::spawn(move || {
+            let _cerrojo = otro.lock().unwrap();
+            panic!("envenena el cerrojo");
+        })
+        .join();
+        assert!(anotados.is_poisoned());
+
+        anotar(&anotados, "pypi.org:443".to_string());
+
+        assert_eq!(anotados_hasta_ahora(&anotados), vec!["pypi.org:443"]);
+    }
 
     #[test]
     fn el_destino_sale_de_connect_y_de_una_url_absoluta() {

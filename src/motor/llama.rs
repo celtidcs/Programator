@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use super::continuidad::{Cache, Continuidad};
+use super::declaracion::{Declaracion, Parametro};
 use super::{Mensaje, Motor, Papel, Respuesta, SolicitudHerramienta};
 use crate::error::{Error, Resultado};
 
@@ -28,9 +29,9 @@ const TIEMPO_ESCRITURA_POR_DEFECTO: Duration =
     Duration::from_secs(crate::config::tiempo_escritura_motor_segundos_por_defecto());
 
 pub struct MotorLlama {
-    base_url: String,
+    url_base: String,
     modelo: String,
-    herramientas: Vec<String>,
+    herramientas: Vec<Declaracion>,
     muestreo: crate::config::Muestreo,
     agente: ureq::Agent,
     ultimo_consumo: Option<super::Consumo>,
@@ -38,9 +39,9 @@ pub struct MotorLlama {
 }
 
 impl MotorLlama {
-    pub fn nuevo(base_url: &str, modelo: &str) -> Self {
+    pub fn nuevo(url_base: &str, modelo: &str) -> Self {
         Self::con_agente(
-            base_url,
+            url_base,
             modelo,
             agente_con_tiempos(TIEMPO_LECTURA_POR_DEFECTO, TIEMPO_ESCRITURA_POR_DEFECTO),
         )
@@ -57,9 +58,9 @@ impl MotorLlama {
         self
     }
 
-    /// Declara el repertorio que el modelo puede solicitar.
-    pub fn con_herramientas(mut self, nombres: &[&str]) -> Self {
-        self.herramientas = nombres.iter().map(|n| n.to_string()).collect();
+    /// Declara el repertorio que el modelo puede solicitar, ya compuesto por quien lo conoce.
+    pub fn con_herramientas(mut self, declaraciones: Vec<Declaracion>) -> Self {
+        self.herramientas = declaraciones;
         self
     }
 
@@ -78,9 +79,9 @@ impl MotorLlama {
         self
     }
 
-    fn con_agente(base_url: &str, modelo: &str, agente: ureq::Agent) -> Self {
+    fn con_agente(url_base: &str, modelo: &str, agente: ureq::Agent) -> Self {
         Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            url_base: url_base.trim_end_matches('/').to_string(),
             modelo: modelo.to_string(),
             herramientas: Vec::new(),
             muestreo: crate::config::Muestreo::default(),
@@ -95,20 +96,54 @@ impl MotorLlama {
     /// reales. No es parte de la interfaz pública: ese tiempo no se hace configurable aquí, sino
     /// en `config.rs`, que es de otra tarea.
     #[cfg(test)]
-    fn con_tiempo_lectura(base_url: &str, modelo: &str, tiempo_lectura: Duration) -> Self {
+    fn con_tiempo_lectura(url_base: &str, modelo: &str, tiempo_lectura: Duration) -> Self {
         Self::con_agente(
-            base_url,
+            url_base,
             modelo,
             agente_con_tiempos(tiempo_lectura, TIEMPO_ESCRITURA_POR_DEFECTO),
         )
     }
 }
 
+/// El agente HTTP del motor. Los dos plazos valen para cada lectura y cada escritura del socket,
+/// como `timeout_read` y `timeout_write` de `ureq` 2. Los códigos de error no se convierten en
+/// `Err`: el cuerpo de un 400 dice por qué rechazó el motor la petición, y hay que leerlo.
 fn agente_con_tiempos(tiempo_lectura: Duration, tiempo_escritura: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_read(tiempo_lectura)
-        .timeout_write(tiempo_escritura)
+    crate::red::configuracion()
+        .timeout_per_read(Some(tiempo_lectura))
+        .timeout_per_write(Some(tiempo_escritura))
+        .http_status_as_error(false)
         .build()
+        .into()
+}
+
+/// Una herramienta en el formato `tools` de la API: propiedades con tipo y explicación, y la lista
+/// de las obligatorias.
+fn herramienta_de_la_api(declaracion: &Declaracion) -> serde_json::Value {
+    let propiedad =
+        |p: &Parametro| serde_json::json!({ "type": p.tipo, "description": p.para_que });
+    let mut propiedades = serde_json::Map::new();
+    for parametro in declaracion
+        .obligatorios
+        .iter()
+        .chain(&declaracion.opcionales)
+    {
+        propiedades.insert(parametro.nombre.to_string(), propiedad(parametro));
+    }
+    let obligatorios: Vec<&str> = declaracion.obligatorios.iter().map(|p| p.nombre).collect();
+
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": declaracion.nombre,
+            "description": declaracion.para_que,
+            "parameters": {
+                "type": "object",
+                "properties": propiedades,
+                "required": obligatorios,
+            }
+        }
+    })
 }
 
 /// Construye el cuerpo JSON de la petición. Función pura: se prueba sin red.
@@ -120,7 +155,7 @@ fn agente_con_tiempos(tiempo_lectura: Duration, tiempo_escritura: Duration) -> u
 pub fn cuerpo_peticion(
     conversacion: &[Mensaje],
     modelo: &str,
-    herramientas: &[&str],
+    herramientas: &[Declaracion],
     muestreo: &crate::config::Muestreo,
     cache: Cache,
 ) -> serde_json::Value {
@@ -129,44 +164,10 @@ pub fn cuerpo_peticion(
     // **El modelo tiene que recibir los nombres de sus argumentos.** Hasta la 0.10.0 esto mandaba
     // `{"type": "object"}` pelado: los verbos iban con nombre y sin forma, así que el modelo solo
     // podía adivinar cómo se llamaba cada argumento. El 23/09/2026 adivinó cinco veces seguidas y
-    // costó un encargo entero. La forma sale de `arnes::ficha`, que es la única declaración.
-    let declaradas: Vec<serde_json::Value> = herramientas
-        .iter()
-        .map(|nombre| {
-            let ficha = crate::arnes::ficha::buscar(nombre);
-            let mut propiedades = serde_json::Map::new();
-            let mut obligatorios: Vec<serde_json::Value> = Vec::new();
-
-            if let Some(ficha) = ficha {
-                for argumento in ficha.obligatorios {
-                    propiedades.insert(
-                        argumento.nombre.to_string(),
-                        serde_json::json!({ "type": argumento.tipo, "description": argumento.para_que }),
-                    );
-                    obligatorios.push(serde_json::json!(argumento.nombre));
-                }
-                for argumento in ficha.opcionales {
-                    propiedades.insert(
-                        argumento.nombre.to_string(),
-                        serde_json::json!({ "type": argumento.tipo, "description": argumento.para_que }),
-                    );
-                }
-            }
-
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": nombre,
-                    "description": ficha.map(|f| f.para_que).unwrap_or_default(),
-                    "parameters": {
-                        "type": "object",
-                        "properties": propiedades,
-                        "required": obligatorios,
-                    }
-                }
-            })
-        })
-        .collect();
+    // costó un encargo entero. La forma la compone el arnés desde `arnes::ficha`, que es la única
+    // declaración, y llega hecha.
+    let declaradas: Vec<serde_json::Value> =
+        herramientas.iter().map(herramienta_de_la_api).collect();
 
     serde_json::json!({
         "model": modelo,
@@ -228,9 +229,9 @@ pub fn interpretar_respuesta(json: &serde_json::Value) -> Resultado<Respuesta> {
         .and_then(|c| c.get("finish_reason"))
         .and_then(|f| f.as_str())
         == Some(FIN_POR_LIMITE);
-    let mensaje = eleccion.and_then(|c| c.get("message")).ok_or_else(|| {
-        Error::MotorSinRespuesta(format!("la respuesta no trae «choices»: {json}"))
-    })?;
+    let mensaje = eleccion
+        .and_then(|c| c.get("message"))
+        .ok_or_else(|| Error::MotorSinRespuesta(super::mensajes::respuesta_sin_choices(json)))?;
 
     if let Some(llamada) = mensaje
         .get("tool_calls")
@@ -247,13 +248,15 @@ pub fn interpretar_respuesta(json: &serde_json::Value) -> Resultado<Respuesta> {
         // puede venir rota), o la ausencia total de argumentos, que sí es legítima.
         let argumentos = match llamada.get("arguments") {
             Some(valor @ serde_json::Value::Object(_)) => valor.clone(),
-            Some(serde_json::Value::String(crudos)) => serde_json::from_str(crudos)
-                .map_err(|_| {
-                    let truncado: String = crudos.chars().take(200).collect();
-                    Error::MotorSinRespuesta(format!(
-                        "no se pudieron interpretar los argumentos de la llamada a «{nombre}»: {truncado}"
+            Some(serde_json::Value::String(crudos)) => {
+                serde_json::from_str(crudos).map_err(|_| {
+                    let truncado: String =
+                        crudos.chars().take(TOPE_ARGUMENTOS_EN_EL_ERROR).collect();
+                    Error::MotorSinRespuesta(super::mensajes::argumentos_ininterpretables(
+                        nombre, &truncado,
                     ))
-                })?,
+                })?
+            }
             _ => serde_json::json!({}),
         };
 
@@ -282,13 +285,22 @@ const FIN_POR_LIMITE: &str = "length";
 /// un 400 como cualquier otro, y el cuerpo es lo único que lo distingue.
 const SENALES_DE_CONTEXTO: &[&str] = &["context", "n_ctx", "exceed", "too long"];
 
+/// El código HTTP con que `llama-server` rechaza una petición, entre otras la que no cabe.
+const HTTP_PETICION_INCORRECTA: u16 = 400;
+
+/// Cuántos caracteres de unos argumentos rotos se citan en el error: bastan para reconocerlos
+/// sin llenar la terminal con una llamada entera.
+const TOPE_ARGUMENTOS_EN_EL_ERROR: usize = 200;
+
 /// Traduce el rechazo del motor a algo que se pueda leer sin abrir el registro.
 ///
 /// El 23/09/2026 un desbordamiento de ventana se manifestó como `status code 400` repetido en
 /// bucle. El código no decía nada y costó una tarde. El cuerpo sí lo decía.
 fn motivo_del_rechazo(estado: u16, cuerpo: &str) -> String {
     let minusculas = cuerpo.to_lowercase();
-    if estado == 400 && SENALES_DE_CONTEXTO.iter().any(|s| minusculas.contains(s)) {
+    if estado == HTTP_PETICION_INCORRECTA
+        && SENALES_DE_CONTEXTO.iter().any(|s| minusculas.contains(s))
+    {
         return format!(
             "el motor rechazó la petición porque NO CABE EN SU VENTANA DE CONTEXTO (HTTP {estado}). \
              No es una caída: es que la conversación es más larga que la ventana configurada. \
@@ -302,28 +314,37 @@ fn motivo_del_rechazo(estado: u16, cuerpo: &str) -> String {
 impl MotorLlama {
     /// Una petición al servidor, sin decidir nada sobre la caché: eso lo hace `responder`.
     fn pedir(&mut self, conversacion: &[Mensaje], cache: Cache) -> Resultado<Respuesta> {
-        let nombres: Vec<&str> = self.herramientas.iter().map(|s| s.as_str()).collect();
-        let cuerpo = cuerpo_peticion(conversacion, &self.modelo, &nombres, &self.muestreo, cache);
+        let cuerpo = cuerpo_peticion(
+            conversacion,
+            &self.modelo,
+            &self.herramientas,
+            &self.muestreo,
+            cache,
+        );
 
-        let respuesta = self
+        let mut respuesta = self
             .agente
-            .post(&format!("{}/v1/chat/completions", self.base_url))
-            .send_json(cuerpo)
-            // El rechazo por ventana llega como un 400 más, y su código no dice nada: lo que lo
-            // distingue está en el cuerpo. Traducirlo aquí es lo que evita que un desbordamiento
-            // se vea desde fuera como «el arnés ha dejado de atender», que es lo que costó una
-            // tarde el 23/09/2026.
-            .map_err(|fallo| match fallo {
-                ureq::Error::Status(estado, respuesta_error) => {
-                    let cuerpo_error = respuesta_error.into_string().unwrap_or_default();
-                    Error::MotorSinRespuesta(motivo_del_rechazo(estado, &cuerpo_error))
-                }
-                otro => Error::MotorSinRespuesta(otro.to_string()),
-            })?;
+            .post(&format!("{}{}", self.url_base, super::RUTA_CONVERSACION))
+            .send_json(&cuerpo)
+            .map_err(|fallo| Error::MotorSinRespuesta(fallo.to_string()))?;
+
+        // El rechazo por ventana llega como un 400 más, y su código no dice nada: lo que lo
+        // distingue está en el cuerpo. Traducirlo aquí es lo que evita que un desbordamiento se
+        // vea desde fuera como «el arnés ha dejado de atender», que es lo que costó una tarde el
+        // 23/09/2026.
+        let estado = respuesta.status();
+        if estado.is_client_error() || estado.is_server_error() {
+            let cuerpo_error = respuesta.body_mut().read_to_string().unwrap_or_default();
+            return Err(Error::MotorSinRespuesta(motivo_del_rechazo(
+                estado.as_u16(),
+                &cuerpo_error,
+            )));
+        }
 
         let json: serde_json::Value = respuesta
-            .into_json()
-            .map_err(|e| Error::MotorSinRespuesta(format!("respuesta ilegible: {e}")))?;
+            .body_mut()
+            .read_json()
+            .map_err(|e| Error::MotorSinRespuesta(super::mensajes::respuesta_ilegible(&e)))?;
 
         self.ultimo_consumo = super::consumo::interpretar_consumo(&json);
         interpretar_respuesta(&json)
@@ -348,7 +369,7 @@ impl Motor for MotorLlama {
     }
 
     fn comprobar_salud(&mut self) -> super::proceso::EstadoServidor {
-        super::proceso::hay_servidor_url(&self.base_url)
+        super::proceso::hay_servidor_url(&self.url_base)
     }
 }
 
@@ -356,6 +377,26 @@ impl Motor for MotorLlama {
 mod pruebas {
     use super::*;
     use crate::motor::{Mensaje, Papel};
+
+    /// Las declaraciones tal y como las compone el arnés, para probar el formato con las de verdad.
+    fn declaradas(nombres: &[&str]) -> Vec<Declaracion> {
+        nombres
+            .iter()
+            .map(|n| crate::arnes::ficha::buscar(n).unwrap().declaracion())
+            .collect()
+    }
+
+    #[test]
+    fn el_agente_del_motor_lleva_sus_plazos_por_lectura_y_deja_leer_los_errores() {
+        let lectura = Duration::from_secs(41);
+        let escritura = Duration::from_secs(7);
+        let agente = agente_con_tiempos(lectura, escritura);
+        let configuracion = agente.config();
+        assert_eq!(configuracion.timeout_per_read(), Some(lectura));
+        assert_eq!(configuracion.timeout_per_write(), Some(escritura));
+        assert!(!configuracion.http_status_as_error());
+        assert!(configuracion.proxy().is_none());
+    }
 
     #[test]
     fn el_cuerpo_traduce_los_papeles_al_formato_de_la_api() {
@@ -380,7 +421,7 @@ mod pruebas {
         let cuerpo = cuerpo_peticion(
             &conversacion,
             "devstral",
-            &["leer_fichero"],
+            &declaradas(&["leer_fichero"]),
             &crate::config::Muestreo::default(),
             Cache::EnFrio,
         );
@@ -435,7 +476,7 @@ mod pruebas {
         let cuerpo = cuerpo_peticion(
             &[],
             "devstral",
-            &["leer_fichero", "publicar"],
+            &declaradas(&["leer_fichero", "publicar"]),
             &crate::config::Muestreo::default(),
             Cache::EnFrio,
         );
@@ -454,7 +495,7 @@ mod pruebas {
         let cuerpo = cuerpo_peticion(
             &[],
             "devstral",
-            &["escribir_propuesta"],
+            &declaradas(&["escribir_propuesta"]),
             &crate::config::Muestreo::default(),
             Cache::EnFrio,
         );
@@ -489,7 +530,7 @@ mod pruebas {
         let cuerpo = cuerpo_peticion(
             &[],
             "devstral",
-            &["leer_fichero"],
+            &declaradas(&["leer_fichero"]),
             &crate::config::Muestreo::default(),
             Cache::EnFrio,
         );
@@ -513,7 +554,7 @@ mod pruebas {
         let cuerpo = cuerpo_peticion(
             &[],
             "devstral",
-            &["proponer_poda"],
+            &declaradas(&["proponer_poda"]),
             &crate::config::Muestreo::default(),
             Cache::EnFrio,
         );
@@ -617,7 +658,8 @@ mod pruebas {
         let hilo = std::thread::spawn(move || {
             let (mut conexion, _) = escucha.accept().unwrap();
             let mut buffer = [0u8; 4096];
-            let _ = conexion.read(&mut buffer);
+            let leidos = conexion.read(&mut buffer).unwrap();
+            let peticion = String::from_utf8_lossy(&buffer[..leidos]).to_string();
             let cuerpo = r#"{"choices":[{"message":{"content":"hola"}}]}"#;
             let respuesta = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -637,6 +679,7 @@ mod pruebas {
                     Err(_) => break,
                 }
             }
+            peticion
         });
 
         // El motor se suelta al terminar este bloque, antes de esperar al hilo servidor: su
@@ -655,7 +698,11 @@ mod pruebas {
                 .unwrap()
         };
 
-        hilo.join().unwrap();
+        let peticion = hilo.join().unwrap();
+        assert!(
+            peticion.starts_with("POST /v1/chat/completions HTTP/1.1"),
+            "{peticion}"
+        );
         assert!(matches!(respuesta, Respuesta::Texto(ref t) if t == "hola"));
     }
 
@@ -871,7 +918,7 @@ mod pruebas {
 
         hilo.join().unwrap();
         let mensaje = match fallo {
-            crate::error::Error::MotorSinRespuesta(msg) => msg,
+            crate::error::Error::MotorSinRespuesta(detalle) => detalle,
             otro => panic!("se esperaba MotorSinRespuesta y llegó {otro:?}"),
         };
 

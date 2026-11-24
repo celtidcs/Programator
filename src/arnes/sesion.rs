@@ -3,7 +3,7 @@
 //! motor— en un agente de verdad: antes de ella todas existían probadas por separado y
 //! ninguna se invocaba desde producción.
 //!
-//! Tres decisiones que no se repiten en cada función de aquí abajo:
+//! Cuatro decisiones que no se repiten en cada función de aquí abajo:
 //! - **El desenlace sale al canal únicamente por `Canal::publicar`.** Ninguna otra escritura al
 //!   buzón, por ningún camino: es lo que neutraliza las marcas falsas que el modelo pueda haber
 //!   colado en el texto (el nombre de una herramienta lo elige él, y acaba dentro del motivo de un
@@ -11,35 +11,46 @@
 //! - **La primera pasada nunca atiende nada.** Solo fotografía dónde está cada buzón ajeno ahora
 //!   mismo. Sobre un canal con meses de historia, atender todo lo que un día fue un encargo sería
 //!   una avalancha de respuestas a cosas ya resueltas.
-//! - **El motor se prepara como mucho una vez por pasada**, y solo si hay algo que atender: cargar
-//!   el modelo es lo caro.
+//! - **El motor se prepara una vez por grupo de encargos con el mismo modelo**, y solo si hay algo
+//!   que atender: cargar el modelo es lo caro.
+//! - **Ningún encargo se olvida.** Lo que no llega a publicarse pasa a la cola de pendientes
+//!   (`pendientes.toml`), que cada pasada atiende antes que lo nuevo.
+//!
+//! Este módulo guarda el contrato de la sesión: los ajustes, los motores, el revisor y cómo
+//! termina una pasada. Lo demás va aparte, una cosa por submódulo: la foto inicial del canal
+//! (`instantanea`), los pasos de una pasada (`pasada`), lo que hay que atender y en qué orden
+//! (`reparto`), la atención con el modelo (`atencion_del_modelo`), el cierre de cada encargo
+//! (`cierre`), los encargos que no llegan al modelo (`sin_atender`), el revisor (`revisor`), la
+//! única salida al canal (`respuesta`), las instrucciones del modelo (`instrucciones`) y los
+//! textos (`publicacion`).
 
+mod atencion_del_modelo;
+mod cierre;
+mod instantanea;
 mod instrucciones;
+mod pasada;
 #[cfg(test)]
 mod pruebas;
+#[cfg(test)]
+mod pruebas_motores;
+#[cfg(test)]
+mod pruebas_respuesta;
 mod publicacion;
+mod reparto;
+mod respuesta;
+mod revisor;
+mod sin_atender;
 
-use self::instrucciones::leer_instrucciones;
-use self::publicacion::{con_avisos, con_veredictos, construir_resumen_leido};
-use crate::arnes::ciclo::{atender_encargo, Desenlace, Limites};
-use crate::arnes::contexto::componer_contexto;
-use crate::arnes::espacio::{ruta_de_la_conversacion, ruta_del_latido, ruta_del_registro};
-use crate::arnes::herramientas::Repertorio;
-use crate::arnes::registro::MotorRegistrado;
-use crate::arnes::Ambito;
+pub use self::instantanea::{tomar_instantanea_inicial, Instantanea};
+pub use self::pasada::ejecutar_pasada_con_motores;
+pub use self::revisor::{Revisor, SinRevision};
+use crate::arnes::ciclo::Limites;
 use crate::config::Verificacion;
 use crate::error::Resultado;
-
-/// Cómo se marca el fichero del registro de una conversación: ordena por fecha al listarlos, con
-/// segundos porque dos encargos de la misma pasada pueden empezar en el mismo minuto.
-const FORMATO_DE_LA_MARCA_DE_LA_CONVERSACION: &str = "%Y%m%d-%H%M%S";
 use crate::motor::Motor;
-use crate::protocolo::encargo::Forma;
-use crate::protocolo::{
-    detectar, guardar_propuesta_poda, proponer_poda_por_cierre, retirar_reserva, Canal, Delta,
-    DetalleEncargo, Encargo, Latido, RegistroLectura, ResumenLeido,
-};
-use chrono::Local;
+use crate::motores::preparar::Procedencia;
+use crate::protocolo::Encargo;
+use crate::terminal::Terminal;
 use std::path::Path;
 
 /// Lo que se obtuvo al intentar preparar el motor de inferencia para esta pasada.
@@ -57,6 +68,8 @@ pub enum EstadoMotor {
 pub struct ResumenPasada {
     pub atendidos: usize,
     pub fallidos: usize,
+    /// Cuántos pasaron a la cola de pendientes (o siguieron en ella) en esta pasada.
+    pub pendientes: usize,
     pub avisos: Vec<String>,
 }
 
@@ -108,23 +121,34 @@ pub struct Ajustes<'a> {
     /// Si cada encargo deja escrita su conversación con el modelo (`[agente]
     /// registro_de_conversacion`).
     pub registro_de_conversacion: bool,
+    /// Tras cuántos intentos fallidos se avisa en el canal de un encargo pendiente.
+    pub intentos_por_encargo: u32,
+    /// Por dónde se cuenta en la terminal lo que pasa en la pasada. La pone `main`, que es quien
+    /// decide qué se imprime; las pruebas pasan una de mentira para ver lo que se avisa.
+    pub terminal: &'a dyn Terminal,
 }
 
 impl<'a> Ajustes<'a> {
     /// Los ajustes mínimos: los límites del ciclo, sin verificación y con las normas completas.
-    pub fn con_limites(limites: &'a Limites, verificacion: &'a Verificacion) -> Self {
+    pub fn con_limites(
+        limites: &'a Limites,
+        verificacion: &'a Verificacion,
+        terminal: &'a dyn Terminal,
+    ) -> Self {
         Self {
             limites,
             verificacion,
             preambulo: None,
             recordatorio: None,
-            contexto: 16384,
-            umbral_aviso_contexto: 70,
-            bytes_por_token: 4,
+            contexto: crate::config::CONTEXTO_POR_DEFECTO,
+            umbral_aviso_contexto: crate::config::UMBRAL_AVISO_CONTEXTO_POR_DEFECTO_PORCENTAJE,
+            bytes_por_token: crate::config::BYTES_POR_TOKEN_POR_DEFECTO,
             tope_lectura_bytes: crate::config::tope_lectura_por_defecto(),
             fichero_latido: crate::config::FICHERO_LATIDO_POR_DEFECTO,
             intervalo_segundos: crate::config::intervalo_por_defecto(),
             registro_de_conversacion: false,
+            intentos_por_encargo: crate::config::INTENTOS_POR_ENCARGO_POR_DEFECTO,
+            terminal,
         }
     }
 
@@ -136,6 +160,7 @@ impl<'a> Ajustes<'a> {
         verificacion: &'a Verificacion,
         preambulo: &'a Path,
         recordatorio: &'a Path,
+        terminal: &'a dyn Terminal,
     ) -> Self {
         Self {
             limites,
@@ -149,28 +174,90 @@ impl<'a> Ajustes<'a> {
             fichero_latido: &config.ciclo.fichero_latido,
             intervalo_segundos: config.ciclo.intervalo_segundos,
             registro_de_conversacion: config.agente.registro_de_conversacion,
+            intentos_por_encargo: config.ciclo.intentos_por_encargo,
+            terminal,
         }
     }
 }
 
-/// Quien atiende, en lugar del modelo, los encargos que no son para el modelo: los de la revisión
-/// de modelos (especificación de la revisión autónoma, §4). El modelo no los ve nunca.
-pub trait Revisor {
-    /// Si el encargo lo atiende el revisor. Solo mira el texto: no toca nada.
-    fn es_suyo(&self, texto: &str) -> bool;
-    /// Lo atiende y devuelve el cuerpo que se publica en el buzón propio.
-    fn atender(&mut self, de: &str, texto: &str) -> String;
+/// Qué modelo atiende cada encargo y cómo se prepara su motor. En producción lo decide la línea
+/// `Clase:` con el registro de modelos; en las pruebas y en el banco, un solo motor.
+pub trait Motores {
+    /// El modelo con que se atiende el encargo y, si toca, un aviso para su entrega.
+    fn modelo_para(&self, encargo: &Encargo) -> ModeloPedido;
+    /// El modelo que hay cargado ahora en el motor propio, si lo hay.
+    fn cargado(&self) -> Option<String>;
+    /// Prepara el motor con ese modelo. Con `Espera::HastaElTope`, si tiene que cargarlo espera
+    /// en el sitio hasta su tope; con `Espera::Ninguna`, devuelve `Cargando` en cuanto lo lanza.
+    fn preparar(&mut self, modelo: Option<&str>, espera: Espera) -> Resultado<Preparacion>;
+    /// Lo que la entrega cuenta de la memoria al terminar un encargo (y, si toca, el aviso de que
+    /// cupieron menos capas que las medidas). Quien lo mide lo anota también en el historial de
+    /// encaje. Sin motor propio no hay nada que contar.
+    fn tras_el_encargo(&mut self) -> Option<String> {
+        None
+    }
 }
 
-/// El revisor de quien no atiende revisiones, como el banco: todo va al modelo.
-pub struct SinRevision;
+/// El modelo pedido para un encargo. `modelo` es `None` cuando no hay elección posible (un solo
+/// motor): todos van juntos.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModeloPedido {
+    pub modelo: Option<String>,
+    /// Lo que la entrega tiene que decir sobre la elección (una clase que no existe).
+    pub aviso: Option<String>,
+    /// Si el encargo pidió una clase válida: con un servidor ajeno, la entrega dice que no se
+    /// pudo cambiar de modelo.
+    pub por_clase: bool,
+}
 
-impl Revisor for SinRevision {
-    fn es_suyo(&self, _texto: &str) -> bool {
-        false
+/// Si preparar un motor que tiene que cargar espera en el sitio o vuelve en seguida. Es un tipo
+/// propio y no un `bool`, que partiría `preparar` en dos operaciones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Espera {
+    /// Vuelve en cuanto lanza la carga, con `Cargando`: el ciclo sigue con otros encargos.
+    Ninguna,
+    /// Espera en el sitio hasta el tope de carga.
+    HastaElTope,
+}
+
+/// Cómo quedó el motor al prepararlo.
+pub enum Preparacion {
+    /// Listo para responder. Si su servidor es ajeno, no lo arrancó Programator y tiene el modelo
+    /// que tenga.
+    Listo {
+        motor: Box<dyn Motor>,
+        procedencia: Procedencia,
+    },
+    /// Cargando todavía; se vuelve en la vuelta siguiente.
+    Cargando,
+    /// Se esperó en el sitio y no terminó de cargar dentro del tope.
+    TiempoAgotado,
+    /// No hay modelo con el que trabajar (falta su fichero o no cabe en la tarjeta), con el
+    /// motivo: se sabe antes de lanzar nada, así que no se intenta.
+    SinModelo(String),
+}
+
+/// Un único motor, el que devuelve `asegurar_motor`: todos los encargos van con él.
+struct UnSoloMotor<'f> {
+    asegurar: &'f mut dyn FnMut() -> Resultado<EstadoMotor>,
+}
+
+impl Motores for UnSoloMotor<'_> {
+    fn modelo_para(&self, _encargo: &Encargo) -> ModeloPedido {
+        ModeloPedido::default()
     }
-    fn atender(&mut self, _de: &str, _texto: &str) -> String {
-        String::new()
+    fn cargado(&self) -> Option<String> {
+        None
+    }
+    fn preparar(&mut self, _modelo: Option<&str>, espera: Espera) -> Resultado<Preparacion> {
+        Ok(match (self.asegurar)()? {
+            EstadoMotor::Disponible(motor) => Preparacion::Listo {
+                motor,
+                procedencia: Procedencia::Propio,
+            },
+            EstadoMotor::Esperando if espera == Espera::HastaElTope => Preparacion::TiempoAgotado,
+            EstadoMotor::Esperando => Preparacion::Cargando,
+        })
     }
 }
 
@@ -184,16 +271,9 @@ pub fn ejecutar_pasada(
     ejecutar_pasada_con_revisor(carpeta, agente, ajustes, asegurar_motor, &mut SinRevision)
 }
 
-/// Ejecuta una pasada completa del ciclo: lee el canal, detecta encargos nuevos, los atiende y
-/// publica el resultado.
-///
-/// `asegurar_motor` se invoca **como mucho una vez**, y solo si hay algún encargo para el modelo.
-/// En producción decide si reutilizar un `llama-server` que ya esté escuchando, esperar a que uno
-/// en marcha termine de cargar, o arrancar el propio; en las pruebas basta con envolver un
-/// `MotorDoble` y devolverlo, sin tocar red ni proceso alguno.
-///
-/// Los encargos del `revisor` se atienden **después** de los del modelo: la revisión suelta el
-/// motor para pasar el banco, y así no se lo quita a un encargo que espera en la misma pasada.
+/// Igual que [`ejecutar_pasada_con_motores`], con un solo motor: el que devuelve
+/// `asegurar_motor`. En las pruebas basta con envolver un `MotorDoble` y devolverlo, sin tocar
+/// red ni proceso alguno.
 pub fn ejecutar_pasada_con_revisor(
     carpeta: &Path,
     agente: &str,
@@ -201,376 +281,8 @@ pub fn ejecutar_pasada_con_revisor(
     asegurar_motor: &mut dyn FnMut() -> Resultado<EstadoMotor>,
     revisor: &mut dyn Revisor,
 ) -> Resultado<DesenlacePasada> {
-    let canal = Canal::nuevo(carpeta, agente)?;
-    let ruta_registro = ruta_del_registro(carpeta, agente);
-    let ruta_latido = ruta_del_latido(carpeta, agente, ajustes.fichero_latido);
-    let mut registro = RegistroLectura::cargar(&ruta_registro)?;
-
-    // Decisión 2: la primera pasada no atiende nada. Se limita a fotografiar dónde está cada
-    // buzón ajeno ahora mismo, para que la próxima solo vea lo que llegue de aquí en adelante.
-    if registro.esta_vacio() {
-        for (nombre, contenido) in canal.buzones_ajenos()? {
-            registro.delta(&nombre, &contenido);
-        }
-        registro.guardar(&ruta_registro)?;
-        return Ok(DesenlacePasada::PrimeraPasada);
-    }
-
-    let buzones = canal.buzones_ajenos()?;
-    let deltas: Vec<(String, Delta)> = buzones
-        .iter()
-        .map(|(nombre, contenido)| (nombre.clone(), registro.delta(nombre, contenido)))
-        .collect();
-
-    // Decisión 3: los encargos se buscan solo en lo nuevo. Con `Delta::Nada` no hay nada que
-    // mirar, así que un encargo ya atendido no vuelve a aparecer.
-    let mut encargos = Vec::new();
-    for (nombre, delta) in &deltas {
-        if let Some(texto) = texto_del_delta(delta) {
-            encargos.extend(detectar(agente, nombre, texto));
-        }
-    }
-
-    if encargos.is_empty() {
-        registro.guardar(&ruta_registro)?;
-        return Ok(DesenlacePasada::SinEncargos);
-    }
-
-    let (de_revision, para_el_modelo): (Vec<Encargo>, Vec<Encargo>) = encargos
-        .into_iter()
-        .partition(|encargo| revisor.es_suyo(encargo.cuerpo()));
-
-    // Decisión 11: el motor se prepara una sola vez por pasada, no una por encargo, y solo si hay
-    // algún encargo para el modelo: la revisión no lo necesita.
-    let motor = if para_el_modelo.is_empty() {
-        None
-    } else {
-        match asegurar_motor() {
-            Ok(EstadoMotor::Disponible(motor)) => Some(motor),
-            Ok(EstadoMotor::Esperando) => {
-                // No se guarda el registro: los deltas de arriba solo viven en esta instancia en
-                // memoria, así que la pasada siguiente los vuelve a calcular igual y encuentra
-                // los mismos encargos. Tampoco se ha atendido aún ningún encargo de revisión.
-                return Ok(DesenlacePasada::MotorCargando);
-            }
-            Err(fallo) => {
-                Latido::en_error(
-                    Local::now(),
-                    ajustes.intervalo_segundos,
-                    None,
-                    fallo.to_string(),
-                )
-                .guardar_con_aviso(&ruta_latido);
-                return Err(fallo);
-            }
-        }
+    let mut motores = UnSoloMotor {
+        asegurar: asegurar_motor,
     };
-
-    // Rotar el historial anterior del buzón propio a su fichero histórico para que
-    // esta pasada mantenga únicamente el último latido.
-    canal.rotar_a_historico()?;
-
-    let leido = construir_resumen_leido(&buzones);
-    let pasada = Pasada {
-        carpeta,
-        agente,
-        ajustes,
-        canal: &canal,
-        deltas: &deltas,
-        leido: &leido,
-        ruta_latido: &ruta_latido,
-    };
-    let mut resumen = ResumenPasada::default();
-    let alguna_publicacion_fallo = match motor {
-        Some(mut motor) => {
-            atender_con_el_modelo(&pasada, motor.as_mut(), para_el_modelo, &mut resumen)?
-        }
-        None => false,
-    };
-    atender_con_el_revisor(&pasada, revisor, de_revision, &mut resumen);
-
-    // Decisión 5: si la publicación falla, el registro no avanza y el encargo se reintenta en el
-    // ciclo siguiente. Es preferible responder dos veces que perder un encargo, porque lo primero
-    // se ve y lo segundo no.
-    if !alguna_publicacion_fallo {
-        registro.guardar(&ruta_registro)?;
-    }
-
-    Ok(DesenlacePasada::Atendidos(resumen))
-}
-
-/// Lo que comparten los encargos de una pasada.
-struct Pasada<'a> {
-    carpeta: &'a Path,
-    agente: &'a str,
-    ajustes: &'a Ajustes<'a>,
-    canal: &'a Canal,
-    deltas: &'a [(String, Delta)],
-    leido: &'a ResumenLeido,
-    ruta_latido: &'a Path,
-}
-
-/// Atiende con el modelo los encargos de la pasada y publica cada desenlace. Devuelve si alguna
-/// publicación falló de manera que el encargo se perdería: entonces el registro no avanza.
-fn atender_con_el_modelo(
-    pasada: &Pasada,
-    motor: &mut dyn Motor,
-    encargos: Vec<Encargo>,
-    resumen: &mut ResumenPasada,
-) -> Resultado<bool> {
-    let Pasada {
-        carpeta,
-        agente,
-        ajustes,
-        canal,
-        deltas,
-        leido,
-        ruta_latido,
-    } = *pasada;
-    let normas = leer_instrucciones(
-        carpeta,
-        agente,
-        ajustes.preambulo,
-        &ajustes.verificacion.comprobadores,
-    )?;
-    // Si no hay recordatorio, o no se deja leer, el encargo va como iba: nunca se deja de atender
-    // un encargo por esto.
-    let recordatorio = ajustes
-        .recordatorio
-        .and_then(|ruta| std::fs::read_to_string(ruta).ok())
-        .unwrap_or_default();
-    let estado = std::fs::read_to_string(canal.ruta_estado()).unwrap_or_default();
-
-    let ambito = Ambito::nuevo(carpeta)?;
-    let canal_repertorio = Canal::nuevo(carpeta, agente)?;
-    let mut repertorio = Repertorio::nuevo(ambito, canal_repertorio)
-        .con_verificacion(
-            ajustes.verificacion.comprobadores.clone(),
-            std::time::Duration::from_secs(ajustes.verificacion.tiempo_maximo_segundos),
-        )
-        .con_tope_de_lectura(ajustes.tope_lectura_bytes)
-        .con_leido(leido.clone());
-
-    let mut alguna_publicacion_fallo = false;
-    let mut contenidos_buzones: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-
-    for (indice, encargo) in encargos.into_iter().enumerate() {
-        let detalle = DetalleEncargo::nuevo(&encargo.de, &encargo.texto);
-        Latido::en_atencion(Local::now(), ajustes.intervalo_segundos, detalle.clone())
-            .guardar_con_aviso(ruta_latido);
-
-        let conversacion = componer_contexto(&normas, &estado, deltas, &encargo, &recordatorio);
-        // El desbordamiento no avisa por sí solo: el motor rechaza y reintenta, y desde fuera
-        // parece que el arnés ha dejado de atender. Esto lo dice antes de que pase.
-        if let Some(aviso) = crate::arnes::contexto::aviso_de_ocupacion(
-            crate::arnes::contexto::tokens_estimados(&conversacion, ajustes.bytes_por_token),
-            ajustes.contexto,
-            ajustes.umbral_aviso_contexto,
-        ) {
-            eprintln!("{aviso}");
-            resumen.avisos.push(aviso);
-        }
-        // Fotografía previa a este encargo concreto: `repertorio` es compartido por toda la
-        // pasada, así que sin esto no se podría saber si fue ESTE encargo el que entregó algo.
-        let propuestas_antes = repertorio.propuestas().len();
-
-        let desenlace = if ajustes.registro_de_conversacion {
-            let marca = format!(
-                "{}-{}",
-                Local::now().format(FORMATO_DE_LA_MARCA_DE_LA_CONVERSACION),
-                indice + 1
-            );
-            let fichero = ruta_de_la_conversacion(carpeta, agente, &marca);
-            let mut registrado = MotorRegistrado::nuevo(&mut *motor, fichero);
-            atender_encargo(
-                &mut registrado,
-                &mut repertorio,
-                conversacion,
-                ajustes.limites,
-            )
-        } else {
-            atender_encargo(&mut *motor, &mut repertorio, conversacion, ajustes.limites)
-        };
-
-        if let Desenlace::Abortado(ref motivo) | Desenlace::FueraDePlazo(ref motivo) = desenlace {
-            Latido::en_error(
-                Local::now(),
-                ajustes.intervalo_segundos,
-                Some(detalle),
-                motivo.clone(),
-            )
-            .guardar_con_aviso(ruta_latido);
-        } else if let Desenlace::SinEntrega(_) = &desenlace {
-            eprintln!(
-                "{}",
-                publicacion::aviso_sin_entrega_en_la_terminal(&encargo.de)
-            );
-        } else if let Desenlace::SinPublicar { propuestas, .. } = &desenlace {
-            eprintln!(
-                "{} (encargo de «{}»)",
-                publicacion::aviso_sin_publicar(propuestas),
-                encargo.de
-            );
-        } else if let Desenlace::Cortado { propuestas, .. } = &desenlace {
-            eprintln!(
-                "{} (encargo de «{}»)",
-                publicacion::aviso_cortado(propuestas),
-                encargo.de
-            );
-        }
-
-        // Decisión 7: los tres desenlaces se publican, no solo el bueno. El §2.3 del protocolo
-        // exige registrar la parada: un agente que calla cuando algo le sale mal es peor que uno
-        // que falla. Si no hubo entrega con herramientas, se antepone un aviso visible.
-        let cuerpo_base = publicacion::cuerpo_base_desenlace(&desenlace);
-
-        // **El cuerpo lo redacta el modelo; el veredicto de sus propuestas, no.** Las propuestas se
-        // publican de inmediato en el buzón al entregarse (visto en uso real). Al cierre del
-        // encargo sólo se adjuntan veredictos si quedó alguno sin publicar por un fallo previo.
-        let cuerpo = con_veredictos(&cuerpo_base, repertorio.veredictos_no_publicados());
-        let mut cuerpo = con_avisos(&cuerpo, &resumen.avisos);
-
-        // Vía A: Si el encargo concluyó (con entrega o sin entrega directa), proponer la poda
-        // del buzón de origen retirando la tarea recién cerrada. Solo con un encargo bajo
-        // encabezado: la poda trocea por `---`, y un buzón del gestor de agentes, donde los encargos
-        // van en una línea `Para …`, no lo usa; el bloque sería el buzón entero, con los encargos
-        // de los demás. Con el gestor de agentes cada uno poda su propia bandeja.
-        if encargo.forma == Forma::Encabezado
-            && matches!(
-                desenlace,
-                Desenlace::Publicado(_)
-                    | Desenlace::SinEntrega(_)
-                    | Desenlace::SinPublicar { .. }
-                    | Desenlace::Cortado { .. }
-            )
-        {
-            let agente_origen = encargo.de.trim_end_matches(".md");
-            let contenido_origen = contenidos_buzones
-                .get(&encargo.de)
-                .cloned()
-                .or_else(|| std::fs::read_to_string(canal.ruta_buzon(agente_origen)).ok());
-
-            if let Some(ref texto_origen) = contenido_origen {
-                if let Some(propuesta) = proponer_poda_por_cierre(texto_origen, &encargo.texto) {
-                    if let Ok((_ruta_podado, _ruta_archivo)) =
-                        guardar_propuesta_poda(carpeta, &encargo.de, &propuesta)
-                    {
-                        // Sin reserva: se anotaría y se quitaría en este mismo cierre, porque las
-                        // reservas de un encargo se borran al terminarlo.
-                        let rel_podado = format!(".gestor/candidatos/poda/{agente_origen}.md");
-                        contenidos_buzones.insert(encargo.de.clone(), propuesta.podado);
-                        cuerpo.push_str(&format!(
-                            "\n\n---\n\n**Propuesta de poda para {agente_origen}:** He dejado una versión limpia de tu buzón en `{rel_podado}` y la tarea cerrada en `.gestor/candidatos/poda/{agente_origen}-archivo.md`. Puedes revisarla y aplicarla a tu buzón cuando gustes."
-                        ));
-                    }
-                }
-            }
-        }
-
-        let cuerpo = cuerpo.as_str();
-
-        // Decisión 6: el desenlace sale al canal únicamente por `Canal::publicar`.
-        match canal.publicar(cuerpo, leido, &marca_de_tiempo()) {
-            Ok(()) => {
-                resumen.atendidos += 1;
-                repertorio.marcar_todos_veredictos_publicados();
-            }
-            Err(fallo) => {
-                // Un fallo atendiendo un encargo no puede tumbar el proceso: se avisa por stderr
-                // y se sigue con el siguiente.
-                resumen.fallidos += 1;
-                let propuestas_de_este_encargo = repertorio.propuestas().len() - propuestas_antes;
-                if publicacion::fallo_de_cierre_pierde_el_encargo(
-                    propuestas_de_este_encargo,
-                    repertorio.veredictos_no_publicados().len(),
-                ) {
-                    eprintln!(
-                        "{}",
-                        publicacion::mensaje_fallo_publicar_desenlace(&encargo.de, &fallo)
-                    );
-                    alguna_publicacion_fallo = true;
-                } else {
-                    // Las propuestas de este encargo ya habían salido al canal al entregarse
-                    // (`Canal::publicar_entrega`, incidencia C2): lo único que no se pudo publicar
-                    // es el resumen de cierre. Reatender el encargo solo produciría una segunda
-                    // respuesta que contradice a la primera (visto en uso real), así que el
-                    // registro avanza igual que si el cierre hubiera salido bien.
-                    eprintln!(
-                        "{}",
-                        publicacion::mensaje_fallo_publicar_cierre_con_entrega_ya_registrada(
-                            &encargo.de,
-                            &fallo
-                        )
-                    );
-                }
-            }
-        }
-
-        // El encargo está cerrado, se haya publicado o no: sus reservas se quitan.
-        liberar_reservas(&canal.ruta_estado(), repertorio.tomar_reservas());
-    }
-
-    Ok(alguna_publicacion_fallo)
-}
-
-/// Quita de `estado.md` las reservas de un encargo cerrado. Si alguna no se deja quitar, se avisa
-/// y se sigue: el encargo ya está atendido.
-fn liberar_reservas(ruta_estado: &Path, lineas: Vec<String>) {
-    for linea in lineas {
-        if let Err(fallo) = retirar_reserva(ruta_estado, &linea) {
-            eprintln!(
-                "{}",
-                publicacion::mensaje_fallo_liberar_reserva(&linea, &fallo)
-            );
-        }
-    }
-}
-
-/// Atiende con el revisor sus encargos y publica lo que devuelve.
-///
-/// Si la publicación falla, el registro avanza igual: lo hecho queda en disco (en la revisión, en
-/// `probados.toml` y en la carpeta del mes), y repetir el encargo volvería a descargar y a pasar el
-/// banco, que son horas. Se avisa en la terminal.
-fn atender_con_el_revisor(
-    pasada: &Pasada,
-    revisor: &mut dyn Revisor,
-    encargos: Vec<Encargo>,
-    resumen: &mut ResumenPasada,
-) {
-    for encargo in encargos {
-        Latido::en_atencion(
-            Local::now(),
-            pasada.ajustes.intervalo_segundos,
-            DetalleEncargo::nuevo(&encargo.de, &encargo.texto),
-        )
-        .guardar_con_aviso(pasada.ruta_latido);
-        let cuerpo = revisor.atender(&encargo.de, encargo.cuerpo());
-        match pasada
-            .canal
-            .publicar(&cuerpo, pasada.leido, &marca_de_tiempo())
-        {
-            Ok(()) => resumen.atendidos += 1,
-            Err(fallo) => {
-                resumen.fallidos += 1;
-                eprintln!(
-                    "{}",
-                    publicacion::mensaje_fallo_publicar_revision(&encargo.de, &fallo)
-                );
-            }
-        }
-    }
-}
-
-/// Texto que aporta un `Delta` para buscar encargos, si aporta alguno.
-fn texto_del_delta(delta: &Delta) -> Option<&str> {
-    match delta {
-        Delta::Nada => None,
-        Delta::Incremento(texto) | Delta::Completo(texto) => Some(texto.as_str()),
-    }
-}
-
-/// La hora del latido con que se publica en el buzón, con segundos (formato del canal).
-fn marca_de_tiempo() -> String {
-    crate::protocolo::marca_del_latido()
+    ejecutar_pasada_con_motores(carpeta, agente, ajustes, &mut motores, revisor)
 }

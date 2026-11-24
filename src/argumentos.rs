@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-/// Lo que el Director ha pedido al invocar el ejecutable.
+/// Lo que el usuario ha pedido al invocar el ejecutable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Orden {
     /// Arrancar y entrar en el ciclo de trabajo, sobre la carpeta pedida si se pidió alguna.
@@ -74,9 +74,9 @@ pub fn interpretar(argumentos: &[String]) -> Orden {
         // La ayuda gana a lo que venga detrás: quien pregunta, pregunta. Pero solo si es ella
         // la que aparece primero.
         Some(argumento) => match argumento.as_str() {
-            "--ayuda" | "-h" => Orden::Ayuda,
-            "--version" => Orden::Version,
-            "--diagnostico" => match opciones_con_valor(&argumentos[1..], &[OPCION_MODELO]) {
+            OPCION_AYUDA | OPCION_AYUDA_CORTA => Orden::Ayuda,
+            OPCION_VERSION => sin_sobrantes(argumentos, 1, Orden::Version),
+            OPCION_DIAGNOSTICO => match opciones_con_valor(&argumentos[1..], &[OPCION_MODELO]) {
                 Ok(mut leidas) => Orden::Diagnostico {
                     modelo: leidas.remove(OPCION_MODELO),
                 },
@@ -84,13 +84,17 @@ pub fn interpretar(argumentos: &[String]) -> Orden {
             },
             // El valor va detrás, y tiene que parecer una carpeta: cualquier cosa que empiece por
             // «--» es otra opción, no la carpeta que alguien olvidó escribir.
-            "--ruta" => match argumentos.get(1) {
-                Some(valor) if !valor.starts_with("--") => Orden::Ejecutar {
-                    ruta: Some(valor.clone()),
-                },
-                _ => Orden::FaltaValor("--ruta".to_string()),
+            OPCION_RUTA => match argumentos.get(1) {
+                Some(valor) if !valor.starts_with(PREFIJO_DE_OPCION) => sin_sobrantes(
+                    argumentos,
+                    2,
+                    Orden::Ejecutar {
+                        ruta: Some(valor.clone()),
+                    },
+                ),
+                _ => Orden::FaltaValor(OPCION_RUTA.to_string()),
             },
-            "--banco" => match valor_tras(argumentos, 0) {
+            OPCION_BANCO => match valor_tras(argumentos, 0) {
                 Some(carpeta) => match opciones_con_valor(&argumentos[2..], &[OPCION_MODELO]) {
                     Ok(mut leidas) => Orden::Banco {
                         carpeta: carpeta.clone(),
@@ -98,24 +102,28 @@ pub fn interpretar(argumentos: &[String]) -> Orden {
                     },
                     Err(orden) => orden,
                 },
-                None => Orden::FaltaValor("--banco".to_string()),
+                None => Orden::FaltaValor(OPCION_BANCO.to_string()),
             },
-            "--banco-comprobar" => match valor_tras(argumentos, 0) {
+            OPCION_BANCO_COMPROBAR => match valor_tras(argumentos, 0) {
                 Some(tanda) => match argumentos.get(2) {
                     None => Orden::BancoComprobar {
                         tanda: tanda.clone(),
                     },
                     Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
                 },
-                None => Orden::FaltaValor("--banco-comprobar".to_string()),
+                None => Orden::FaltaValor(OPCION_BANCO_COMPROBAR.to_string()),
             },
-            "--banco-informe" => match valor_tras(argumentos, 0) {
-                Some(resultados) => Orden::BancoInforme {
-                    resultados: resultados.clone(),
-                },
-                None => Orden::FaltaValor("--banco-informe".to_string()),
+            OPCION_BANCO_INFORME => match valor_tras(argumentos, 0) {
+                Some(resultados) => sin_sobrantes(
+                    argumentos,
+                    2,
+                    Orden::BancoInforme {
+                        resultados: resultados.clone(),
+                    },
+                ),
+                None => Orden::FaltaValor(OPCION_BANCO_INFORME.to_string()),
             },
-            "--banco-comparar" => match (valor_tras(argumentos, 0), valor_tras(argumentos, 1)) {
+            OPCION_BANCO_COMPARAR => match (valor_tras(argumentos, 0), valor_tras(argumentos, 1)) {
                 (Some(tanda_a), Some(tanda_b)) => match argumentos.get(3) {
                     None => Orden::BancoComparar {
                         tanda_a: tanda_a.clone(),
@@ -123,35 +131,36 @@ pub fn interpretar(argumentos: &[String]) -> Orden {
                     },
                     Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
                 },
-                _ => Orden::FaltaValor("--banco-comparar".to_string()),
+                _ => Orden::FaltaValor(OPCION_BANCO_COMPARAR.to_string()),
             },
-            "--registro-anotar" => match valor_tras(argumentos, 0) {
+            OPCION_REGISTRO_ANOTAR => match valor_tras(argumentos, 0) {
                 Some(tanda) => match argumentos.get(2) {
                     None => Orden::RegistroAnotar {
                         tanda: tanda.clone(),
                     },
                     Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
                 },
-                None => Orden::FaltaValor("--registro-anotar".to_string()),
+                None => Orden::FaltaValor(OPCION_REGISTRO_ANOTAR.to_string()),
             },
-            "--revision-buscar" => match argumentos.get(1) {
+            OPCION_REVISION_BUSCAR => match argumentos.get(1) {
                 None => Orden::RevisionBuscar,
                 Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
             },
-            "--revision-proponer" => match argumentos.get(1) {
+            OPCION_REVISION_PROPONER => match argumentos.get(1) {
                 None => Orden::RevisionProponer,
                 Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
             },
-            "--retirar-modelo" => match valor_tras(argumentos, 0) {
+            OPCION_RETIRAR_MODELO => match valor_tras(argumentos, 0) {
                 Some(fichero) => match argumentos.get(2) {
                     None => Orden::RetirarModelo {
                         fichero: fichero.clone(),
                     },
                     Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
                 },
-                None => Orden::FaltaValor("--retirar-modelo".to_string()),
+                None => Orden::FaltaValor(OPCION_RETIRAR_MODELO.to_string()),
             },
-            "--descargar-modelo" => match (valor_tras(argumentos, 0), valor_tras(argumentos, 1)) {
+            OPCION_DESCARGAR_MODELO => match (valor_tras(argumentos, 0), valor_tras(argumentos, 1))
+            {
                 (Some(repositorio), Some(fichero)) => match argumentos.get(3) {
                     None => Orden::DescargarModelo {
                         repositorio: repositorio.clone(),
@@ -159,7 +168,7 @@ pub fn interpretar(argumentos: &[String]) -> Orden {
                     },
                     Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
                 },
-                _ => Orden::FaltaValor("--descargar-modelo".to_string()),
+                _ => Orden::FaltaValor(OPCION_DESCARGAR_MODELO.to_string()),
             },
             OPCION_LANZAR_AISLADO => match argumentos.get(1).map(String::as_str) {
                 Some(SEPARADOR_DE_LA_ORDEN) if argumentos.len() > 2 => Orden::LanzarAislado {
@@ -190,13 +199,57 @@ pub fn orden_del_ayudante(ejecutable: &str, orden: &[String]) -> Vec<String> {
 
 /// La opción que cambia el modelo solo en esta ejecución, detrás de `--banco` y de `--diagnostico`.
 /// La comprobación aparte no la admite: no carga ningún modelo.
-const OPCION_MODELO: &str = "--modelo";
+pub const OPCION_MODELO: &str = "--modelo";
+
+/// Lo que distingue una opción de un valor: una carpeta o un fichero no empiezan así.
+const PREFIJO_DE_OPCION: &str = "--";
+
+// Las opciones de la línea de órdenes, escritas una vez. Las usan el análisis, la ayuda y los
+// mensajes que enseñan a usarlas, para que renombrar una no deje textos con el nombre viejo.
+/// Muestra la ayuda.
+pub const OPCION_AYUDA: &str = "--ayuda";
+/// La forma corta de la ayuda, la de casi todas las herramientas.
+pub const OPCION_AYUDA_CORTA: &str = "-h";
+/// Escribe la versión.
+pub const OPCION_VERSION: &str = "--version";
+/// El estado de la máquina, el motor y el modelo, sin arrancar el ciclo.
+pub const OPCION_DIAGNOSTICO: &str = "--diagnostico";
+/// La carpeta de trabajo, que manda sobre la del TOML.
+pub const OPCION_RUTA: &str = "--ruta";
+/// Pasa una tanda del banco de modelos.
+pub const OPCION_BANCO: &str = "--banco";
+/// Solo las pruebas ocultas de una tanda ya pasada.
+pub const OPCION_BANCO_COMPROBAR: &str = "--banco-comprobar";
+/// Rehace el informe de una tanda.
+pub const OPCION_BANCO_INFORME: &str = "--banco-informe";
+/// Compara dos tandas guardadas.
+pub const OPCION_BANCO_COMPARAR: &str = "--banco-comparar";
+/// Anota una tanda en el registro de modelos.
+pub const OPCION_REGISTRO_ANOTAR: &str = "--registro-anotar";
+/// Busca candidatos en Hugging Face.
+pub const OPCION_REVISION_BUSCAR: &str = "--revision-buscar";
+/// Propone qué modelos se quedan y cuáles se retiran.
+pub const OPCION_REVISION_PROPONER: &str = "--revision-proponer";
+/// Retira un modelo.
+pub const OPCION_RETIRAR_MODELO: &str = "--retirar-modelo";
+/// Descarga un candidato de la última búsqueda.
+pub const OPCION_DESCARGAR_MODELO: &str = "--descargar-modelo";
+
+/// `orden`, si no queda nada desde `desde`; si queda algo, no se entiende. Una orden no ignora en
+/// silencio lo que sobra: si no, `--ruta X --banco-comprobar T` arrancaría el ciclo sobre X y se
+/// olvidaría de la comprobación.
+fn sin_sobrantes(argumentos: &[String], desde: usize, orden: Orden) -> Orden {
+    match argumentos.get(desde) {
+        Some(sobrante) => Orden::NoEntendido(sobrante.clone()),
+        None => orden,
+    }
+}
 
 /// El valor que va detrás de la opción en `posicion`, si lo hay y no es otra opción.
 fn valor_tras(argumentos: &[String], posicion: usize) -> Option<&String> {
     argumentos
         .get(posicion + 1)
-        .filter(|valor| !valor.starts_with("--"))
+        .filter(|valor| !valor.starts_with(PREFIJO_DE_OPCION))
 }
 
 /// Las opciones de `admitidas` que trae `resto`, cada una con su valor detrás, en cualquier orden.
@@ -236,19 +289,15 @@ const COLUMNA_DE_LA_DESCRIPCION: usize = 31;
 /// empujar la tabla hacia la derecha. Así el texto sigue leyéndose en una terminal estrecha.
 fn linea_de_uso(invocacion: &str, descripcion: &str) -> String {
     let sangrado = "  ";
-    let escrito = sangrado.len() + invocacion.len();
+    // La columna se mide en caracteres, no en bytes: una invocación con «ñ» o con acento
+    // ocupa en la terminal menos de lo que pesa.
+    let escrito = sangrado.chars().count() + invocacion.chars().count();
     if escrito < COLUMNA_DE_LA_DESCRIPCION {
         let relleno = COLUMNA_DE_LA_DESCRIPCION - escrito;
-        format!(
-            "{sangrado}{invocacion}{:relleno$}{descripcion}
-",
-            ""
-        )
+        format!("{sangrado}{invocacion}{:relleno$}{descripcion}\n", "")
     } else {
         format!(
-            "{sangrado}{invocacion}
-{:COLUMNA_DE_LA_DESCRIPCION$}{descripcion}
-",
+            "{sangrado}{invocacion}\n{:COLUMNA_DE_LA_DESCRIPCION$}{descripcion}\n",
             ""
         )
     }
@@ -263,55 +312,55 @@ pub fn texto_de_ayuda(version: &str) -> String {
             "Arranca y entra en el ciclo de trabajo.",
         ),
         (
-            format!("{programa} --ruta <carpeta>"),
+            format!("{programa} {OPCION_RUTA} <carpeta>"),
             "Arranca sobre esa carpeta, sin abrir el diálogo.",
         ),
         (
-            format!("{programa} --ayuda"),
+            format!("{programa} {OPCION_AYUDA}"),
             "Muestra esta ayuda y termina.",
         ),
         (
-            format!("{programa} --version"),
+            format!("{programa} {OPCION_VERSION}"),
             "Escribe la versión y termina.",
         ),
         (
-            format!("{programa} --diagnostico [{OPCION_MODELO} <fichero>]"),
+            format!("{programa} {OPCION_DIAGNOSTICO} [{OPCION_MODELO} <fichero>]"),
             "Escribe el estado de la máquina, el motor y el modelo.",
         ),
         (
-            format!("{programa} --banco <carpeta> [{OPCION_MODELO} <fichero>]"),
+            format!("{programa} {OPCION_BANCO} <carpeta> [{OPCION_MODELO} <fichero>]"),
             "Pasa al modelo una tanda del banco de modelos.",
         ),
         (
-            format!("{programa} --banco-comprobar <tanda>"),
+            format!("{programa} {OPCION_BANCO_COMPROBAR} <tanda>"),
             "Hace solo las pruebas ocultas de una tanda ya pasada.",
         ),
         (
-            format!("{programa} --banco-informe <resultados.toml>"),
+            format!("{programa} {OPCION_BANCO_INFORME} <resultados.toml>"),
             "Rehace el informe de una tanda con las rúbricas puntuadas.",
         ),
         (
-            format!("{programa} --banco-comparar <tanda-a> <tanda-b>"),
+            format!("{programa} {OPCION_BANCO_COMPARAR} <tanda-a> <tanda-b>"),
             "Dice si dos tandas guardadas son repetición una de otra.",
         ),
         (
-            format!("{programa} --registro-anotar <tanda>"),
+            format!("{programa} {OPCION_REGISTRO_ANOTAR} <tanda>"),
             "Anota en el registro de modelos lo que midió una tanda terminada.",
         ),
         (
-            format!("{programa} --revision-buscar"),
+            format!("{programa} {OPCION_REVISION_BUSCAR}"),
             "Busca en Hugging Face modelos que quepan en la tarjeta.",
         ),
         (
-            format!("{programa} --descargar-modelo <repositorio> <fichero>"),
+            format!("{programa} {OPCION_DESCARGAR_MODELO} <repositorio> <fichero>"),
             "Descarga un candidato de la última búsqueda y comprueba su huella.",
         ),
         (
-            format!("{programa} --revision-proponer"),
+            format!("{programa} {OPCION_REVISION_PROPONER}"),
             "Propone qué modelos se quedan y cuáles se retiran, según el registro.",
         ),
         (
-            format!("{programa} --retirar-modelo <fichero>"),
+            format!("{programa} {OPCION_RETIRAR_MODELO} <fichero>"),
             "Anota la retirada en el registro y borra el fichero del modelo.",
         ),
     ]
@@ -324,19 +373,19 @@ pub fn texto_de_ayuda(version: &str) -> String {
 
 USO
 {uso}
-  «--ruta» manda sobre «[carpeta] ruta» del TOML, y «--diagnostico» termina
+  «{OPCION_RUTA}» manda sobre «[carpeta] ruta» del TOML, y «{OPCION_DIAGNOSTICO}» termina
   sin arrancar el ciclo.
-  «--banco» lee el banco.toml de esa carpeta. Ejecuta en este equipo las pruebas
+  «{OPCION_BANCO}» lee el banco.toml de esa carpeta. Ejecuta en este equipo las pruebas
   ocultas, salvo que [comprobacion_local] diga «activa = false». Si fallan las
-  pruebas, «--banco-comprobar» termina la tanda con lo que dejó en «pasadas.toml», sin
+  pruebas, «{OPCION_BANCO_COMPROBAR}» termina la tanda con lo que dejó en «pasadas.toml», sin
   volver a cargar el modelo.
   «{OPCION_MODELO}» prueba otro fichero GGUF en lugar de «[motor] modelo», solo en esa
   ejecución y sin tocar el TOML; se resuelve igual que el del TOML.
   La revisión mensual va por pasos: buscar, descargar, pasar el banco, proponer y
   retirar. Se configura en «[revision]» y deja lo suyo en «revisiones/AAAA-MM/».
   También se puede pedir por el canal, con «revisión: buscar», «revisión: probar» y
-  «revisión: cerrar»: la atiende el arnés, no el modelo, y solo de los buzones de
-  «[revision] buzones_que_ordenan». El procedimiento está en
+  «revisión: cerrar»: la atiende el arnés, no el modelo, y solo de las identidades de
+  «[revision] identidades_que_ordenan». El procedimiento está en
   «plantillas/revision-mensual.md».
 
 CONFIGURACIÓN
@@ -355,13 +404,78 @@ DÓNDE MIRAR
 mod pruebas {
     use super::*;
 
-    fn args(v: &[&str]) -> Vec<String> {
+    fn argumentos(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Lo que sobra detrás de estas órdenes no se ignora en silencio.
+    #[test]
+    fn lo_que_sobra_tras_una_orden_completa_no_se_entiende() {
+        for (orden, sobrante) in [
+            (vec![OPCION_VERSION, "extra"], "extra"),
+            (
+                vec![OPCION_RUTA, "carpeta", OPCION_BANCO_COMPROBAR],
+                OPCION_BANCO_COMPROBAR,
+            ),
+            (vec![OPCION_BANCO_INFORME, "res.json", "otro"], "otro"),
+        ] {
+            assert_eq!(
+                interpretar(&argumentos(&orden)),
+                Orden::NoEntendido(sobrante.to_string()),
+                "{orden:?}"
+            );
+        }
+        assert_eq!(interpretar(&argumentos(&[OPCION_VERSION])), Orden::Version);
+    }
+
+    /// La columna se mide en caracteres: en bytes, una invocación con acentos quedaría corta.
+    #[test]
+    fn la_columna_de_la_ayuda_se_mide_en_caracteres() {
+        let linea = linea_de_uso("año", "x");
+        assert_eq!(
+            linea.find('x').map(|i| linea[..i].chars().count()),
+            Some(COLUMNA_DE_LA_DESCRIPCION)
+        );
+    }
+
+    /// Cada opción se escribe una vez. Las que se dan solas se reconocen, y
+    /// todas salen en la ayuda tal como se reconocen.
+    #[test]
+    fn cada_opcion_se_reconoce_y_sale_en_la_ayuda() {
+        let ayuda = texto_de_ayuda("0.0.0");
+        for opcion in [
+            OPCION_AYUDA,
+            OPCION_VERSION,
+            OPCION_DIAGNOSTICO,
+            OPCION_RUTA,
+            OPCION_BANCO,
+            OPCION_BANCO_COMPROBAR,
+            OPCION_BANCO_INFORME,
+            OPCION_BANCO_COMPARAR,
+            OPCION_REGISTRO_ANOTAR,
+            OPCION_REVISION_BUSCAR,
+            OPCION_REVISION_PROPONER,
+            OPCION_RETIRAR_MODELO,
+            OPCION_DESCARGAR_MODELO,
+            OPCION_MODELO,
+        ] {
+            assert!(ayuda.contains(opcion), "{opcion} no sale en la ayuda");
+            if opcion != OPCION_MODELO {
+                assert!(
+                    !matches!(interpretar(&argumentos(&[opcion])), Orden::NoEntendido(_)),
+                    "{opcion} no se reconoce"
+                );
+            }
+        }
+        assert_eq!(
+            interpretar(&argumentos(&[OPCION_AYUDA_CORTA])),
+            Orden::Ayuda
+        );
     }
 
     #[test]
     fn la_orden_del_ayudante_se_reconoce_tal_cual_se_compone() {
-        let orden = args(&["bash", "-c", "cargo test -- --nocapture"]);
+        let orden = argumentos(&["bash", "-c", "cargo test -- --nocapture"]);
 
         let compuesta = orden_del_ayudante("C:/p/programator.exe", &orden);
 
@@ -372,9 +486,12 @@ mod pruebas {
     #[test]
     fn el_ayudante_sin_separador_o_sin_orden_no_se_lanza() {
         let falta = Orden::FaltaValor("--lanzar-aislado".to_string());
-        assert_eq!(interpretar(&args(&["--lanzar-aislado"])), falta);
-        assert_eq!(interpretar(&args(&["--lanzar-aislado", "--"])), falta);
-        assert_eq!(interpretar(&args(&["--lanzar-aislado", "bash"])), falta);
+        assert_eq!(interpretar(&argumentos(&["--lanzar-aislado"])), falta);
+        assert_eq!(interpretar(&argumentos(&["--lanzar-aislado", "--"])), falta);
+        assert_eq!(
+            interpretar(&argumentos(&["--lanzar-aislado", "bash"])),
+            falta
+        );
     }
 
     #[test]
@@ -384,13 +501,16 @@ mod pruebas {
 
     #[test]
     fn sin_argumentos_se_ejecuta_el_ciclo() {
-        assert_eq!(interpretar(&args(&[])), Orden::Ejecutar { ruta: None });
+        assert_eq!(
+            interpretar(&argumentos(&[])),
+            Orden::Ejecutar { ruta: None }
+        );
     }
 
     #[test]
     fn la_ruta_se_recoge_con_su_valor() {
         assert_eq!(
-            interpretar(&args(&["--ruta", "C:/proyectos/mi-proyecto"])),
+            interpretar(&argumentos(&["--ruta", "C:/proyectos/mi-proyecto"])),
             Orden::Ejecutar {
                 ruta: Some("C:/proyectos/mi-proyecto".to_string())
             }
@@ -402,7 +522,7 @@ mod pruebas {
         // Arrancar un proceso desatendido sobre una carpeta que no se sabe cuál es sería peor que
         // no arrancar.
         assert_eq!(
-            interpretar(&args(&["--ruta"])),
+            interpretar(&argumentos(&["--ruta"])),
             Orden::FaltaValor("--ruta".to_string())
         );
     }
@@ -411,8 +531,26 @@ mod pruebas {
     fn una_ruta_seguida_de_otra_orden_tampoco_arranca() {
         // «--ruta --version» es casi seguro un dedo que se saltó la carpeta.
         assert_eq!(
-            interpretar(&args(&["--ruta", "--version"])),
+            interpretar(&argumentos(&["--ruta", "--version"])),
             Orden::FaltaValor("--ruta".to_string())
+        );
+    }
+
+    /// Solo «--» anuncia otra opción: una carpeta que empiece por un guion es un valor válido.
+    #[test]
+    fn un_valor_que_empieza_por_un_solo_guion_es_un_valor() {
+        assert_eq!(
+            interpretar(&argumentos(&["--ruta", "-borrador"])),
+            Orden::Ejecutar {
+                ruta: Some("-borrador".to_string())
+            }
+        );
+        assert_eq!(
+            interpretar(&argumentos(&["--banco", "-banco"])),
+            Orden::Banco {
+                carpeta: "-banco".to_string(),
+                modelo: None,
+            }
         );
     }
 
@@ -424,15 +562,15 @@ mod pruebas {
 
     #[test]
     fn las_dos_formas_de_pedir_ayuda_valen() {
-        assert_eq!(interpretar(&args(&["--ayuda"])), Orden::Ayuda);
-        assert_eq!(interpretar(&args(&["-h"])), Orden::Ayuda);
+        assert_eq!(interpretar(&argumentos(&["--ayuda"])), Orden::Ayuda);
+        assert_eq!(interpretar(&argumentos(&["-h"])), Orden::Ayuda);
     }
 
     #[test]
     fn se_reconocen_version_y_diagnostico() {
-        assert_eq!(interpretar(&args(&["--version"])), Orden::Version);
+        assert_eq!(interpretar(&argumentos(&["--version"])), Orden::Version);
         assert_eq!(
-            interpretar(&args(&["--diagnostico"])),
+            interpretar(&argumentos(&["--diagnostico"])),
             Orden::Diagnostico { modelo: None }
         );
     }
@@ -442,7 +580,7 @@ mod pruebas {
         // Arrancar un proceso desatendido porque no se entendió lo que se pedía es la peor
         // respuesta posible: se dice qué no se entendió y se termina.
         assert_eq!(
-            interpretar(&args(&["--actualizar-motor"])),
+            interpretar(&argumentos(&["--actualizar-motor"])),
             Orden::NoEntendido("--actualizar-motor".to_string())
         );
     }
@@ -450,7 +588,7 @@ mod pruebas {
     #[test]
     fn el_primer_argumento_que_no_se_entiende_es_el_que_se_nombra() {
         assert_eq!(
-            interpretar(&args(&["--nada", "--ayuda"])),
+            interpretar(&argumentos(&["--nada", "--ayuda"])),
             Orden::NoEntendido("--nada".to_string())
         );
     }
@@ -458,13 +596,16 @@ mod pruebas {
     #[test]
     fn la_ayuda_gana_a_lo_que_venga_detras() {
         // Pedir ayuda y otra cosa a la vez no es ambiguo: quien pregunta, pregunta.
-        assert_eq!(interpretar(&args(&["--ayuda", "--version"])), Orden::Ayuda);
+        assert_eq!(
+            interpretar(&argumentos(&["--ayuda", "--version"])),
+            Orden::Ayuda
+        );
     }
 
     #[test]
     fn el_banco_se_recoge_con_su_carpeta() {
         assert_eq!(
-            interpretar(&args(&["--banco", "evaluacion/banco"])),
+            interpretar(&argumentos(&["--banco", "evaluacion/banco"])),
             Orden::Banco {
                 carpeta: "evaluacion/banco".to_string(),
                 modelo: None,
@@ -478,11 +619,16 @@ mod pruebas {
         // ahí no se autoriza. Una orden de antes con la opción no se toma por otra cosa.
         let opcion = "--maquina-autorizada".to_string();
         assert_eq!(
-            interpretar(&args(&["--banco", "b", "--maquina-autorizada", "local"])),
+            interpretar(&argumentos(&[
+                "--banco",
+                "b",
+                "--maquina-autorizada",
+                "local"
+            ])),
             Orden::NoEntendido(opcion.clone())
         );
         assert_eq!(
-            interpretar(&args(&[
+            interpretar(&argumentos(&[
                 "--banco-comprobar",
                 "t",
                 "--maquina-autorizada",
@@ -496,11 +642,11 @@ mod pruebas {
     #[test]
     fn al_banco_le_falta_la_carpeta() {
         assert_eq!(
-            interpretar(&args(&["--banco"])),
+            interpretar(&argumentos(&["--banco"])),
             Orden::FaltaValor("--banco".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--banco", "--modelo", "x.gguf"])),
+            interpretar(&argumentos(&["--banco", "--modelo", "x.gguf"])),
             Orden::FaltaValor("--banco".to_string())
         );
     }
@@ -508,20 +654,21 @@ mod pruebas {
     #[test]
     fn las_opciones_con_valor_valen_en_cualquier_orden_y_una_sola_vez() {
         let admitidas = ["--a", "--b"];
-        let leidas = opciones_con_valor(&args(&["--b", "2", "--a", "1"]), &admitidas).unwrap();
+        let leidas =
+            opciones_con_valor(&argumentos(&["--b", "2", "--a", "1"]), &admitidas).unwrap();
         assert_eq!(leidas["--a"], "1");
         assert_eq!(leidas["--b"], "2");
         assert!(opciones_con_valor(&[], &admitidas).unwrap().is_empty());
         assert_eq!(
-            opciones_con_valor(&args(&["--a", "1", "--a", "3"]), &admitidas),
+            opciones_con_valor(&argumentos(&["--a", "1", "--a", "3"]), &admitidas),
             Err(Orden::NoEntendido("--a".to_string()))
         );
         assert_eq!(
-            opciones_con_valor(&args(&["--a", "--b", "2"]), &admitidas),
+            opciones_con_valor(&argumentos(&["--a", "--b", "2"]), &admitidas),
             Err(Orden::FaltaValor("--a".to_string()))
         );
         assert_eq!(
-            opciones_con_valor(&args(&["--c", "1"]), &admitidas),
+            opciones_con_valor(&argumentos(&["--c", "1"]), &admitidas),
             Err(Orden::NoEntendido("--c".to_string()))
         );
     }
@@ -529,14 +676,14 @@ mod pruebas {
     #[test]
     fn el_banco_y_el_diagnostico_recogen_el_modelo() {
         assert_eq!(
-            interpretar(&args(&["--banco", "b", "--modelo", "otro.gguf"])),
+            interpretar(&argumentos(&["--banco", "b", "--modelo", "otro.gguf"])),
             Orden::Banco {
                 carpeta: "b".to_string(),
                 modelo: Some("otro.gguf".to_string()),
             }
         );
         assert_eq!(
-            interpretar(&args(&["--diagnostico", "--modelo", "otro.gguf"])),
+            interpretar(&argumentos(&["--diagnostico", "--modelo", "otro.gguf"])),
             Orden::Diagnostico {
                 modelo: Some("otro.gguf".to_string())
             }
@@ -546,20 +693,25 @@ mod pruebas {
     #[test]
     fn el_modelo_sin_valor_o_algo_sobrante_no_pasa() {
         assert_eq!(
-            interpretar(&args(&["--banco", "b", "--modelo"])),
+            interpretar(&argumentos(&["--banco", "b", "--modelo"])),
             Orden::FaltaValor("--modelo".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--diagnostico", "--modelo"])),
+            interpretar(&argumentos(&["--diagnostico", "--modelo"])),
             Orden::FaltaValor("--modelo".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--diagnostico", "otra"])),
+            interpretar(&argumentos(&["--diagnostico", "otra"])),
             Orden::NoEntendido("otra".to_string())
         );
         // La comprobación aparte no carga el modelo, así que no lo admite.
         assert_eq!(
-            interpretar(&args(&["--banco-comprobar", "t", "--modelo", "x.gguf"])),
+            interpretar(&argumentos(&[
+                "--banco-comprobar",
+                "t",
+                "--modelo",
+                "x.gguf"
+            ])),
             Orden::NoEntendido("--modelo".to_string())
         );
     }
@@ -577,11 +729,11 @@ mod pruebas {
     #[test]
     fn una_opcion_mal_escrita_o_algo_sobrante_no_pasa_el_banco() {
         assert_eq!(
-            interpretar(&args(&["--banco", "b", "--maquina", "VM"])),
+            interpretar(&argumentos(&["--banco", "b", "--maquina", "VM"])),
             Orden::NoEntendido("--maquina".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--banco", "b", "--modelo", "x.gguf", "otra"])),
+            interpretar(&argumentos(&["--banco", "b", "--modelo", "x.gguf", "otra"])),
             Orden::NoEntendido("otra".to_string())
         );
     }
@@ -589,17 +741,17 @@ mod pruebas {
     #[test]
     fn la_comprobacion_aparte_se_recoge_con_su_tanda() {
         assert_eq!(
-            interpretar(&args(&["--banco-comprobar", "b/resultados/t1"])),
+            interpretar(&argumentos(&["--banco-comprobar", "b/resultados/t1"])),
             Orden::BancoComprobar {
                 tanda: "b/resultados/t1".to_string(),
             }
         );
         assert_eq!(
-            interpretar(&args(&["--banco-comprobar"])),
+            interpretar(&argumentos(&["--banco-comprobar"])),
             Orden::FaltaValor("--banco-comprobar".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--banco-comprobar", "t", "--maquina", "VM"])),
+            interpretar(&argumentos(&["--banco-comprobar", "t", "--maquina", "VM"])),
             Orden::NoEntendido("--maquina".to_string())
         );
     }
@@ -607,13 +759,13 @@ mod pruebas {
     #[test]
     fn el_informe_del_banco_se_recoge_y_pide_su_fichero() {
         assert_eq!(
-            interpretar(&args(&["--banco-informe", "r/resultados.toml"])),
+            interpretar(&argumentos(&["--banco-informe", "r/resultados.toml"])),
             Orden::BancoInforme {
                 resultados: "r/resultados.toml".to_string()
             }
         );
         assert_eq!(
-            interpretar(&args(&["--banco-informe"])),
+            interpretar(&argumentos(&["--banco-informe"])),
             Orden::FaltaValor("--banco-informe".to_string())
         );
     }
@@ -621,17 +773,17 @@ mod pruebas {
     #[test]
     fn anotar_en_el_registro_pide_la_tanda_y_no_admite_nada_detras() {
         assert_eq!(
-            interpretar(&args(&["--registro-anotar", "r/a"])),
+            interpretar(&argumentos(&["--registro-anotar", "r/a"])),
             Orden::RegistroAnotar {
                 tanda: "r/a".to_string()
             }
         );
         assert_eq!(
-            interpretar(&args(&["--registro-anotar"])),
+            interpretar(&argumentos(&["--registro-anotar"])),
             Orden::FaltaValor("--registro-anotar".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--registro-anotar", "r/a", "r/b"])),
+            interpretar(&argumentos(&["--registro-anotar", "r/a", "r/b"])),
             Orden::NoEntendido("r/b".to_string())
         );
     }
@@ -639,11 +791,11 @@ mod pruebas {
     #[test]
     fn buscar_en_la_revision_no_lleva_valores() {
         assert_eq!(
-            interpretar(&args(&["--revision-buscar"])),
+            interpretar(&argumentos(&["--revision-buscar"])),
             Orden::RevisionBuscar
         );
         assert_eq!(
-            interpretar(&args(&["--revision-buscar", "x"])),
+            interpretar(&argumentos(&["--revision-buscar", "x"])),
             Orden::NoEntendido("x".to_string())
         );
         assert!(texto_de_ayuda("0.0.0").contains("--revision-buscar"));
@@ -652,11 +804,11 @@ mod pruebas {
     #[test]
     fn proponer_en_la_revision_no_lleva_valores() {
         assert_eq!(
-            interpretar(&args(&["--revision-proponer"])),
+            interpretar(&argumentos(&["--revision-proponer"])),
             Orden::RevisionProponer
         );
         assert_eq!(
-            interpretar(&args(&["--revision-proponer", "x"])),
+            interpretar(&argumentos(&["--revision-proponer", "x"])),
             Orden::NoEntendido("x".to_string())
         );
         assert!(texto_de_ayuda("0.0.0").contains("--revision-proponer"));
@@ -665,17 +817,17 @@ mod pruebas {
     #[test]
     fn retirar_un_modelo_pide_el_fichero_y_no_admite_nada_detras() {
         assert_eq!(
-            interpretar(&args(&["--retirar-modelo", "m.gguf"])),
+            interpretar(&argumentos(&["--retirar-modelo", "m.gguf"])),
             Orden::RetirarModelo {
                 fichero: "m.gguf".to_string()
             }
         );
         assert_eq!(
-            interpretar(&args(&["--retirar-modelo"])),
+            interpretar(&argumentos(&["--retirar-modelo"])),
             Orden::FaltaValor("--retirar-modelo".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--retirar-modelo", "m.gguf", "x"])),
+            interpretar(&argumentos(&["--retirar-modelo", "m.gguf", "x"])),
             Orden::NoEntendido("x".to_string())
         );
         assert!(texto_de_ayuda("0.0.0").contains("--retirar-modelo"));
@@ -684,18 +836,18 @@ mod pruebas {
     #[test]
     fn descargar_un_modelo_pide_el_repositorio_y_el_fichero() {
         assert_eq!(
-            interpretar(&args(&["--descargar-modelo", "a/b", "m.gguf"])),
+            interpretar(&argumentos(&["--descargar-modelo", "a/b", "m.gguf"])),
             Orden::DescargarModelo {
                 repositorio: "a/b".to_string(),
                 fichero: "m.gguf".to_string()
             }
         );
         assert_eq!(
-            interpretar(&args(&["--descargar-modelo", "a/b"])),
+            interpretar(&argumentos(&["--descargar-modelo", "a/b"])),
             Orden::FaltaValor("--descargar-modelo".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--descargar-modelo", "a/b", "m.gguf", "x"])),
+            interpretar(&argumentos(&["--descargar-modelo", "a/b", "m.gguf", "x"])),
             Orden::NoEntendido("x".to_string())
         );
         assert!(texto_de_ayuda("0.0.0").contains("--descargar-modelo"));
@@ -704,22 +856,22 @@ mod pruebas {
     #[test]
     fn comparar_tandas_pide_las_dos_y_no_admite_nada_detras() {
         assert_eq!(
-            interpretar(&args(&["--banco-comparar", "r/a", "r/b"])),
+            interpretar(&argumentos(&["--banco-comparar", "r/a", "r/b"])),
             Orden::BancoComparar {
                 tanda_a: "r/a".to_string(),
                 tanda_b: "r/b".to_string()
             }
         );
         assert_eq!(
-            interpretar(&args(&["--banco-comparar", "r/a"])),
+            interpretar(&argumentos(&["--banco-comparar", "r/a"])),
             Orden::FaltaValor("--banco-comparar".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--banco-comparar", "r/a", "--ayuda"])),
+            interpretar(&argumentos(&["--banco-comparar", "r/a", "--ayuda"])),
             Orden::FaltaValor("--banco-comparar".to_string())
         );
         assert_eq!(
-            interpretar(&args(&["--banco-comparar", "r/a", "r/b", "r/c"])),
+            interpretar(&argumentos(&["--banco-comparar", "r/a", "r/b", "r/c"])),
             Orden::NoEntendido("r/c".to_string())
         );
     }

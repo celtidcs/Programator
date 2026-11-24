@@ -183,10 +183,14 @@ mod aislado {
             }
         };
         let orden = orden_del_ayudante(&ejecutable, argumentos);
+        let Some((programa, resto)) = orden.split_first() else {
+            let motivo = "la orden del ayudante salió vacía".to_string();
+            return (DesenlaceDeOrden::NoSeLanzo(motivo), Vigilancia::default());
+        };
         let mut contencion = EnUnTrabajo::nuevo(trabajo, topes.vigilar_red_cada);
         let desenlace = ejecutar_con_tope_entorno_y_contencion(
-            &orden[0],
-            &orden[1..],
+            programa,
+            resto,
             directorio,
             tope,
             entorno,

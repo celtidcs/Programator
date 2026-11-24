@@ -1,13 +1,13 @@
 //! El ciclo de un encargo: solicitar, conceder o denegar, y parar cuando toca.
 //!
 //! Los límites no son sugerencias al modelo: son condiciones del arnés. La Regla de los Dos Intentos
-//! del §2.1 y el registro obligatorio en parada del §2.3 dejan de depender de que el modelo se
-//! acuerde de ellos.
+//! y el registro obligatorio en parada dejan de depender de que el modelo se acuerde de ellos.
 
 use super::herramientas::{Decision, Repertorio};
 use crate::motor::{Llamada, Mensaje, Motor, Papel, Respuesta, SolicitudHerramienta};
 
 mod mensajes;
+pub(crate) use mensajes::lista_entre_comillas;
 mod plazo;
 mod reintentos;
 mod repeticiones;
@@ -56,6 +56,9 @@ pub struct Limites {
     pub plazo: Option<Plazo>,
 }
 
+/// Solo para las pruebas: los límites de fábrica, pero sin esperar entre reintentos al motor, para
+/// que las pruebas no duerman. En uso real los límites salen siempre de [`Limites::de_la_config`].
+#[cfg(test)]
 impl Default for Limites {
     fn default() -> Self {
         Self {
@@ -188,8 +191,8 @@ impl Cuentas {
 
 /// Un encargo mientras se atiende: la conversación, lo que se lleva contado y desde dónde son
 /// suyas las propuestas del repertorio.
-struct EnCurso<'a> {
-    repertorio: &'a mut Repertorio,
+struct EnCurso<'a, 't> {
+    repertorio: &'a mut Repertorio<'t>,
     conversacion: Vec<Mensaje>,
     limites: &'a Limites,
     historial: HistorialRepeticiones,
@@ -198,9 +201,9 @@ struct EnCurso<'a> {
     propuestas_al_empezar: usize,
 }
 
-impl<'a> EnCurso<'a> {
+impl<'a, 't> EnCurso<'a, 't> {
     fn nuevo(
-        repertorio: &'a mut Repertorio,
+        repertorio: &'a mut Repertorio<'t>,
         conversacion: Vec<Mensaje>,
         limites: &'a Limites,
     ) -> Self {
@@ -409,7 +412,7 @@ mod pruebas {
     use crate::motor::proceso::EstadoServidor;
     use crate::motor::{MotorDoble, Respuesta, SolicitudHerramienta};
 
-    fn repertorio() -> (tempfile::TempDir, Repertorio) {
+    fn repertorio() -> (tempfile::TempDir, Repertorio<'static>) {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("nota.txt"), "contenido\n").unwrap();
         for i in 0..30 {
@@ -417,7 +420,10 @@ mod pruebas {
         }
         let ambito = Ambito::nuevo(dir.path()).unwrap();
         let canal = crate::protocolo::Canal::nuevo(dir.path(), "Programator").unwrap();
-        (dir, Repertorio::nuevo(ambito, canal))
+        (
+            dir,
+            Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal),
+        )
     }
 
     fn pedir(nombre: &str, argumentos: serde_json::Value) -> Respuesta {
@@ -1176,7 +1182,7 @@ mod pruebas {
                     "debe indicar 3 intentos: {motivo}"
                 );
                 assert!(
-                    motivo.contains("Listo"),
+                    motivo.contains("el servidor está listo y responde"),
                     "debe indicar que la salud era Listo: {motivo}"
                 );
                 assert!(
@@ -1210,7 +1216,7 @@ mod pruebas {
                     "debe indicar 1 intento: {motivo}"
                 );
                 assert!(
-                    motivo.contains("NoDisponible"),
+                    motivo.contains("el servidor no está disponible"),
                     "debe indicar NoDisponible: {motivo}"
                 );
                 assert!(
@@ -1252,7 +1258,10 @@ mod pruebas {
                     motivo.contains("2 intentos en total"),
                     "total de intentos: {motivo}"
                 );
-                assert!(motivo.contains("Listo"), "salud del servidor: {motivo}");
+                assert!(
+                    motivo.contains("el servidor está listo y responde"),
+                    "salud del servidor: {motivo}"
+                );
                 assert!(
                     motivo.contains("avance.rs"),
                     "debe nombrar la propuesta en disco: {motivo}"

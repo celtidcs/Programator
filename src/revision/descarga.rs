@@ -1,5 +1,5 @@
 //! La descarga de un modelo: a `<fichero>.parcial`, reanudable, y comprobada con su huella antes
-//! de quedarse con su nombre (especificación, §4, puntos 2 a 5).
+//! de quedarse con su nombre.
 //!
 //! De dónde salen los bytes es un [`Fuente`]: HTTP con `ureq` en producción y una de mentira en
 //! las pruebas. El espacio libre llega como una función, para que las pruebas digan cuánto hay.
@@ -14,9 +14,8 @@ use crate::error::{Error, Resultado};
 use crate::ficheros;
 
 /// Lo que se añade al nombre del fichero mientras se descarga.
-const SUFIJO_PARCIAL: &str = ".parcial";
-/// Cuánto se lee de una vez: 1 MiB, como al calcular una huella.
-const TAMANO_DEL_TROZO: usize = 1024 * 1024;
+pub(crate) const SUFIJO_PARCIAL: &str = ".parcial";
+use crate::ficheros::TAMANO_DEL_TROZO;
 /// La respuesta HTTP de un trozo pedido con `Range`.
 const ESTADO_CONTENIDO_PARCIAL: u16 = 206;
 
@@ -96,7 +95,7 @@ pub fn descargar(descarga: &Descarga, avisar: &mut dyn FnMut(Aviso)) -> Resultad
             desde = 0;
         }
         bajados = copiar(apertura.lector, &parcial, desde, descarga, avisar)?;
-        let llevados = desde + bajados;
+        let llevados = desde.saturating_add(bajados);
         if llevados < descarga.tamano {
             return Err(Error::Revision(mensajes::descarga_cortada(
                 llevados,
@@ -166,7 +165,7 @@ fn copiar(
         .open(parcial)
         .map_err(error_de_escritura)?;
     let cada = descarga.avisar_cada.max(1);
-    let mut siguiente_aviso = (desde / cada + 1) * cada;
+    let mut siguiente_aviso = (desde / cada).saturating_add(1).saturating_mul(cada);
     let mut trozo = vec![0u8; TAMANO_DEL_TROZO];
     let mut escritos = 0;
     loop {
@@ -175,53 +174,70 @@ fn copiar(
             Ok(leidos) => leidos,
             Err(causa) if causa.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(causa) => {
-                let llevados = desde + escritos;
-                return Err(Error::Revision(format!(
-                    "{}: {causa}",
-                    mensajes::descarga_cortada(llevados, descarga.tamano, parcial)
+                let llevados = desde.saturating_add(escritos);
+                return Err(Error::Revision(mensajes::descarga_cortada_por(
+                    llevados,
+                    descarga.tamano,
+                    parcial,
+                    &causa,
                 )));
             }
         };
         fichero
             .write_all(&trozo[..leidos])
             .map_err(error_de_escritura)?;
-        escritos += leidos as u64;
-        let llevados = desde + escritos;
+        escritos = escritos.saturating_add(leidos as u64);
+        let llevados = desde.saturating_add(escritos);
         if llevados >= siguiente_aviso {
             avisar(Aviso::Avance {
                 llevados,
                 total: descarga.tamano,
             });
-            siguiente_aviso = (llevados / cada + 1) * cada;
+            siguiente_aviso = (llevados / cada).saturating_add(1).saturating_mul(cada);
         }
     }
     fichero.flush().map_err(error_de_escritura)?;
     Ok(escritos)
 }
 
-/// La descarga de verdad, por HTTP. El tiempo de espera vale para conectar y para cada lectura,
-/// no para la descarga entera, que puede durar una hora.
+/// La descarga de verdad, por HTTP. Guarda el agente que recibe y lo reutiliza en cada apertura,
+/// también al reanudar; ver [`agente_de_descarga`].
 pub struct FuenteHttp {
-    pub url: String,
-    pub tiempo_espera: Duration,
+    url: String,
+    agente: ureq::Agent,
+}
+
+impl FuenteHttp {
+    /// La fuente del fichero en `url`, pedido con `agente`, que puede ser compartido: clonar un
+    /// agente de `ureq` comparte su configuración y sus conexiones.
+    pub fn nueva(url: String, agente: ureq::Agent) -> Self {
+        Self { url, agente }
+    }
+}
+
+/// El agente HTTP de las descargas: `tiempo_espera` para conectar y para cada lectura, como
+/// `timeout_connect` y `timeout_read` de `ureq` 2; sin tope total, porque la descarga entera puede
+/// durar una hora.
+pub fn agente_de_descarga(tiempo_espera: Duration) -> ureq::Agent {
+    crate::red::configuracion()
+        .timeout_connect(Some(tiempo_espera))
+        .timeout_per_read(Some(tiempo_espera))
+        .build()
+        .into()
 }
 
 impl Fuente for FuenteHttp {
     fn abrir(&self, desde: u64) -> Resultado<Apertura> {
-        let agente = ureq::AgentBuilder::new()
-            .timeout_connect(self.tiempo_espera)
-            .timeout_read(self.tiempo_espera)
-            .build();
-        let mut peticion = agente.get(&self.url).set("User-Agent", AGENTE);
+        let mut peticion = self.agente.get(&self.url).header("User-Agent", AGENTE);
         if desde > 0 {
-            peticion = peticion.set("Range", &format!("bytes={desde}-"));
+            peticion = peticion.header("Range", &format!("bytes={desde}-"));
         }
-        let respuesta = peticion.call().map_err(|causa| {
-            Error::Revision(format!("no se pudo descargar «{}»: {causa}", self.url))
-        })?;
+        let respuesta = peticion
+            .call()
+            .map_err(|causa| Error::Revision(mensajes::descarga_sin_empezar(&self.url, &causa)))?;
         Ok(Apertura {
-            reanuda: respuesta.status() == ESTADO_CONTENIDO_PARCIAL,
-            lector: Box::new(respuesta.into_reader()),
+            reanuda: respuesta.status().as_u16() == ESTADO_CONTENIDO_PARCIAL,
+            lector: Box::new(respuesta.into_body().into_reader()),
         })
     }
 }
@@ -248,17 +264,13 @@ mod pruebas {
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
 
-    use sha2::{Digest, Sha256};
-
     use super::*;
+    use crate::revision::pruebas_comunes::sobra_espacio;
 
     const CONTENIDO: &[u8] = b"Esto es un modelo de mentira.";
 
     fn huella(bytes: &[u8]) -> String {
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        crate::ficheros::huella_sha256_de_bytes(bytes)
     }
 
     /// Da el contenido de tres en tres bytes y, si se le dice, falla tras unos cuantos.
@@ -316,10 +328,6 @@ mod pruebas {
                 }),
             })
         }
-    }
-
-    fn sobra_espacio(_: &Path) -> Resultado<u64> {
-        Ok(u64::MAX)
     }
 
     fn descarga<'a>(
@@ -561,10 +569,7 @@ mod pruebas {
     }
 
     fn http(url: String) -> FuenteHttp {
-        FuenteHttp {
-            url,
-            tiempo_espera: Duration::from_secs(5),
-        }
+        FuenteHttp::nueva(url, agente_de_descarga(Duration::from_secs(5)))
     }
 
     #[test]
@@ -617,6 +622,61 @@ mod pruebas {
         assert!(apertura.reanuda);
         assert_eq!(leer_todo(apertura), &CONTENIDO[10..]);
         assert_eq!(hilo.join().unwrap().as_deref(), Some("10-"));
+    }
+
+    /// Contesta las cabeceras y unos pocos bytes y se calla sin cerrar, hasta que la prueba suelte
+    /// el emisor que devuelve.
+    fn servidor_que_se_calla() -> (String, std::sync::mpsc::Sender<()>) {
+        let escucha = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/m.gguf", escucha.local_addr().unwrap());
+        let (soltar, esperar) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let (mut conexion, _) = escucha.accept().unwrap();
+            let mut lector = BufReader::new(conexion.try_clone().unwrap());
+            let mut linea = String::new();
+            while lector.read_line(&mut linea).unwrap() > 2 {
+                linea.clear();
+            }
+            write!(
+                conexion,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                CONTENIDO.len()
+            )
+            .unwrap();
+            conexion.write_all(&CONTENIDO[..5]).unwrap();
+            let _ = esperar.recv();
+        });
+        (url, soltar)
+    }
+
+    #[test]
+    fn por_http_una_descarga_que_se_calla_falla_por_el_plazo_de_lectura() {
+        let (url, soltar) = servidor_que_se_calla();
+        let tiempo_espera = Duration::from_millis(300);
+        let fuente = FuenteHttp::nueva(url, agente_de_descarga(tiempo_espera));
+        let configuracion = fuente.agente.config().clone();
+        assert_eq!(configuracion.timeouts().connect, Some(tiempo_espera));
+        assert_eq!(configuracion.timeouts().global, None);
+
+        let (dar, recibir) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let resultado = fuente.abrir(0).and_then(|apertura| {
+                let mut lector = apertura.lector;
+                let mut leido = vec![];
+                lector
+                    .read_to_end(&mut leido)
+                    .map_err(|e| Error::Revision(e.to_string()))
+            });
+            let _ = dar.send(resultado.is_err());
+        });
+
+        let fallo = recibir.recv_timeout(Duration::from_secs(10));
+        drop(soltar);
+        assert_eq!(
+            fallo,
+            Ok(true),
+            "la descarga callada tiene que fallar, no colgarse"
+        );
     }
 
     #[test]

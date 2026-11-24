@@ -1,5 +1,5 @@
 //! La carpeta de cada revisión, `revisiones/AAAA-MM`, y cómo se aparta lo que ya hubiera en ella
-//! antes de escribir encima. Nada se borra (especificación, §3.2).
+//! antes de escribir encima. Nada se borra.
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +12,8 @@ use crate::ficheros;
 const FORMATO_DE_LA_CARPETA_DEL_MES: &str = "%Y-%m";
 /// El sufijo con que se aparta lo anterior del mismo mes: `candidatos-153012.toml`.
 const FORMATO_DE_LA_HORA: &str = "%H%M%S";
+/// Las cifras de la hora con que se aparta: seis, las de [`FORMATO_DE_LA_HORA`].
+const LARGO_DE_LA_HORA: usize = 6;
 
 pub fn carpeta_del_mes(carpeta_de_revisiones: &Path, ahora: NaiveDateTime) -> PathBuf {
     carpeta_de_revisiones.join(ahora.format(FORMATO_DE_LA_CARPETA_DEL_MES).to_string())
@@ -60,6 +62,63 @@ pub fn el_mes_mas_reciente_con(
 /// El fichero `nombre` de [`el_mes_mas_reciente_con`]: la ruta del fichero, no la de su carpeta.
 pub fn el_mas_reciente(carpeta_de_revisiones: &Path, nombre: &str) -> Resultado<Option<PathBuf>> {
     Ok(el_mes_mas_reciente_con(carpeta_de_revisiones, nombre)?.map(|mes| mes.join(nombre)))
+}
+
+/// Cada `nombre` de cada mes, también los apartados con la hora: del mes más reciente al más
+/// antiguo y, dentro de un mes, el vigente primero y después los apartados, del más reciente al
+/// más antiguo. Sin carpeta de revisiones, ninguno.
+pub fn todos_los_de(carpeta_de_revisiones: &Path, nombre: &str) -> Resultado<Vec<PathBuf>> {
+    if !carpeta_de_revisiones.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut meses: Vec<PathBuf> = ficheros::entradas(carpeta_de_revisiones)?
+        .into_iter()
+        .filter(|ruta| ruta.is_dir())
+        .collect();
+    meses.sort();
+    let mut todos = Vec::new();
+    for mes in meses.iter().rev() {
+        let mut apartados: Vec<PathBuf> = ficheros::entradas(mes)?
+            .into_iter()
+            .filter(|ruta| {
+                ruta.is_file()
+                    && ruta
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| es_apartado(n, nombre))
+            })
+            .collect();
+        apartados.sort();
+        let vigente = mes.join(nombre);
+        if vigente.is_file() {
+            todos.push(vigente);
+        }
+        todos.extend(apartados.into_iter().rev());
+    }
+    Ok(todos)
+}
+
+/// Si `fichero` es `nombre` apartado con la hora: `candidatos-153012.toml` de `candidatos.toml`.
+fn es_apartado(fichero: &str, nombre: &str) -> bool {
+    let (base, extension) = match nombre.rsplit_once('.') {
+        Some((base, extension)) => (base, Some(extension)),
+        None => (nombre, None),
+    };
+    let Some(resto) = fichero
+        .strip_prefix(base)
+        .and_then(|resto| resto.strip_prefix('-'))
+    else {
+        return false;
+    };
+    let hora = match extension {
+        Some(extension) => resto
+            .strip_suffix(extension)
+            .and_then(|resto| resto.strip_suffix('.')),
+        None => Some(resto),
+    };
+    hora.is_some_and(|hora| {
+        hora.len() == LARGO_DE_LA_HORA && hora.bytes().all(|b| b.is_ascii_digit())
+    })
 }
 
 /// `candidatos.toml` → `candidatos-153012.toml`; `respuestas` → `respuestas-153012`.
@@ -127,6 +186,48 @@ mod pruebas {
         assert_eq!(
             el_mes_mas_reciente_con(&raiz.path().join("no-esta"), "x.toml").unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn un_apartado_es_el_nombre_con_seis_cifras_de_hora() {
+        assert!(es_apartado("candidatos-153012.toml", "candidatos.toml"));
+        assert!(es_apartado("respuestas-153012", "respuestas"));
+        assert!(!es_apartado("candidatos.toml", "candidatos.toml"));
+        assert!(!es_apartado("candidatos-1530.toml", "candidatos.toml"));
+        assert!(!es_apartado("candidatos-15301a.toml", "candidatos.toml"));
+        assert!(!es_apartado("candidatos-153012.md", "candidatos.toml"));
+        assert!(!es_apartado("probados-153012.toml", "candidatos.toml"));
+    }
+
+    #[test]
+    fn todos_los_de_van_del_mes_mas_reciente_y_el_vigente_antes_que_los_apartados() {
+        let raiz = tempfile::tempdir().unwrap();
+        assert!(todos_los_de(&raiz.path().join("no-esta"), "x.toml")
+            .unwrap()
+            .is_empty());
+        let octubre = raiz.path().join("2026-10");
+        let noviembre = raiz.path().join("2026-11");
+        for (carpeta, nombres) in [
+            (&octubre, &["x-090000.toml", "otro.toml"][..]),
+            (
+                &noviembre,
+                &["x-080000.toml", "x.toml", "x-170000.toml"][..],
+            ),
+        ] {
+            ficheros::crear_carpeta(carpeta).unwrap();
+            for nombre in nombres {
+                ficheros::escribir(&carpeta.join(nombre), "").unwrap();
+            }
+        }
+        assert_eq!(
+            todos_los_de(raiz.path(), "x.toml").unwrap(),
+            [
+                noviembre.join("x.toml"),
+                noviembre.join("x-170000.toml"),
+                noviembre.join("x-080000.toml"),
+                octubre.join("x-090000.toml"),
+            ]
         );
     }
 

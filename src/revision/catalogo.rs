@@ -2,12 +2,13 @@
 //!
 //! Solo hace HTTP y deserializa; no decide nada. Lo que decide qué fichero sirve está en
 //! `candidatos`. Cada respuesta vuelve también en bruto, para guardarla junto a la revisión y poder
-//! comprobar después de dónde salió cada fila (especificación, §3.2, punto 6).
+//! comprobar después de dónde salió cada fila.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 
+use super::mensajes;
 use crate::error::{Error, Resultado};
 
 /// El prefijo de las etiquetas de Hugging Face que dicen la licencia: `license:apache-2.0`.
@@ -65,26 +66,35 @@ pub trait CatalogoDeModelos {
     fn detalle(&self, repositorio: &str) -> Resultado<Respuesta<DetalleDeRepositorio>>;
 }
 
-/// El catálogo de verdad.
+/// El catálogo de verdad. Guarda su agente HTTP y lo reutiliza en cada petición: el agente lleva
+/// el plazo y la configuración, y sus conexiones se aprovechan.
 pub struct HuggingFace {
-    pub api: String,
-    pub tiempo_espera: Duration,
+    api: String,
+    agente: ureq::Agent,
 }
 
 impl HuggingFace {
+    /// El catálogo de la API en `api`, con `tiempo_espera` para toda la petición, como `timeout`
+    /// de `ureq` 2.
+    pub fn nuevo(api: String, tiempo_espera: Duration) -> Self {
+        Self {
+            api,
+            agente: crate::red::configuracion()
+                .timeout_global(Some(tiempo_espera))
+                .build()
+                .into(),
+        }
+    }
+
     fn pedir(&self, url: &str) -> Resultado<String> {
-        let agente = ureq::AgentBuilder::new()
-            .timeout(self.tiempo_espera)
-            .build();
-        agente
+        self.agente
             .get(url)
-            .set("User-Agent", AGENTE)
+            .header("User-Agent", AGENTE)
             .call()
-            .map_err(|causa| Error::Revision(format!("Hugging Face no contestó a {url}: {causa}")))?
-            .into_string()
-            .map_err(|causa| {
-                Error::Revision(format!("la respuesta de {url} no se pudo leer: {causa}"))
-            })
+            .map_err(|causa| Error::Revision(mensajes::hugging_face_no_contesto(url, &causa)))?
+            .into_body()
+            .read_to_string()
+            .map_err(|causa| Error::Revision(mensajes::respuesta_sin_leer(url, &causa)))
     }
 }
 
@@ -145,63 +155,68 @@ fn codificar(texto: &str) -> String {
 /// Los repositorios de una respuesta de búsqueda.
 pub fn leer_busqueda(texto: &str) -> Resultado<Vec<Repositorio>> {
     serde_json::from_str(texto)
-        .map_err(|causa| Error::Revision(format!("la búsqueda no se entiende: {causa}")))
+        .map_err(|causa| Error::Revision(mensajes::busqueda_que_no_se_entiende(&causa)))
 }
 
 /// El detalle de un repositorio. La licencia sale de la ficha del modelo (`cardData.license`) y,
 /// si no la trae, de sus etiquetas `license:`.
 pub fn leer_detalle(texto: &str) -> Resultado<DetalleDeRepositorio> {
     let leido: DetalleEnBruto = serde_json::from_str(texto)
-        .map_err(|causa| Error::Revision(format!("el detalle no se entiende: {causa}")))?;
+        .map_err(|causa| Error::Revision(mensajes::detalle_que_no_se_entiende(&causa)))?;
     let de_las_etiquetas = || {
         leido
-            .tags
+            .etiquetas
             .iter()
             .find_map(|etiqueta| etiqueta.strip_prefix(PREFIJO_DE_LICENCIA))
             .map(str::to_string)
     };
     let licencia = leido
-        .card_data
-        .and_then(|ficha| ficha.license)
+        .ficha
+        .and_then(|ficha| ficha.licencia)
         .and_then(LicenciaEnBruto::texto)
         .or_else(de_las_etiquetas);
     Ok(DetalleDeRepositorio {
         id: leido.id,
-        ultima_modificacion: leido.last_modified,
-        descargas: leido.downloads,
+        ultima_modificacion: leido.ultima_modificacion,
+        descargas: leido.descargas,
         licencia,
         ficheros: leido
-            .siblings
+            .ficheros
             .into_iter()
             .map(|fichero| FicheroDelRepositorio {
-                nombre: fichero.rfilename,
-                tamano: fichero.lfs.as_ref().map(|lfs| lfs.size).or(fichero.size),
-                huella_sha256: fichero.lfs.map(|lfs| lfs.sha256),
+                nombre: fichero.nombre,
+                tamano: fichero
+                    .almacen_lfs
+                    .as_ref()
+                    .map(|lfs| lfs.tamano)
+                    .or(fichero.tamano),
+                huella_sha256: fichero.almacen_lfs.map(|lfs| lfs.huella_sha256),
             })
             .collect(),
     })
 }
 
-/// La respuesta del detalle tal como la da la API, con sus nombres.
+/// La respuesta del detalle tal como la da la API. Los nombres de la API van en `rename`; los
+/// campos, en español como el resto del código.
 #[derive(Deserialize)]
 struct DetalleEnBruto {
     id: String,
     #[serde(rename = "lastModified", default)]
-    last_modified: Option<String>,
-    #[serde(default)]
-    downloads: Option<u64>,
-    #[serde(default)]
-    tags: Vec<String>,
+    ultima_modificacion: Option<String>,
+    #[serde(rename = "downloads", default)]
+    descargas: Option<u64>,
+    #[serde(rename = "tags", default)]
+    etiquetas: Vec<String>,
     #[serde(rename = "cardData", default)]
-    card_data: Option<FichaEnBruto>,
-    #[serde(default)]
-    siblings: Vec<FicheroEnBruto>,
+    ficha: Option<FichaEnBruto>,
+    #[serde(rename = "siblings", default)]
+    ficheros: Vec<FicheroEnBruto>,
 }
 
 #[derive(Deserialize)]
 struct FichaEnBruto {
-    #[serde(default)]
-    license: Option<LicenciaEnBruto>,
+    #[serde(rename = "license", default)]
+    licencia: Option<LicenciaEnBruto>,
 }
 
 /// La ficha del modelo la escribe su autor, y la licencia llega como texto o como lista
@@ -226,17 +241,21 @@ impl LicenciaEnBruto {
 
 #[derive(Deserialize)]
 struct FicheroEnBruto {
-    rfilename: String,
-    #[serde(default)]
-    size: Option<u64>,
-    #[serde(default)]
-    lfs: Option<LfsEnBruto>,
+    #[serde(rename = "rfilename")]
+    nombre: String,
+    #[serde(rename = "size", default)]
+    tamano: Option<u64>,
+    /// Lo que dice Git LFS del fichero, si lo guarda ahí: su tamaño real y su huella.
+    #[serde(rename = "lfs", default)]
+    almacen_lfs: Option<LfsEnBruto>,
 }
 
 #[derive(Deserialize)]
 struct LfsEnBruto {
-    sha256: String,
-    size: u64,
+    #[serde(rename = "sha256")]
+    huella_sha256: String,
+    #[serde(rename = "size")]
+    tamano: u64,
 }
 
 #[cfg(test)]
@@ -244,6 +263,20 @@ mod pruebas {
     //! Contra respuestas reales de la API, pedidas el 12/11/2026 y recortadas a unos pocos
     //! ficheros (`src/revision/pruebas/`).
     use super::*;
+
+    #[test]
+    fn el_agente_de_hugging_face_tiene_un_plazo_total_y_va_sin_proxy() {
+        let catalogo = HuggingFace::nuevo(
+            "https://huggingface.co/api".to_string(),
+            Duration::from_secs(13),
+        );
+        let configuracion = catalogo.agente.config().clone();
+        assert_eq!(
+            configuracion.timeouts().global,
+            Some(Duration::from_secs(13))
+        );
+        assert!(configuracion.proxy().is_none());
+    }
 
     const BUSQUEDA: &str = include_str!("pruebas/busqueda.json");
     const CON_LICENCIA: &str = include_str!("pruebas/detalle-con-licencia.json");

@@ -1,5 +1,5 @@
 //! La clasificación de los ficheros de los repositorios encontrados: candidatos, descartados con
-//! su motivo, y ya descargados sin medir (especificación, §3.2, puntos 4 y 5).
+//! su motivo, y ya descargados sin medir.
 //!
 //! Puro: recibe los detalles ya pedidos, la tarjeta ya medida y lo que ya hay en el registro y en
 //! `modelos/`, y no toca red, disco ni reloj.
@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use super::catalogo::{DetalleDeRepositorio, FicheroDelRepositorio};
 use super::config::ConfigRevision;
-use super::{BYTES_POR_MIB, LARGO_DE_LA_FECHA};
+use super::propuesta::tiene_fichero;
+use super::{BYTES_POR_MIB, FORMATO_DEL_DIA, LARGO_DE_LA_FECHA};
+use crate::registro::modelo::Registro;
 
-/// La extensión de los ficheros que carga `llama-server`.
-const EXTENSION_GGUF: &str = ".gguf";
 /// Los proyectores de visión (`mmproj-…`) también son GGUF y llevan cuantización en el nombre,
 /// pero no son un modelo que se pueda cargar solo.
 const PREFIJO_DE_PROYECTOR: &str = "mmproj";
@@ -22,8 +22,37 @@ const PREFIJO_DE_PROYECTOR: &str = "mmproj";
 /// total, de cinco cifras cada uno, como los numera `llama-gguf-split`.
 const SEPARADOR_DE_PARTES: &str = "-of-";
 const CIFRAS_DEL_NUMERO_DE_PARTE: usize = 5;
-/// Para el plazo basta el día de la fecha de la API.
-const FORMATO_DE_LA_FECHA: &str = "%Y-%m-%d";
+
+/// Las huellas del registro, en dos grupos: las que descartan «ya en el registro» y las de los
+/// modelos que faltan, que descartan con su propio motivo.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HuellasDelRegistro {
+    /// De entradas con su fichero en `modelos/` o retiradas: un modelo retirado no se vuelve a
+    /// ofrecer.
+    pub registradas: BTreeSet<String>,
+    /// De entradas sin retirar cuyo fichero no está, y que ninguna otra entrada registra.
+    pub sin_fichero: BTreeSet<String>,
+}
+
+/// Reparte las huellas del registro según haya fichero en `en_modelos` (los ficheros de la
+/// carpeta de modelos con su tamaño).
+pub fn huellas_del_registro(
+    registro: &Registro,
+    en_modelos: &[(String, u64)],
+) -> HuellasDelRegistro {
+    let mut huellas = HuellasDelRegistro::default();
+    for entrada in &registro.modelo {
+        if entrada.retirado_el.is_some() || tiene_fichero(&entrada.nombre, en_modelos) {
+            huellas.registradas.insert(entrada.huella_sha256.clone());
+        }
+    }
+    for entrada in &registro.modelo {
+        if !huellas.registradas.contains(&entrada.huella_sha256) {
+            huellas.sin_fichero.insert(entrada.huella_sha256.clone());
+        }
+    }
+    huellas
+}
 
 /// Con qué se clasifica.
 pub struct Criterios<'a> {
@@ -33,7 +62,7 @@ pub struct Criterios<'a> {
     /// El margen de `[motor]`, en MiB.
     pub margen_vram_mib: u64,
     /// Las huellas SHA-256 de los modelos del registro.
-    pub huellas_registradas: &'a BTreeSet<String>,
+    pub huellas: &'a HuellasDelRegistro,
     /// Los nombres de los ficheros que hay en `modelos/` y no están en el registro.
     pub ficheros_en_modelos: &'a BTreeSet<String>,
     pub hoy: NaiveDate,
@@ -80,6 +109,9 @@ pub enum MotivoDeDescarte {
     FueraDePlazo { ultima_modificacion: Option<String> },
     /// Su huella ya está en el registro, se llame como se llame.
     YaRegistrado,
+    /// Su huella es la de un modelo del registro cuyo fichero falta: ya está medido, y probarlo
+    /// otra vez serían horas de banco para nada.
+    RegistradoSinFichero,
     /// Está repartido en varios ficheros, y el motor y el lector GGUF trabajan con uno.
     Partido { partes: usize },
     /// El repositorio no tiene ningún fichero de las cuantizaciones que interesan.
@@ -96,7 +128,7 @@ pub struct Descartado {
     pub motivo: MotivoDeDescarte,
 }
 
-/// Los tres grupos de la §3.2, punto 5.
+/// Cómo quedan los ficheros de la búsqueda: candidatos, descartados y ya descargados.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Clasificacion {
     pub candidatos: Vec<FicheroCandidato>,
@@ -169,8 +201,13 @@ fn clasificar_repositorio(
                 continue;
             }
         };
-        if esta_registrado(fichero, criterios.huellas_registradas) {
+        if esta_registrado(fichero, &criterios.huellas.registradas) {
             let motivo = MotivoDeDescarte::YaRegistrado;
+            clasificacion
+                .descartados
+                .push(descarte(detalle, fichero, fichero.tamano, motivo));
+        } else if esta_registrado(fichero, &criterios.huellas.sin_fichero) {
+            let motivo = MotivoDeDescarte::RegistradoSinFichero;
             clasificacion
                 .descartados
                 .push(descarte(detalle, fichero, fichero.tamano, motivo));
@@ -229,7 +266,8 @@ fn elegir<'a>(ficheros: &'a [FicheroDelRepositorio], cuantizacion: &str) -> Opti
 /// Un GGUF que no es un proyector de visión.
 fn es_modelo(nombre: &str) -> bool {
     let minusculas = nombre.to_ascii_lowercase();
-    minusculas.ends_with(EXTENSION_GGUF) && !minusculas.starts_with(PREFIJO_DE_PROYECTOR)
+    crate::motor::fichero_de_modelo::es_gguf(&minusculas)
+        && !minusculas.starts_with(PREFIJO_DE_PROYECTOR)
 }
 
 /// El nombre lleva la cuantización como palabra suelta, sin distinguir mayúsculas: `Q6_K` no está
@@ -248,7 +286,7 @@ fn lleva_la_cuantizacion(nombre: &str, cuantizacion: &str) -> bool {
 /// `…-00001-of-00003.gguf`.
 fn es_parte(nombre: &str) -> bool {
     let minusculas = nombre.to_ascii_lowercase();
-    let Some(base) = minusculas.strip_suffix(EXTENSION_GGUF) else {
+    let Some(base) = crate::motor::fichero_de_modelo::nombre_sin_extension(&minusculas) else {
         return false;
     };
     let Some((izquierda, total)) = base.rsplit_once(SEPARADOR_DE_PARTES) else {
@@ -270,7 +308,7 @@ fn esta_en_plazo(ultima_modificacion: Option<&str>, dias: u32, hoy: NaiveDate) -
     }
     let Some(fecha) = ultima_modificacion
         .and_then(|texto| texto.get(..LARGO_DE_LA_FECHA))
-        .and_then(|dia| NaiveDate::parse_from_str(dia, FORMATO_DE_LA_FECHA).ok())
+        .and_then(|dia| NaiveDate::parse_from_str(dia, FORMATO_DEL_DIA).ok())
     else {
         return false;
     };
@@ -343,6 +381,8 @@ fn candidato(
 #[cfg(test)]
 mod pruebas {
     use super::*;
+    use crate::registro::modelo::pruebas::entrada_de_ejemplo;
+    use crate::registro::modelo::EntradaDeModelo;
     use crate::revision::catalogo::leer_detalle;
 
     const GIB: u64 = 1024 * BYTES_POR_MIB;
@@ -380,7 +420,19 @@ mod pruebas {
         registradas: &[&str],
         en_modelos: &[&str],
     ) -> Clasificacion {
-        let huellas = registradas.iter().map(|s| s.to_string()).collect();
+        let huellas = HuellasDelRegistro {
+            registradas: registradas.iter().map(|s| s.to_string()).collect(),
+            sin_fichero: BTreeSet::new(),
+        };
+        clasificar_con_huellas(detalles, config, &huellas, en_modelos)
+    }
+
+    fn clasificar_con_huellas(
+        detalles: &[DetalleDeRepositorio],
+        config: &ConfigRevision,
+        huellas: &HuellasDelRegistro,
+        en_modelos: &[&str],
+    ) -> Clasificacion {
         let modelos = en_modelos.iter().map(|s| s.to_string()).collect();
         clasificar(
             detalles,
@@ -388,7 +440,7 @@ mod pruebas {
                 config,
                 vram_mib: 16 * 1024,
                 margen_vram_mib: 2048,
-                huellas_registradas: &huellas,
+                huellas,
                 ficheros_en_modelos: &modelos,
                 hoy: hoy(),
             },
@@ -530,6 +582,80 @@ mod pruebas {
         let resultado = clasificar_con(&[detalle], &ConfigRevision::default(), &["abc123"], &[]);
         assert!(resultado.candidatos.is_empty());
         assert_eq!(motivos(&resultado), [&MotivoDeDescarte::YaRegistrado]);
+    }
+
+    /// Una entrada del registro de esta prueba: `nombre`, con su huella y retirada o no.
+    fn entrada(nombre: &str, huella: &str, retirada: bool) -> EntradaDeModelo {
+        let mut e = entrada_de_ejemplo();
+        e.nombre = nombre.into();
+        e.huella_sha256 = huella.into();
+        e.retirado_el = retirada.then(|| "2026-11-13".to_string());
+        e
+    }
+
+    fn con_fichero(nombres: &[&str]) -> Vec<(String, u64)> {
+        nombres.iter().map(|n| (format!("{n}.gguf"), 1)).collect()
+    }
+
+    #[test]
+    fn un_fichero_con_la_huella_de_una_entrada_sin_fichero_no_sale_como_ya_registrado() {
+        let registro = Registro {
+            modelo: vec![
+                entrada("falta", "abc123", false),
+                entrada("esta", "def456", false),
+            ],
+        };
+        let huellas = huellas_del_registro(&registro, &con_fichero(&["esta"]));
+        let detalle = repositorio(
+            "a/b",
+            "2026-11-01",
+            vec![
+                fichero("falta-Q4_K_M.gguf", GIB, "ABC123"),
+                fichero("esta-Q8_0.gguf", GIB, "def456"),
+            ],
+        );
+        let resultado =
+            clasificar_con_huellas(&[detalle], &ConfigRevision::default(), &huellas, &[]);
+        assert!(resultado.candidatos.is_empty());
+        assert_eq!(
+            motivos(&resultado),
+            [
+                &MotivoDeDescarte::RegistradoSinFichero,
+                &MotivoDeDescarte::YaRegistrado
+            ]
+        );
+    }
+
+    #[test]
+    fn con_la_entrada_retirada_sigue_saliendo_como_ya_registrado() {
+        let registro = Registro {
+            modelo: vec![entrada("retirado", "abc123", true)],
+        };
+        let huellas = huellas_del_registro(&registro, &[]);
+        assert!(huellas.sin_fichero.is_empty());
+        let detalle = repositorio(
+            "a/b",
+            "2026-11-01",
+            vec![fichero("retirado-Q4_K_M.gguf", GIB, "abc123")],
+        );
+        let resultado =
+            clasificar_con_huellas(&[detalle], &ConfigRevision::default(), &huellas, &[]);
+        assert_eq!(motivos(&resultado), [&MotivoDeDescarte::YaRegistrado]);
+    }
+
+    #[test]
+    fn una_huella_registrada_con_fichero_en_otra_entrada_no_cuenta_como_sin_fichero() {
+        // La misma huella medida en dos tarjetas con nombres distintos: con el fichero de una, el
+        // modelo está.
+        let registro = Registro {
+            modelo: vec![
+                entrada("viejo", "abc123", false),
+                entrada("nuevo", "abc123", false),
+            ],
+        };
+        let huellas = huellas_del_registro(&registro, &con_fichero(&["nuevo"]));
+        assert_eq!(huellas.registradas, BTreeSet::from(["abc123".to_string()]));
+        assert!(huellas.sin_fichero.is_empty());
     }
 
     #[test]

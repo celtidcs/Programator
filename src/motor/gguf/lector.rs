@@ -3,8 +3,8 @@
 //! el presupuesto de bytes de la cabecera.
 
 use super::{
-    error_gguf, LIMITE_BYTES_METADATOS, LIMITE_ELEMENTOS_ARRAY, LIMITE_LONGITUD_CADENA,
-    LIMITE_PROFUNDIDAD_ARRAY,
+    error_gguf, LIMITE_BYTES_METADATOS, LIMITE_ELEMENTOS_LISTA, LIMITE_LONGITUD_CADENA,
+    LIMITE_PROFUNDIDAD_LISTA,
 };
 use crate::error::Resultado;
 use std::io::Read;
@@ -21,9 +21,9 @@ pub(super) enum TipoValor {
     U32,
     I32,
     F32,
-    Bool,
+    Logico,
     Cadena,
-    Array,
+    Lista,
     U64,
     I64,
     F64,
@@ -39,9 +39,9 @@ impl TipoValor {
             4 => Self::U32,
             5 => Self::I32,
             6 => Self::F32,
-            7 => Self::Bool,
+            7 => Self::Logico,
             8 => Self::Cadena,
-            9 => Self::Array,
+            9 => Self::Lista,
             10 => Self::U64,
             11 => Self::I64,
             12 => Self::F64,
@@ -88,12 +88,12 @@ impl<R: Read> LectorAcotado<R> {
         Ok(())
     }
 
-    fn leer_exacto(&mut self, buf: &mut [u8], ruta: &Path) -> Resultado<()> {
-        self.comprobar_presupuesto(buf.len() as u64, ruta)?;
+    fn leer_exacto(&mut self, destino: &mut [u8], ruta: &Path) -> Resultado<()> {
+        self.comprobar_presupuesto(destino.len() as u64, ruta)?;
         self.interior
-            .read_exact(buf)
+            .read_exact(destino)
             .map_err(|causa| error_gguf(ruta, format!("fichero truncado o ilegible: {causa}")))?;
-        self.leidos += buf.len() as u64;
+        self.leidos += destino.len() as u64;
         Ok(())
     }
 
@@ -122,19 +122,19 @@ impl<R: Read> LectorAcotado<R> {
     }
 
     fn leer_i8(&mut self, ruta: &Path) -> Resultado<i8> {
-        Ok(self.leer_u8(ruta)? as i8)
+        Ok(self.leer_u8(ruta)?.cast_signed())
     }
 
     fn leer_i16(&mut self, ruta: &Path) -> Resultado<i16> {
-        Ok(self.leer_u16(ruta)? as i16)
+        Ok(self.leer_u16(ruta)?.cast_signed())
     }
 
     fn leer_i32(&mut self, ruta: &Path) -> Resultado<i32> {
-        Ok(self.leer_u32(ruta)? as i32)
+        Ok(self.leer_u32(ruta)?.cast_signed())
     }
 
     fn leer_i64(&mut self, ruta: &Path) -> Resultado<i64> {
-        Ok(self.leer_u64(ruta)? as i64)
+        Ok(self.leer_u64(ruta)?.cast_signed())
     }
 
     fn leer_f32(&mut self, ruta: &Path) -> Resultado<f32> {
@@ -156,7 +156,15 @@ impl<R: Read> LectorAcotado<R> {
                 ),
             ));
         }
-        let mut bytes = vec![0u8; longitud as usize];
+        let longitud = usize::try_from(longitud).map_err(|_| {
+            error_gguf(
+                ruta,
+                format!(
+                    "una cadena de la cabecera dice medir {longitud} bytes, más de lo que cabe"
+                ),
+            )
+        })?;
+        let mut bytes = vec![0u8; longitud];
         self.leer_exacto(&mut bytes, ruta)?;
         String::from_utf8(bytes).map_err(|causa| {
             error_gguf(
@@ -191,13 +199,13 @@ impl<R: Read> LectorAcotado<R> {
                 self.leer_f64(ruta)?;
                 ValorLeido::Otro
             }
-            TipoValor::Bool => {
+            TipoValor::Logico => {
                 self.leer_u8(ruta)?;
                 ValorLeido::Otro
             }
             TipoValor::Cadena => ValorLeido::Cadena(self.leer_cadena(ruta)?),
-            TipoValor::Array => {
-                self.consumir_array(profundidad, ruta)?;
+            TipoValor::Lista => {
+                self.consumir_lista(profundidad, ruta)?;
                 ValorLeido::Otro
             }
         })
@@ -206,12 +214,12 @@ impl<R: Read> LectorAcotado<R> {
     /// Lee un array completo (tipo de elemento + longitud + elementos) y descarta su contenido:
     /// a este lector no le interesa el valor de ningún array, solo saber saltárselo sin perder la
     /// posición de lo que viene después.
-    fn consumir_array(&mut self, profundidad: u32, ruta: &Path) -> Resultado<()> {
-        if profundidad >= LIMITE_PROFUNDIDAD_ARRAY {
+    fn consumir_lista(&mut self, profundidad: u32, ruta: &Path) -> Resultado<()> {
+        if profundidad >= LIMITE_PROFUNDIDAD_LISTA {
             return Err(error_gguf(
                 ruta,
                 format!(
-                    "arrays anidados más allá del límite de {LIMITE_PROFUNDIDAD_ARRAY} niveles"
+                    "arrays anidados más allá del límite de {LIMITE_PROFUNDIDAD_LISTA} niveles"
                 ),
             ));
         }
@@ -223,11 +231,11 @@ impl<R: Read> LectorAcotado<R> {
             )
         })?;
         let longitud = self.leer_u64(ruta)?;
-        if longitud > LIMITE_ELEMENTOS_ARRAY {
+        if longitud > LIMITE_ELEMENTOS_LISTA {
             return Err(error_gguf(
                 ruta,
                 format!(
-                    "un array de la cabecera dice tener {longitud} elementos, más del límite de {LIMITE_ELEMENTOS_ARRAY}"
+                    "un array de la cabecera dice tener {longitud} elementos, más del límite de {LIMITE_ELEMENTOS_LISTA}"
                 ),
             ));
         }

@@ -1,9 +1,12 @@
 # La revisión mensual de modelos
 
-Este es el procedimiento que sigue el modelo de pago (Claude), una vez al mes, para buscar modelos
-locales mejores que los que hay, medirlos con el banco y quedarse con los que ganen. **Lo hacéis
-entre Programator y tú, sin pedirle nada al Director**: él abre los dos sobre la carpeta de
-Programator, te pide la revisión y al final lee tu informe. Lo ordenó el 13/11/2026: las decisiones
+Este es el procedimiento que sigue, una vez al mes, el agente que dirige la revisión (cualquiera
+cuya identidad esté en `[revision] identidades_que_ordenan`: Claude, Codex, Gemini u otro), para
+buscar modelos locales mejores que los que hay, medirlos con el banco y quedarse con los que ganen. **Lo hacéis
+entre Programator y tú, sin pedirle nada a quien usa Programator**: esa persona os abre a los dos en
+la carpeta donde está instalado Programator, te pide la revisión y al final lee tu informe. Tiene que ser esa
+carpeta: ahí están los modelos, el banco, las revisiones y el `programator.toml` que vas a leer.
+Pedida desde otro proyecto, Programator no hace nada y contesta con la carpeta adonde ir. Las decisiones
 salen de las reglas de puntuación, no de su permiso.
 
 ## Quién hace qué
@@ -15,8 +18,10 @@ salen de las reglas de puntuación, no de su permiso.
 
 Se lo pides por el canal, con encargos en tu buzón de `.gestor/canal/` dirigidos a Programator. La
 primera línea tras «Para Programator:» es el pedido; Programator contesta en su buzón con lo que hizo y con el
-paso siguiente. Tu buzón tiene que estar en `[revision] buzones_que_ordenan` de
-`programator.toml`; si no, Programator contesta que no puedes pedirlo.
+paso siguiente. Tu identidad, la de la primera línea de tu buzón (`# Bandeja de Claude 1`), tiene
+que estar en `[revision] identidades_que_ordenan` de `programator.toml`; si no, o si tu buzón no
+lleva esa línea, Programator contesta que no puedes pedirlo. Con Gestor Agentes tu buzón ya la
+trae; sin él, escríbela tú como primera línea antes del primer encargo.
 
 ```
 Para Programator:
@@ -25,12 +30,26 @@ revisión: buscar
 
 ## 1. Buscar
 
-Pide `revisión: buscar`. Programator deja en `revisiones/AAAA-MM/`:
+Pide `revisión: buscar`. Antes de buscar, Programator repone los modelos del registro que faltan
+en `modelos/` y siguen siendo útiles (ganarían alguna característica, o son el modelo por defecto):
+los baja del repositorio del que salieron, con su nombre del registro, y comprueba la huella. Los
+que faltan y ya no ganarían nada los saca del registro (retirados, con sus cifras). Después deja en
+`revisiones/AAAA-MM/`:
 
-- `candidatos.md`, para leer: los candidatos con su tamaño, licencia, fecha y descargas, y los
-  descartados agrupados por motivo;
+- `candidatos.md`, para leer: primero «Modelos del registro que faltaban», si faltaba alguno; luego
+  los candidatos con su tamaño, licencia, fecha y descargas, y los descartados agrupados por motivo;
 - `candidatos.toml`, con los nombres exactos que se pueden pedir;
 - `respuestas/`, con lo que contestó Hugging Face.
+
+Si la respuesta trae el bloque «Reposición:», míralo antes de elegir:
+
+- **sin reponer**: no se pudo bajar, y dice por qué. Si es porque no se sabe de dónde salió, o
+  porque el repositorio ya no tiene el fichero o lo ha cambiado, la revisión no lo puede arreglar:
+  cuéntalo en el informe a quien usa Programator (puede dejar el fichero a mano en `modelos/` o retirarlo con
+  `--retirar-modelo`). Si es un fallo de red o de disco, vuelve a pedir `revisión: buscar` más
+  tarde;
+- **sin decidir**: faltan y no tienen cifras que se comparen; ni se reponen ni se retiran. Dilo en
+  el informe.
 
 ## 2. Elegir qué se prueba
 
@@ -56,9 +75,12 @@ ManniX-ITA/JackOD-9B-Coder-MTP-GGUF JackOD-9B-Coder-CD-Q4_K_M.gguf
 ```
 
 Por cada uno, Programator lo descarga (o lo encuentra ya descargado, con su huella comprobada),
-suelta su motor, pasa el banco y comprueba la tanda en este mismo equipo, con el
-`[comprobacion_local]` de `banco/banco.toml`; sin esa sección, las notas de oficio salen «no
-evaluado». Si la comprobación falla, las pasadas quedan guardadas y se comprueban al cerrar.
+suelta su motor, pasa el banco y comprueba la tanda en este mismo equipo, con las pruebas ocultas
+de `[comprobacion_local]` de `banco/banco.toml`. Van encendidas por defecto, también sin esa
+sección, y solo se apagan con `activa = false`. Si las pruebas ocultas de un encargo de código no
+dan nota (apagadas, o sin poder ejecutarse) y el encargo trae `rubrica.md`, su código pasa a
+`rubricas/` para que lo puntúes por rúbrica (punto 4); sin `rubrica.md`, queda «no evaluado» y el
+motivo lo dice. Si la comprobación falla, las pasadas quedan guardadas y se comprueban al cerrar.
 Mientras tanto, su latido dice qué candidato está probando. Su motor vuelve a arrancar con el siguiente encargo normal.
 
 Al terminar publica cómo quedó cada candidato y la lista de rúbricas que te toca puntuar.
@@ -87,7 +109,12 @@ Pide `revisión: cerrar`. Programator:
    queda todo el que gane alguna; se retira el que no gane ninguna**: se anota en el registro con
    sus cifras y su motivo, y se borra su fichero;
 5. si el modelo por defecto (`[motor] modelo`) no gana ninguna y hay quien lo sustituya, cambia
-   `programator.toml` al sustituto, conservando los comentarios, y retira el viejo.
+   `programator.toml` al sustituto, conservando los comentarios, y retira el viejo;
+6. si el modelo por defecto falta en `modelos/` y no se pudo reponer, cambia `programator.toml` al
+   presente que más gana; el que faltaba sigue en el registro, para reponerlo en la siguiente
+   revisión;
+7. saca del registro los modelos que faltan y que las tandas nuevas dejan sin ganar nada, y nombra
+   los útiles que siguen faltando.
 
 Las cifras que dependen de encargos de código (la familia de oficio, la de uso y la clase de la
 función acotada) solo se comparan entre modelos cuyo código se puntuó igual: todos ejecutando las
@@ -101,7 +128,7 @@ de forma que el código se puntúe igual.
 Publica qué se queda, qué se retiró y si cambió el modelo por defecto. La propuesta con todas las
 cifras queda en `revisiones/AAAA-MM/propuesta.md`.
 
-## 6. El informe para el Director
+## 6. El informe para quien usa Programator
 
 Escríbelo en `revisiones/AAAA-MM/informe.md` y resúmelo en tu buzón. Lleva:
 
@@ -111,9 +138,11 @@ Escríbelo en `revisiones/AAAA-MM/informe.md` y resúmelo en tu buzón. Lleva:
 - qué se quedó, qué se retiró y si cambió el modelo por defecto;
 - lo que conviene saber de cada modelo nuevo y que la tabla no dice (por ejemplo, que se inventa
   APIs que no existen), sacado de los motivos de tus notas;
-- lo que no salió bien: candidatos que no se descargaron o no cargaron, tandas sin comprobar.
+- lo que no salió bien: candidatos que no se descargaron o no cargaron, tandas sin comprobar;
+- los modelos del registro que faltaban: cuáles se repusieron, cuáles no y por qué, y cuáles
+  salieron del registro.
 
-Es lo único que lee el Director. Que diga claro si hay un modelo nuevo disponible.
+Es lo único que lee quien usa Programator. Que diga claro si hay un modelo nuevo disponible.
 
 ## Si algo se corta
 

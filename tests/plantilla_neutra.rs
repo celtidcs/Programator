@@ -55,28 +55,40 @@ fn palabra_con_huella<'a>(
 }
 
 fn plantilla() -> String {
-    std::fs::read_to_string("plantillas/instrucciones-del-proyecto.md")
-        .expect("la plantilla de instrucciones tiene que estar en «plantillas/»")
+    std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("plantillas/instrucciones-del-proyecto.md"),
+    )
+    .expect("la plantilla de instrucciones tiene que estar en «plantillas/»")
 }
 
 /// ¿Aparece `palabra` como palabra entera, y no dentro de otra?
 ///
 /// **Comparar subcadenas no vale aquí, y costó una prueba en rojo al escribirla:** «encargo»
 /// contiene «cargo», y «encargo» es la palabra central de este dominio. Se exige que los caracteres
-/// de alrededor no sean alfanuméricos, así que «cargo test» se caza y «un encargo» no.
+/// de alrededor no sean alfanuméricos, así que «cargo test» se caza y «un encargo» no. Cada borde
+/// solo se mira si la palabra termina por ese lado en letra o cifra: tras «documentacion/» viene
+/// siempre el nombre de un fichero.
 fn contiene_palabra(texto: &str, palabra: &str) -> bool {
+    let mira_antes = palabra.chars().next().is_some_and(char::is_alphanumeric);
+    let mira_despues = palabra
+        .chars()
+        .next_back()
+        .is_some_and(char::is_alphanumeric);
     let mut desde = 0;
     while let Some(posicion) = texto[desde..].find(palabra) {
         let inicio = desde + posicion;
         let fin = inicio + palabra.len();
-        let antes_es_letra = texto[..inicio]
-            .chars()
-            .next_back()
-            .is_some_and(char::is_alphanumeric);
-        let despues_es_letra = texto[fin..]
-            .chars()
-            .next()
-            .is_some_and(char::is_alphanumeric);
+        let antes_es_letra = mira_antes
+            && texto[..inicio]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric);
+        let despues_es_letra = mira_despues
+            && texto[fin..]
+                .chars()
+                .next()
+                .is_some_and(char::is_alphanumeric);
         if !antes_es_letra && !despues_es_letra {
             return true;
         }
@@ -118,6 +130,19 @@ fn la_barrera_distingue_una_palabra_de_un_trozo_de_otra() {
     assert!(!contiene_palabra("atiende un encargo", "cargo"));
     assert!(contiene_palabra("cargo", "cargo"));
     assert!(!contiene_palabra("encargos nuevos", "cargo"));
+    // Una prohibida que termina en «/» va seguida de letra en cualquier ruta real, y la barrera
+    // tiene que verla igual.
+    assert!(contiene_palabra(
+        "lee documentacion/guia.md",
+        "documentacion/"
+    ));
+    assert!(!contiene_palabra(
+        "lee subdocumentacion/guia.md",
+        "documentacion/"
+    ));
+    // Y por el otro lado: una prohibida que empieza por «/»
+    // va precedida de letra en cualquier ruta.
+    assert!(contiene_palabra("lee proyecto/guia.md", "/guia.md"));
 }
 
 #[test]

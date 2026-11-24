@@ -4,6 +4,7 @@
 //! de entonces se mantiene: ninguna fila sale sin cifra y sin fecha.** Una clase que el banco no
 //! pudo medir dice «sin medir», nunca una estimación.
 
+use crate::banco::resultados::{FilaDeDesempeno, FILAS_DE_DESEMPENO};
 use crate::config::{CapasGpu, MotorConfig};
 
 use super::mensajes::{texto_de_cifra, SIN_MEDIR};
@@ -74,6 +75,78 @@ fn con_cifras(entrada: &EntradaDeModelo, motor: &MotorConfig) -> String {
     texto
 }
 
+/// El título de la tabla de modelos por clase.
+const TITULO_POR_CLASE: &str = "## Qué modelo atiende cada clase de encargo";
+/// Lo que dice la tabla de una clase en la que ningún modelo aprobado tiene nota.
+const SIN_NOTAS: &str = "ninguno tiene nota";
+/// Quién atiende una clase sin ganador.
+const EL_DE_POR_DEFECTO: &str = "el modelo por defecto";
+
+/// La tabla de la guía con los modelos aprobados en cada clase y el que la atiende. `aprobado`
+/// dice si una entrada cuenta (esta tarjeta, con su fichero); las retiradas no cuentan nunca.
+/// `ganador_de` es la misma elección que hace el ciclo para un encargo de esa clase.
+pub fn componer_modelos_por_clase(
+    registro: &Registro,
+    aprobado: impl Fn(&EntradaDeModelo) -> bool,
+    ganador_de: impl Fn(FilaDeDesempeno) -> Option<String>,
+) -> String {
+    let aprobados = mas_recientes(
+        registro
+            .modelo
+            .iter()
+            .filter(|entrada| entrada.retirado_el.is_none() && aprobado(entrada)),
+    );
+    let mut texto = format!(
+        "{TITULO_POR_CLASE}\n\nCon una línea `Clase:` en el encargo, Programator carga el modelo \
+         que mejor hace esa clase según el banco. Sin ella, o si ningún modelo tiene nota en esa \
+         clase, lo atiende {EL_DE_POR_DEFECTO}. Las notas van de 0 a 5.\n\n\
+         | Se escribe | Clase de encargo | Modelos aprobados (nota) | Lo atiende |\n\
+         |---|---|---|---|\n"
+    );
+    for fila in FILAS_DE_DESEMPENO {
+        let notas: Vec<String> = aprobados
+            .iter()
+            .filter_map(|entrada| {
+                let nota = entrada.clase.iter().find(|c| c.clase == fila)?.nota?;
+                Some(format!(
+                    "{} ({})",
+                    entrada.nombre,
+                    texto_de_cifra(Some(nota))
+                ))
+            })
+            .collect();
+        let lista = if notas.is_empty() {
+            SIN_NOTAS.to_string()
+        } else {
+            notas.join(", ")
+        };
+        let atiende = ganador_de(fila).unwrap_or_else(|| EL_DE_POR_DEFECTO.to_string());
+        texto.push_str(&format!(
+            "| `{}` | {} | {lista} | **{atiende}** |\n",
+            fila.nombre_corto(),
+            fila.titulo()
+        ));
+    }
+    texto
+}
+
+/// De cada modelo, su medida más reciente, en orden de nombre.
+fn mas_recientes<'a>(
+    entradas: impl Iterator<Item = &'a EntradaDeModelo>,
+) -> Vec<&'a EntradaDeModelo> {
+    let mut por_nombre: std::collections::BTreeMap<&str, &EntradaDeModelo> =
+        std::collections::BTreeMap::new();
+    for entrada in entradas {
+        let sustituye = por_nombre
+            .get(entrada.nombre.as_str())
+            .is_none_or(|vieja| vieja.medido_el < entrada.medido_el);
+        if sustituye {
+            por_nombre.insert(&entrada.nombre, entrada);
+        }
+    }
+    por_nombre.into_values().collect()
+}
+
 /// La fecha sin la hora: «2026-11-12 12:19» da «2026-11-12».
 fn dia(medido_el: &str) -> &str {
     medido_el.split_whitespace().next().unwrap_or(medido_el)
@@ -123,11 +196,10 @@ mod pruebas {
 
     #[test]
     fn ninguna_fila_de_desempeno_puede_ir_sin_cifra_y_sin_fecha() {
-        // La regla dura del §6 de la especificación de la ficha del repertorio, que pasa de la
-        // plantilla escrita a mano a la redacción desde el registro (12/11/2026). Es lo que habría
-        // impedido que la fila de «diagnosticar» —«lo mejor que hace»— sobreviviera a la medición
-        // que la desmentía: 0 de 12. Una clase sin medir no puede salir en blanco ni con una
-        // estimación: dice «sin medir».
+        // La regla dura de la ficha del repertorio, que pasa de la plantilla escrita a mano a la
+        // redacción desde el registro. Es lo que habría impedido que la fila de «diagnosticar»
+        // —«lo mejor que hace»— sobreviviera a la medición que la desmentía: 0 de 12. Una clase
+        // sin medir no puede salir en blanco ni con una estimación: dice «sin medir».
         let entrada = entrada_de_ejemplo();
         let texto = componer_desempeno(&entrada.nombre, Some(&entrada), &como_se_midio());
 
@@ -248,5 +320,113 @@ mod pruebas {
         };
 
         assert!(entrada_del_modelo(&registro, &retirada.nombre).is_none());
+    }
+
+    /// La fila de la tabla por clase de `fila`, entera.
+    fn fila_de(tabla: &str, fila: FilaDeDesempeno) -> String {
+        let marca = format!("| `{}` |", fila.nombre_corto());
+        tabla
+            .lines()
+            .find(|linea| linea.starts_with(&marca))
+            .unwrap_or_else(|| {
+                panic!(
+                    "sin fila {marca}:
+{tabla}"
+                )
+            })
+            .to_string()
+    }
+
+    #[test]
+    fn la_tabla_por_clase_lista_los_aprobados_con_su_nota_y_marca_quien_atiende() {
+        let uno = entrada_de_ejemplo();
+        let mut otro = entrada_de_ejemplo();
+        otro.nombre = "qwen-coder".into();
+        otro.clase[0].nota = Some(3.5);
+        let registro = Registro {
+            modelo: vec![uno.clone(), otro],
+        };
+
+        let tabla = componer_modelos_por_clase(
+            &registro,
+            |_| true,
+            |fila| (fila == FilaDeDesempeno::FuncionAcotada).then(|| uno.nombre.clone()),
+        );
+
+        let acotada = fila_de(&tabla, FilaDeDesempeno::FuncionAcotada);
+        assert!(
+            acotada.contains(&format!("{} (5)", uno.nombre)),
+            "{acotada}"
+        );
+        assert!(acotada.contains("qwen-coder (3,5)"), "{acotada}");
+        assert!(
+            acotada.ends_with(&format!("**{}** |", uno.nombre)),
+            "{acotada}"
+        );
+        assert!(!tabla.contains("|||"));
+    }
+
+    #[test]
+    fn una_clase_sin_notas_lo_dice_y_la_atiende_el_de_por_defecto() {
+        let registro = Registro {
+            modelo: vec![entrada_de_ejemplo()],
+        };
+
+        let tabla = componer_modelos_por_clase(&registro, |_| true, |_| None);
+
+        let diagnostico = fila_de(&tabla, FilaDeDesempeno::Diagnostico);
+        assert!(diagnostico.contains(SIN_NOTAS), "{diagnostico}");
+        assert!(
+            diagnostico.contains(&format!("**{EL_DE_POR_DEFECTO}**")),
+            "{diagnostico}"
+        );
+    }
+
+    #[test]
+    fn ni_los_retirados_ni_los_no_aprobados_salen_en_la_tabla() {
+        let mut retirado = entrada_de_ejemplo();
+        retirado.retirado_el = Some("2026-11-20".into());
+        let mut sin_fichero = entrada_de_ejemplo();
+        sin_fichero.nombre = "sin-fichero".into();
+        let registro = Registro {
+            modelo: vec![retirado, sin_fichero],
+        };
+
+        let tabla = componer_modelos_por_clase(
+            &registro,
+            |entrada| entrada.nombre != "sin-fichero",
+            |_| None,
+        );
+
+        let acotada = fila_de(&tabla, FilaDeDesempeno::FuncionAcotada);
+        assert!(acotada.contains(SIN_NOTAS), "{acotada}");
+    }
+
+    #[test]
+    fn de_cada_modelo_cuenta_su_medida_mas_reciente() {
+        let mut vieja = entrada_de_ejemplo();
+        vieja.clase[0].nota = Some(1.0);
+        let mut nueva = entrada_de_ejemplo();
+        nueva.medido_el = "2026-11-20 10:00".into();
+        nueva.clase[0].nota = Some(4.0);
+        let registro = Registro {
+            modelo: vec![nueva, vieja],
+        };
+
+        let tabla = componer_modelos_por_clase(&registro, |_| true, |_| None);
+
+        let acotada = fila_de(&tabla, FilaDeDesempeno::FuncionAcotada);
+        assert!(
+            acotada.contains("(4)") && !acotada.contains("(1)"),
+            "{acotada}"
+        );
+    }
+
+    #[test]
+    fn la_tabla_tiene_una_fila_por_clase_con_su_nombre_corto() {
+        let tabla = componer_modelos_por_clase(&Registro::default(), |_| true, |_| None);
+        for fila in FILAS_DE_DESEMPENO {
+            fila_de(&tabla, fila);
+        }
     }
 }

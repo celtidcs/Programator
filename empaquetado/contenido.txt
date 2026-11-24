@@ -1,0 +1,47 @@
+# Lo que lleva el paquete portable de Programator. Es la única lista: la aplica
+# empaquetado/empaquetar.ps1, en local y en la publicación, y la CI compara cada paquete con ella
+# antes de subirlo.
+#
+# Una entrada por línea: «origen -> destino», con rutas relativas a la raíz del repositorio
+# (origen) y a la raíz del paquete (destino). Un origen que acaba en «/» es una carpeta y se copia
+# entera. Una entrada que solo va en un sistema empieza por su marca: [windows] o [linux].
+# Todas son obligatorias: si falta un origen, el empaquetado falla.
+#
+# El binario no va aquí: lo recibe el guion, porque sale de la compilación y no del repositorio.
+# Lo que empieza por terceros/ tampoco está en el repositorio: lo trae del release de su proyecto
+# empaquetado/traer-vigilante.ps1, que hay que ejecutar antes de empaquetar.
+# Una plantilla nueva en plantillas/ tiene que añadirse a esta lista a propósito: la prueba
+# tests/contenido_del_paquete.rs falla mientras no esté.
+
+# Documentación para quien lo instala
+plantillas/LEEME-portable.md -> LEEME.md
+docs/instalacion-paso-a-paso.md -> INSTALACION.md
+docs/defectos-conocidos.md -> DEFECTOS-CONOCIDOS.md
+LICENSE -> LICENSE
+
+# Configuración de ejemplo y preparación del portable
+programator.ejemplo.toml -> programator.ejemplo.toml
+[windows] preparar-portable.ps1 -> preparar-portable.ps1
+[windows] recursos/programator.ico -> programator.ico
+[linux] preparar-portable.sh -> preparar-portable.sh
+
+# Plantillas que se componen y se copian al proyecto anfitrión (LEEME-portable.md ya va arriba)
+plantillas/auditoria-solid.md -> plantillas/auditoria-solid.md
+plantillas/como-encargar-a-programator.md -> plantillas/como-encargar-a-programator.md
+plantillas/formato-auditoria.md -> plantillas/formato-auditoria.md
+plantillas/instrucciones-del-proyecto.md -> plantillas/instrucciones-del-proyecto.md
+plantillas/preambulo-del-modelo.md -> plantillas/preambulo-del-modelo.md
+plantillas/recordatorio-de-encargo.md -> plantillas/recordatorio-de-encargo.md
+plantillas/revision-mensual.md -> plantillas/revision-mensual.md
+
+# El banco de modelos, para medir un modelo en otra máquina
+evaluacion/banco/encargos/ -> banco/encargos/
+evaluacion/banco/banco.ejemplo.toml -> banco/banco.toml
+
+# El vigilante del canal de Gestor Agentes (GPL-3.0-or-later, código fuente en
+# https://github.com/celtidcs/gestor-agentes), con su licencia y su LEEME. Programator lo deja en
+# .gestor/vigilante/ del proyecto si no hay uno. Versión: empaquetado/version-del-vigilante.txt.
+[windows] terceros/vigilante/gestor-vigilante.exe -> vigilante/gestor-vigilante.exe
+[linux] terceros/vigilante/gestor-vigilante -> vigilante/gestor-vigilante
+terceros/vigilante/Licencia.txt -> vigilante/Licencia.txt
+terceros/vigilante/LEEME.txt -> vigilante/LEEME.txt

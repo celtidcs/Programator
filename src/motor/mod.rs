@@ -1,16 +1,20 @@
 //! Capa de inferencia. No sabe qué es un buzón, ni un agente, ni el protocolo: solo conversa.
 //! Esa ignorancia deliberada es lo que permite probar todo lo demás sin encender la GPU.
 
+pub mod cabida;
 pub mod consumo;
 pub mod continuidad;
+pub mod declaracion;
 pub mod doble;
 pub mod encaje;
 pub mod encaje_historico;
+pub mod fichero_de_modelo;
 pub mod gguf;
 pub mod hardware;
 pub mod llama;
-pub mod preparar;
+pub mod mensajes;
 pub mod proceso;
+pub mod soltar;
 pub mod tipos_tensor;
 
 /// Dirección local en la que se confina la comunicación con el motor de inferencia.
@@ -19,7 +23,19 @@ pub mod tipos_tensor;
 /// exclusivamente en la interfaz de bucle invertido local (`127.0.0.1`). Exponer el motor a
 /// interfaces de red externas (`0.0.0.0` o IPs de red) permitiría acceso no autenticado a la GPU
 /// y al proceso del servidor, violando el principio de confinamiento estricto.
-pub(crate) const HOST_LOCAL: &str = "127.0.0.1";
+pub(crate) const ANFITRION_LOCAL: &str = "127.0.0.1";
+
+/// Rutas de la API de `llama-server` que usa Programator (`tools/server/README.md` de llama.cpp):
+/// la de salud, la de propiedades, que solo tiene `llama-server`, y la de conversación, la
+/// compatible con OpenAI.
+pub(crate) const RUTA_SALUD: &str = "/health";
+pub(crate) const RUTA_PROPIEDADES: &str = "/props";
+pub(crate) const RUTA_CONVERSACION: &str = "/v1/chat/completions";
+
+/// La dirección base del motor en `puerto`, siempre en `ANFITRION_LOCAL`.
+pub(crate) fn url_local(puerto: u16) -> String {
+    format!("http://{ANFITRION_LOCAL}:{puerto}")
+}
 
 use crate::error::Resultado;
 
@@ -129,3 +145,13 @@ pub use consumo::Consumo;
 pub use doble::MotorDoble;
 pub use gguf::MetadatosModelo;
 pub use llama::MotorLlama;
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    #[test]
+    fn la_url_del_motor_va_siempre_al_bucle_local() {
+        assert_eq!(url_local(8080), "http://127.0.0.1:8080");
+    }
+}

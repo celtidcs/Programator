@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::banco::resultados::FilaDeDesempeno;
 use crate::error::{Error, Resultado};
 use crate::ficheros;
+use crate::motor::encaje::MedidaDelBanco;
+
+/// Las conversaciones en paralelo de una entrada que no las guarda. Las primeras versiones del
+/// registro no las guardaban, y el encaje daba por hecho que el banco medía con una; `[motor]
+/// paralelo` vale 1 de fábrica.
+const PARALELO_SIN_ANOTAR: u32 = 1;
 
 /// Todo el registro: una entrada por modelo y tarjeta.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -33,6 +39,10 @@ pub struct EntradaDeModelo {
     pub capas_en_gpu: Option<u32>,
     pub contexto: u32,
     pub cache_kv: String,
+    /// Las conversaciones en paralelo de la tanda. Opcional, para que los registros de antes del
+    /// 23/11/2026, que no lo guardan, se lean: valen como [`PARALELO_SIN_ANOTAR`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paralelo: Option<u32>,
     pub vram_ocupada_mib: Option<u64>,
     pub generando_tokens_por_segundo: Option<f64>,
     pub leyendo_tokens_por_segundo: Option<f64>,
@@ -50,6 +60,24 @@ pub struct EntradaDeModelo {
     /// 13/11/2026 no lo traen, y la revisión no compara sus cifras de código con las de otras.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codigo_puntuado_con: Option<CodigoPuntuadoCon>,
+    /// De dónde se descargó el fichero, para poder reponerlo si falta de la carpeta de modelos.
+    /// Opcional: los registros de antes del 24/11/2026 no lo guardan, y la revisión lo completa
+    /// por la huella cuando la encuentra en una búsqueda o en una lista de candidatos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origen: Option<Origen>,
+}
+
+/// De dónde salió el fichero de un modelo: el repositorio de Hugging Face y el nombre del fichero
+/// allí, que no tiene por qué ser el de la carpeta de modelos.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origen {
+    /// El repositorio, como «autor/nombre».
+    pub repositorio: String,
+    /// El nombre del fichero dentro del repositorio.
+    pub fichero: String,
+    /// Los bytes del fichero, si se sabían al anotarlo. Sirve para desempatar sin tenerlo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tamano: Option<u64>,
 }
 
 /// Cómo se puntuaron los encargos de código de una tanda. Una nota de pruebas y una de rúbrica no
@@ -85,6 +113,26 @@ pub struct NotaDeClase {
     pub tokens_por_segundo: Option<f64>,
 }
 
+impl Registro {
+    /// Lo que midió el banco de un modelo en una tarjeta, para que `capas_gpu = "auto"` lo use.
+    /// Se busca por nombre, como la guía y la revisión: la huella exige leer el fichero entero.
+    /// Si hay varias tandas, vale la más reciente; si no guardó capas o VRAM, no hay medida.
+    pub fn medida_para(&self, nombre: &str, tarjeta: &str) -> Option<MedidaDelBanco> {
+        let entrada = self
+            .modelo
+            .iter()
+            .filter(|e| e.nombre == nombre && e.tarjeta == tarjeta)
+            .max_by(|a, b| a.medido_el.cmp(&b.medido_el))?;
+        Some(MedidaDelBanco {
+            capas: entrada.capas_en_gpu?,
+            vram_ocupada_mib: entrada.vram_ocupada_mib?,
+            contexto: entrada.contexto,
+            cache_kv: entrada.cache_kv.clone(),
+            paralelo: entrada.paralelo.unwrap_or(PARALELO_SIN_ANOTAR),
+        })
+    }
+}
+
 impl EntradaDeModelo {
     /// Lo que identifica una entrada: el mismo modelo en otra tarjeta da otras cifras.
     pub fn misma_clave(&self, otra: &EntradaDeModelo) -> bool {
@@ -96,13 +144,13 @@ impl EntradaDeModelo {
 pub fn leer(ruta: &Path) -> Resultado<Registro> {
     let texto = ficheros::leer_si_existe(ruta)?;
     toml::from_str(&texto)
-        .map_err(|causa| Error::Registro(format!("«{}» no se puede leer: {causa}", ruta.display())))
+        .map_err(|causa| Error::Registro(super::mensajes::registro_que_no_se_lee(ruta, &causa)))
 }
 
 /// Escribe el registro entero.
 pub fn escribir(ruta: &Path, registro: &Registro) -> Resultado<()> {
     let texto = toml::to_string(registro)
-        .map_err(|causa| Error::Registro(format!("no se pudo componer el registro: {causa}")))?;
+        .map_err(|causa| Error::Registro(super::mensajes::registro_sin_componer(&causa)))?;
     ficheros::escribir(ruta, &texto)
 }
 
@@ -124,6 +172,7 @@ pub(crate) mod pruebas {
             capas_en_gpu: Some(34),
             contexto: 32768,
             cache_kv: "q8_0".into(),
+            paralelo: None,
             vram_ocupada_mib: Some(13763),
             generando_tokens_por_segundo: Some(10.5),
             leyendo_tokens_por_segundo: Some(1013.9),
@@ -149,6 +198,78 @@ pub(crate) mod pruebas {
             retirado_el: None,
             motivo_de_retirada: None,
             codigo_puntuado_con: None,
+            origen: None,
+        }
+    }
+
+    #[test]
+    fn la_medida_se_busca_por_nombre_y_tarjeta_y_vale_la_tanda_mas_reciente() {
+        let vieja = entrada_de_ejemplo();
+        let mut nueva = entrada_de_ejemplo();
+        nueva.medido_el = "2026-11-20 10:00".into();
+        nueva.capas_en_gpu = Some(36);
+        let mut otra_tarjeta = entrada_de_ejemplo();
+        otra_tarjeta.tarjeta = "otra".into();
+        otra_tarjeta.capas_en_gpu = Some(1);
+        let registro = Registro {
+            modelo: vec![vieja.clone(), nueva, otra_tarjeta],
+        };
+
+        let medida = registro.medida_para(&vieja.nombre, &vieja.tarjeta).unwrap();
+
+        assert_eq!(medida.capas, 36);
+        assert_eq!(medida.vram_ocupada_mib, 13763);
+        assert_eq!(medida.contexto, 32768);
+        assert_eq!(medida.cache_kv, "q8_0");
+        assert_eq!(registro.medida_para("otro-modelo", &vieja.tarjeta), None);
+    }
+
+    /// La medida lleva las conversaciones en paralelo con que se tomó; las
+    /// entradas de antes, que no las guardan, cuentan como una.
+    #[test]
+    fn la_medida_lleva_las_conversaciones_en_paralelo_y_sin_anotar_son_una() {
+        let antigua = entrada_de_ejemplo();
+        let mut con_dos = entrada_de_ejemplo();
+        con_dos.tarjeta = "otra".into();
+        con_dos.paralelo = Some(2);
+        let registro = Registro {
+            modelo: vec![antigua.clone(), con_dos.clone()],
+        };
+
+        let de_la_antigua = registro.medida_para(&antigua.nombre, &antigua.tarjeta);
+        let de_la_nueva = registro.medida_para(&con_dos.nombre, &con_dos.tarjeta);
+
+        assert_eq!(de_la_antigua.map(|m| m.paralelo), Some(1));
+        assert_eq!(de_la_nueva.map(|m| m.paralelo), Some(2));
+    }
+
+    #[test]
+    fn una_entrada_sin_paralelo_se_escribe_sin_la_clave_y_se_lee_igual() {
+        let antigua = Registro {
+            modelo: vec![entrada_de_ejemplo()],
+        };
+
+        let texto = toml::to_string(&antigua).unwrap();
+        let leida: Registro = toml::from_str(&texto).unwrap();
+
+        assert!(!texto.contains("paralelo"), "{texto}");
+        assert_eq!(leida, antigua);
+    }
+
+    #[test]
+    fn sin_capas_o_sin_vram_no_hay_medida() {
+        let mut sin_capas = entrada_de_ejemplo();
+        sin_capas.capas_en_gpu = None;
+        let mut sin_vram = entrada_de_ejemplo();
+        sin_vram.vram_ocupada_mib = None;
+        for entrada in [sin_capas, sin_vram] {
+            let registro = Registro {
+                modelo: vec![entrada.clone()],
+            };
+            assert_eq!(
+                registro.medida_para(&entrada.nombre, &entrada.tarjeta),
+                None
+            );
         }
     }
 
@@ -187,6 +308,40 @@ pub(crate) mod pruebas {
             texto.contains("codigo_puntuado_con = \"rubrica\""),
             "{texto}"
         );
+        assert_eq!(toml::from_str::<Registro>(&texto).unwrap(), registro);
+    }
+
+    /// Un registro de antes del 24/11/2026 no guarda de dónde salió cada modelo: se lee, y al
+    /// escribirlo no gana ninguna clave.
+    #[test]
+    fn un_registro_sin_origen_se_lee_y_se_escribe_igual() {
+        let registro = Registro {
+            modelo: vec![entrada_de_ejemplo()],
+        };
+        let de_antes = toml::to_string(&registro).unwrap();
+        assert!(!de_antes.contains("origen"), "{de_antes}");
+
+        let leido: Registro = toml::from_str(&de_antes).unwrap();
+
+        assert_eq!(leido.modelo[0].origen, None);
+        assert_eq!(toml::to_string(&leido).unwrap(), de_antes);
+    }
+
+    #[test]
+    fn el_origen_hace_ida_y_vuelta() {
+        let mut entrada = entrada_de_ejemplo();
+        entrada.origen = Some(Origen {
+            repositorio: "unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF".into(),
+            fichero: "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf".into(),
+            tamano: Some(14_334_000_000),
+        });
+        let registro = Registro {
+            modelo: vec![entrada],
+        };
+
+        let texto = toml::to_string(&registro).unwrap();
+
+        assert!(texto.contains("[modelo.origen]"), "{texto}");
         assert_eq!(toml::from_str::<Registro>(&texto).unwrap(), registro);
     }
 

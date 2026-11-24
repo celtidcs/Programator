@@ -18,11 +18,14 @@ use serde_json::{json, Value};
 
 use crate::error::Resultado;
 use crate::motor::{proceso::EstadoServidor, Consumo, Mensaje, Motor, Papel, Respuesta};
+use crate::terminal::Terminal;
 
 /// Un motor que deja por escrito cada vuelta de la conversación antes de devolverla.
 pub struct MotorRegistrado<'a> {
     interno: &'a mut dyn Motor,
     fichero: PathBuf,
+    /// Por dónde se avisa, una vez, si no se puede escribir.
+    terminal: &'a dyn Terminal,
     /// Cuántos mensajes de la conversación están ya en el fichero: en cada vuelta solo se
     /// escriben los nuevos, para no repetir las normas y el encargo en cada línea.
     escritos: usize,
@@ -31,10 +34,11 @@ pub struct MotorRegistrado<'a> {
 }
 
 impl<'a> MotorRegistrado<'a> {
-    pub fn nuevo(interno: &'a mut dyn Motor, fichero: PathBuf) -> Self {
+    pub fn nuevo(interno: &'a mut dyn Motor, fichero: PathBuf, terminal: &'a dyn Terminal) -> Self {
         Self {
             interno,
             fichero,
+            terminal,
             escritos: 0,
             vuelta: 0,
             avisado: false,
@@ -44,7 +48,8 @@ impl<'a> MotorRegistrado<'a> {
     fn anotar(&mut self, lineas: &[Value]) {
         if let Err(e) = anadir_lineas(&self.fichero, lineas) {
             if !self.avisado {
-                eprintln!("{}", aviso_fallo_al_anotar(&self.fichero, &e));
+                self.terminal
+                    .avisar(&aviso_fallo_al_anotar(&self.fichero, &e));
                 self.avisado = true;
             }
         }
@@ -150,6 +155,7 @@ fn anadir_lineas(fichero: &std::path::Path, lineas: &[Value]) -> std::io::Result
 mod pruebas {
     use super::*;
     use crate::motor::{MotorDoble, SolicitudHerramienta};
+    use crate::terminal::TerminalDeMentira;
 
     fn mensaje(papel: Papel, contenido: &str) -> Mensaje {
         Mensaje::nuevo(papel, contenido)
@@ -212,7 +218,8 @@ mod pruebas {
             Respuesta::Texto("primera".into()),
             Respuesta::Texto("segunda".into()),
         ]);
-        let mut registrado = MotorRegistrado::nuevo(&mut doble, fichero.clone());
+        let terminal = TerminalDeMentira::default();
+        let mut registrado = MotorRegistrado::nuevo(&mut doble, fichero.clone(), &terminal);
         let mut conversacion = vec![mensaje(Papel::Usuario, "encargo")];
         registrado.responder(&conversacion).unwrap();
         conversacion.push(mensaje(Papel::Modelo, "primera"));
@@ -238,7 +245,9 @@ mod pruebas {
         let estorbo = dir.path().join("estorbo");
         std::fs::write(&estorbo, "").unwrap();
         let mut doble = MotorDoble::con_guion(vec![Respuesta::Texto("hecho".into())]);
-        let mut registrado = MotorRegistrado::nuevo(&mut doble, estorbo.join("conversacion.jsonl"));
+        let terminal = TerminalDeMentira::default();
+        let mut registrado =
+            MotorRegistrado::nuevo(&mut doble, estorbo.join("conversacion.jsonl"), &terminal);
         let respuesta = registrado.responder(&[mensaje(Papel::Usuario, "encargo")]);
         assert!(matches!(respuesta, Ok(Respuesta::Texto(ref t)) if t == "hecho"));
     }

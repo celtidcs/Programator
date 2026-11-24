@@ -7,13 +7,13 @@
 //! había menos VRAM libre en ese instante por otra razón externa. Una línea por arranque convierte
 //! esa pregunta en mirar dos líneas del fichero en vez de no poder saberlo.
 //!
-//! **Separado de `encaje` a propósito.** `encaje::decidir` y `encaje::resolver` son la política,
+//! **Separado de `encaje` a propósito.** `encaje/reparto.rs` y `encaje::resolver` son la política,
 //! aritmética pura o la orquestación que pesa el modelo; este módulo solo redacta una línea de
 //! texto con lo que ya se decidió y la añade a un fichero. Mezclar las dos cosas haría que ninguna
 //! se leyera entera.
 
-use super::encaje::en_gib;
 use super::hardware::Gpu;
+use super::mensajes::en_gib;
 use crate::error::{Error, Resultado};
 use std::io::Write;
 use std::path::Path;
@@ -24,7 +24,7 @@ use std::path::Path;
 /// mismo umbral a partir del cual `sesion::Ajustes` se introdujo para `ejecutar_pasada`: es donde
 /// empiezan a confundirse entre sí al llamar.
 pub struct DatosDeEncaje<'a> {
-    /// Formato §3.2 del protocolo, igual que las marcas de tiempo del canal.
+    /// Mismo formato que las marcas de tiempo del canal.
     pub marca_tiempo: &'a str,
     pub gpu: Option<&'a Gpu>,
     pub contexto: u32,
@@ -82,6 +82,65 @@ pub fn registrar(ruta: &Path, linea: &str) -> Resultado<()> {
     writeln!(fichero, "{linea}").map_err(|causa| Error::Escritura {
         ruta: ruta.to_path_buf(),
         causa,
+    })
+}
+
+/// Lo que se sabe de la memoria al terminar un encargo. Las cifras que no se pudieron medir (sin
+/// tarjeta medible, motor ajeno) van como `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Memoria {
+    pub modelo: String,
+    pub capas: u32,
+    /// Las que midió el banco con este modelo en esta tarjeta.
+    pub capas_medidas: Option<u32>,
+    /// Las capas del modelo, de su cabecera GGUF.
+    pub capas_totales: Option<u32>,
+    pub libre_antes_mib: Option<u64>,
+    pub motor_mib: Option<u64>,
+    pub libre_despues_mib: Option<u64>,
+}
+
+use crate::unidades::SIN_MEDIR;
+
+/// La línea de memoria de una entrega: modelo, capas en la tarjeta, VRAM libre antes de cargar,
+/// VRAM que ocupa el motor y VRAM libre al terminar. Se separa con `·` y nunca con `|`: el banco
+/// cuenta como fila de tabla toda línea con tres barras.
+pub fn linea_de_memoria(memoria: &Memoria) -> String {
+    let mib = |cifra: Option<u64>| {
+        cifra
+            .map(|mib| format!("{mib} MiB"))
+            .unwrap_or_else(|| SIN_MEDIR.to_string())
+    };
+    let capas = match memoria.capas_totales {
+        Some(total) => format!("{} de {total} capas en la tarjeta", memoria.capas),
+        None => format!("{} capas en la tarjeta", memoria.capas),
+    };
+    format!(
+        "Memoria: {} · {capas} · libre antes de cargar: {} · ocupa el motor: {} · libre al \
+         terminar: {}",
+        memoria.modelo,
+        mib(memoria.libre_antes_mib),
+        mib(memoria.motor_mib),
+        mib(memoria.libre_despues_mib)
+    )
+}
+
+/// El aviso de la entrega cuando el encaje dejó menos capas en la tarjeta que las que midió el
+/// banco: el encargo se atendió igual, más lento. Las dos cifras se acotan a `total + 1` (las
+/// capas más la de salida), porque el banco puede haber guardado 99 por «todas».
+pub fn aviso_menos_capas(memoria: &Memoria) -> Option<String> {
+    let medidas = memoria.capas_medidas?;
+    let acotar = |capas: u32| match memoria.capas_totales {
+        Some(total) => capas.min(total.saturating_add(1)),
+        None => capas,
+    };
+    let (usadas, medidas) = (acotar(memoria.capas), acotar(medidas));
+    (usadas < medidas).then(|| {
+        format!(
+            "⚠️ No cabían todas las capas: hay {usadas} en la tarjeta y el banco midió este \
+             modelo con {medidas}. El encargo se ha atendido igual, más lento; libera memoria de \
+             la tarjeta o baja el contexto para recuperar la velocidad medida."
+        )
     })
 }
 
@@ -198,5 +257,71 @@ mod pruebas {
         assert!(mensaje.contains("No se pudo escribir el historial de encaje"));
         assert!(mensaje.contains("Consecuencia:"));
         assert!(mensaje.contains("Qué hacer:"));
+    }
+
+    fn memoria() -> Memoria {
+        Memoria {
+            modelo: "devstral".to_string(),
+            capas: 41,
+            capas_medidas: Some(41),
+            capas_totales: Some(40),
+            libre_antes_mib: Some(15_000),
+            motor_mib: Some(13_763),
+            libre_despues_mib: Some(1_200),
+        }
+    }
+
+    #[test]
+    fn la_linea_de_memoria_trae_todas_las_cifras_y_ninguna_barra() {
+        let linea = linea_de_memoria(&memoria());
+        assert_eq!(
+            linea,
+            "Memoria: devstral · 41 de 40 capas en la tarjeta · libre antes de cargar: 15000 MiB · \
+             ocupa el motor: 13763 MiB · libre al terminar: 1200 MiB"
+        );
+        assert!(!linea.contains('|'));
+    }
+
+    #[test]
+    fn sin_tarjeta_medible_las_cifras_dicen_que_no_se_midieron() {
+        let linea = linea_de_memoria(&Memoria {
+            capas_totales: None,
+            libre_antes_mib: None,
+            motor_mib: None,
+            libre_despues_mib: None,
+            ..memoria()
+        });
+        assert!(linea.contains("41 capas en la tarjeta"), "{linea}");
+        assert_eq!(linea.matches("sin medir").count(), 3, "{linea}");
+    }
+
+    #[test]
+    fn con_menos_capas_que_las_medidas_se_avisa_y_con_las_mismas_no() {
+        assert_eq!(aviso_menos_capas(&memoria()), None);
+        let menos = Memoria {
+            capas: 30,
+            ..memoria()
+        };
+        let aviso = aviso_menos_capas(&menos).unwrap();
+        assert!(
+            aviso.contains("hay 30") && aviso.contains("con 41"),
+            "{aviso}"
+        );
+        assert_eq!(
+            aviso_menos_capas(&Memoria {
+                capas_medidas: None,
+                ..menos
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn el_99_del_banco_cuenta_como_todas_las_capas() {
+        let todas = Memoria {
+            capas_medidas: Some(99),
+            ..memoria()
+        };
+        assert_eq!(aviso_menos_capas(&todas), None);
     }
 }

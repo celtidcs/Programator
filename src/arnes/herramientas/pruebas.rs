@@ -1,16 +1,102 @@
 //! Pruebas unitarias de `Repertorio`: concesión y denegación de verbos del repertorio confinado,
 //! verificación en el ámbito, recorte seguro UTF-8, versionado de candidatos y publicación en el buzón.
 
+use super::propuesta::con_salto_final;
 use super::*;
 use crate::motor::SolicitudHerramienta;
 
-fn repertorio_de_prueba() -> (tempfile::TempDir, Repertorio) {
+fn repertorio_de_prueba() -> (tempfile::TempDir, Repertorio<'static>) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
     let ambito = Ambito::nuevo(dir.path()).unwrap();
     let canal = crate::protocolo::Canal::nuevo(dir.path(), "Programator").unwrap();
-    (dir, Repertorio::nuevo(ambito, canal))
+    (
+        dir,
+        Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal),
+    )
+}
+
+/// La carpeta de las propuestas sale del nombre configurado del agente, no va fija a
+/// «programator».
+#[test]
+fn la_propuesta_va_a_la_carpeta_del_nombre_configurado() {
+    assert_eq!(
+        carpeta_de_candidatos("Programator"),
+        ".gestor/candidatos/programator"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let ambito = Ambito::nuevo(dir.path()).unwrap();
+    let canal = crate::protocolo::Canal::nuevo(dir.path(), "Cobalto").unwrap();
+    let mut r = Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal);
+
+    let decision = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "a.rs", "contenido": "pub fn a() {}\n"}),
+    ));
+
+    assert!(matches!(decision, Decision::Concedida(_)), "{decision:?}");
+    assert!(dir.path().join(".gestor/candidatos/cobalto/a.rs").exists());
+    assert!(!dir.path().join(".gestor/candidatos/programator").exists());
+}
+
+/// Los verbos que se deniegan siempre dan el motivo de su ficha, que es el único sitio donde está
+/// escrito.
+#[test]
+fn los_verbos_que_se_deniegan_siempre_dan_el_motivo_de_su_ficha() {
+    let (_dir, mut r) = repertorio_de_prueba();
+    for nombre in ["buscar", "proponer_poda"] {
+        let Some(crate::arnes::ficha::Ficha {
+            estado: Estado::DenegadaSiempre { motivo },
+            ..
+        }) = crate::arnes::ficha::buscar(nombre).copied()
+        else {
+            panic!("«{nombre}» se deniega siempre en su ficha");
+        };
+        let decision = r.atender(&solicitar(nombre, serde_json::json!({})));
+        let Decision::Denegada(dado) = decision else {
+            panic!("«{nombre}» no puede concederse: {decision:?}");
+        };
+        assert_eq!(dado, motivo, "{nombre}");
+    }
+}
+
+/// `atender` despacha por el `Estado` de la ficha. Ningún verbo que no sea concedible se concede,
+/// ni con argumentos válidos, y su denegación lleva el motivo de su ficha: el de un verbo que se
+/// deniega siempre, tal cual; el de uno pendiente, dentro de lo que se dice. Recorre todas las
+/// fichas, no una lista escrita aquí: un verbo nuevo queda cubierto solo.
+#[test]
+fn todo_verbo_no_concedible_se_deniega_con_el_motivo_de_su_ficha() {
+    // Cada argumento obligatorio lleva un valor de la lista blanca de verificaciones, para que la
+    // denegación de `verificar` no se quede en los argumentos y llegue al estado de su ficha.
+    const VALOR_QUE_PASA_LA_LISTA_BLANCA: &str = "clippy";
+    let (_dir, mut r) = repertorio_de_prueba();
+    let mut vistos = 0;
+    for ficha in crate::arnes::ficha::todas() {
+        let argumentos: serde_json::Map<String, serde_json::Value> = ficha
+            .obligatorios
+            .iter()
+            .map(|a| (a.nombre.to_string(), VALOR_QUE_PASA_LA_LISTA_BLANCA.into()))
+            .collect();
+        let decision = r.atender(&solicitar(ficha.nombre, argumentos.into()));
+        match ficha.estado {
+            Estado::Concedible => continue,
+            Estado::DenegadaSiempre { motivo } => {
+                let Decision::Denegada(dado) = decision else {
+                    panic!("«{}» no puede concederse: {decision:?}", ficha.nombre);
+                };
+                assert_eq!(dado, motivo, "{}", ficha.nombre);
+            }
+            Estado::Pendiente { motivo, .. } => {
+                let Decision::Denegada(dado) = decision else {
+                    panic!("«{}» no puede concederse: {decision:?}", ficha.nombre);
+                };
+                assert!(dado.contains(motivo), "{}: {dado}", ficha.nombre);
+            }
+        }
+        vistos += 1;
+    }
+    assert!(vistos > 0, "la ficha no tiene ningún verbo no concedible");
 }
 
 fn solicitar(nombre: &str, argumentos: serde_json::Value) -> SolicitudHerramienta {
@@ -98,6 +184,11 @@ fn la_lista_declarable_excluye_lo_que_siempre_se_deniega() {
     }
 }
 
+/// Lo leído sin su primera línea, la del total de líneas que pone el arnés.
+fn sin_encabezado(leido: &str) -> &str {
+    leido.split_once("]:\n").map_or(leido, |(_, resto)| resto)
+}
+
 #[test]
 fn leer_fichero_entrega_el_contenido_tal_cual_cuando_cabe_entero() {
     let (dir, mut r) = repertorio_de_prueba();
@@ -117,8 +208,10 @@ fn leer_fichero_entrega_el_contenido_tal_cual_cuando_cabe_entero() {
     let Decision::Concedida(texto) = decision else {
         panic!("la lectura debía concederse: {decision:?}");
     };
+    // Delante va el total de líneas; el fichero, intacto.
     assert_eq!(
-        texto, original,
+        texto,
+        format!("[«src/trampa.rs»: 2 líneas]:\n{original}"),
         "un fichero que cabe entero se entrega byte a byte, con sus CRLF y su salto final"
     );
 }
@@ -140,6 +233,7 @@ fn leer_fichero_recorta_un_fichero_enorme_y_avisa_del_tamano_real() {
     let (trozo, aviso) = texto
         .split_once("\n\n[Aviso del arnés:")
         .expect("un fichero recortado tiene que llevar aviso de recorte");
+    let trozo = sin_encabezado(trozo);
     assert_eq!(
         trozo.len(),
         TOPE_LECTURA_POR_DEFECTO,
@@ -177,6 +271,7 @@ fn el_recorte_no_parte_un_caracter_multibyte_por_la_mitad() {
     let (trozo, _aviso) = texto
         .split_once("\n\n[Aviso del arnés:")
         .expect("un fichero recortado tiene que llevar aviso de recorte");
+    let trozo = sin_encabezado(trozo);
     assert_eq!(
         trozo.chars().count(),
         cabida,
@@ -200,7 +295,8 @@ fn el_tope_de_lectura_lo_decide_la_configuracion() {
 
     let ambito = Ambito::nuevo(dir.path()).unwrap();
     let canal = Canal::nuevo(dir.path(), "programator").unwrap();
-    let mut r = Repertorio::nuevo(ambito, canal).con_tope_de_lectura(20);
+    let mut r =
+        Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal).con_tope_de_lectura(20);
 
     let Decision::Concedida(texto) = r.atender(&solicitar(
         "leer_fichero",
@@ -302,7 +398,7 @@ fn el_repertorio_es_exactamente_el_que_fija_la_especificacion() {
 }
 
 /// Un repertorio con la puerta puesta, y un comprobador que acepta o rechaza a voluntad.
-fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio) {
+fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio<'static>) {
     let (dir, repertorio) = repertorio_de_prueba();
     let codigo = if acepta { 0 } else { 1 };
     let mut comprobadores = Comprobadores::new();
@@ -375,6 +471,37 @@ fn sin_prefijo_extendido_deja_la_ruta_absoluta_y_quita_solo_el_prefijo() {
         crate::plataforma::sin_prefijo_extendido(std::path::Path::new("/home/x")),
         std::path::PathBuf::from("/home/x")
     );
+}
+
+#[test]
+fn el_tope_de_salida_del_toml_llega_hasta_lo_que_ve_el_modelo() {
+    // Un tope distinto del de fábrica, puesto en la sección [verificacion]: lo que el modelo lee
+    // del rechazo se corta ahí, y no en los 1200 caracteres de siempre.
+    let (_dir, repertorio) = repertorio_de_prueba();
+    let mut verificacion = crate::config::Verificacion {
+        tiempo_maximo_segundos: 10,
+        maximo_salida_al_modelo: 10,
+        ..crate::config::Verificacion::default()
+    };
+    verificacion.comprobadores.insert(
+        "rs".to_string(),
+        crate::plataforma::ordenes_de_prueba::eco_y_codigo("el compilador dijo que no", 1),
+    );
+    let mut r = repertorio.con_ajustes_de_verificacion(&verificacion);
+
+    let decision = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "roto.rs", "contenido": "esto no es Rust"}),
+    ));
+
+    let Decision::Concedida(texto) = decision else {
+        panic!("{decision:?}");
+    };
+    assert!(texto.contains("NO pasa la comprobación"), "{texto}");
+    // La orden también lo dice; lo que se mira es lo que sigue, la salida.
+    let salida = texto.split_once("»:\n").map_or("", |(_, s)| s);
+    assert!(salida.starts_with("el compila\n[…recortado]"), "{texto}");
+    assert!(!salida.contains("dijo que no"), "{texto}");
 }
 
 #[test]
@@ -480,6 +607,31 @@ fn escribir_propuesta_solo_puede_escribir_bajo_candidatos() {
     );
 }
 
+/// Con las variantes 002 a 098 ocupadas y la 099 como enlace roto hacia fuera, si
+/// `siguiente_libre` devolviera la 099, la escritura saldría del proyecto.
+#[cfg(unix)]
+#[test]
+fn con_todas_las_variantes_ocupadas_y_la_ultima_un_enlace_no_se_escribe_fuera() {
+    let (dir, mut r) = repertorio_de_prueba();
+    let fuera = tempfile::tempdir().unwrap();
+    let candidatos = dir.path().join(".gestor/candidatos/programator");
+    std::fs::create_dir_all(&candidatos).unwrap();
+    std::fs::write(candidatos.join("sat.rs"), "ocupado").unwrap();
+    for variante in 2..99 {
+        std::fs::write(candidatos.join(format!("sat-{variante:03}.rs")), "ocupado").unwrap();
+    }
+    let destino = fuera.path().join("escapado.rs");
+    std::os::unix::fs::symlink(&destino, candidatos.join("sat-099.rs")).unwrap();
+
+    let decision = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "sat.rs", "contenido": "fuera"}),
+    ));
+
+    assert!(matches!(decision, Decision::Denegada(_)), "{decision:?}");
+    assert!(!destino.exists(), "se escribió fuera del proyecto");
+}
+
 #[test]
 fn dos_propuestas_con_el_mismo_nombre_dejan_las_dos_en_disco() {
     // En el encargo 006 del 23/09/2026 entregó tres versiones del mismo fichero en diez minutos,
@@ -509,10 +661,10 @@ fn dos_propuestas_con_el_mismo_nombre_dejan_las_dos_en_disco() {
     let primera = std::fs::read_to_string(candidatos.join("calculo.rs")).unwrap();
     let segunda = std::fs::read_to_string(candidatos.join("calculo-002.rs")).unwrap();
     assert_eq!(
-        primera, "// la buena",
+        primera, "// la buena\n",
         "la primera no se puede haber perdido"
     );
-    assert_eq!(segunda, "// la mala");
+    assert_eq!(segunda, "// la mala\n");
 }
 
 #[test]
@@ -577,8 +729,8 @@ fn la_clave_ausente_sigue_dando_el_mensaje_de_siempre() {
     };
     assert_eq!(
         motivo,
-        "falta el argumento «ruta». La firma es leer_fichero(ruta, [desde_linea], [hasta_linea]). «ruta»: Ruta del \
-             fichero, relativa a la carpeta de trabajo. «desde_linea»: Primera línea a leer (base 1, opcional). «hasta_linea»: Última línea a leer inclusive (base 1, opcional)."
+        "falta el argumento «ruta». La firma es leer_fichero(ruta, [desde_linea], [hasta_linea], [numerar]). «ruta»: Ruta del \
+             fichero, relativa a la carpeta de trabajo. «desde_linea»: Primera línea a leer (base 1, opcional). «hasta_linea»: Última línea a leer inclusive (base 1, opcional). «numerar»: Si es true, pone delante de cada línea su número real; úsalo para saber en qué línea está algo, no para copiar el código (opcional)."
     );
 }
 
@@ -611,7 +763,7 @@ fn denegar_por_tipo_incorrecto_tambien_trae_la_firma() {
         panic!("«ruta» no era una cadena: tenía que denegarse");
     };
     assert!(
-        motivo.contains("leer_fichero(ruta, [desde_linea], [hasta_linea])"),
+        motivo.contains("leer_fichero(ruta, [desde_linea], [hasta_linea], [numerar])"),
         "sin firma: {motivo}"
     );
 }
@@ -634,6 +786,47 @@ fn leer_fichero_con_rango_de_lineas_extrae_el_fragmento_solicitado() {
     assert!(salida.contains("l2\nl3\nl4\n"));
     assert!(!salida.contains("l1\n"));
     assert!(!salida.contains("l5\n"));
+}
+
+#[test]
+fn leer_fichero_numera_con_true_escrito_de_cualquier_forma_y_deniega_otra_cosa() {
+    let (dir, mut r) = repertorio_de_prueba();
+    std::fs::write(dir.path().join("codigo.txt"), "l1\nl2\n").unwrap();
+    let leer = |r: &mut Repertorio, numerar: serde_json::Value| {
+        r.atender(&solicitar(
+            "leer_fichero",
+            serde_json::json!({"ruta": "codigo.txt", "numerar": numerar}),
+        ))
+    };
+
+    for numerar in [serde_json::json!(true), serde_json::json!(" true ")] {
+        let Decision::Concedida(salida) = leer(&mut r, numerar) else {
+            panic!("debía concederse la lectura numerada");
+        };
+        assert!(salida.ends_with("1: l1\n2: l2\n"), "{salida}");
+    }
+    for numerar in [
+        serde_json::json!(false),
+        serde_json::json!(""),
+        serde_json::json!("false"),
+        serde_json::json!(" false "),
+        serde_json::Value::Null,
+    ] {
+        let Decision::Concedida(salida) = leer(&mut r, numerar) else {
+            panic!("debía concederse la lectura sin números");
+        };
+        assert!(salida.ends_with("]:\nl1\nl2\n"), "{salida}");
+    }
+    for numerar in [serde_json::json!("sí"), serde_json::json!(1)] {
+        let Decision::Denegada(motivo) = leer(&mut r, numerar) else {
+            panic!("«numerar» que no es true ni false se deniega");
+        };
+        assert!(
+            motivo.contains("«numerar» debe ser true o false"),
+            "{motivo}"
+        );
+        assert!(motivo.contains("La firma es leer_fichero("), "{motivo}");
+    }
 }
 
 #[test]
@@ -748,6 +941,28 @@ fn reservar_un_fichero_que_todavia_no_existe_dentro_del_ambito_se_concede() {
     assert!(matches!(decision, Decision::Concedida(_)));
 }
 
+/// Con un contador, si fallaba la primera publicación y salía la segunda, se daría por pendiente
+/// la segunda, ya publicada, y se perdería la primera.
+#[test]
+fn los_veredictos_sin_publicar_son_los_que_fallaron() {
+    let (dir, mut r) = repertorio_de_prueba();
+    let buzon = dir.path().join(".gestor/canal/programator.md");
+    std::fs::create_dir_all(&buzon).unwrap();
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "primera.rs", "contenido": "pub fn a() {}"}),
+    ));
+    std::fs::remove_dir(&buzon).unwrap();
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "segunda.rs", "contenido": "pub fn b() {}"}),
+    ));
+
+    let pendientes = r.veredictos_no_publicados();
+    assert_eq!(pendientes.len(), 1, "{pendientes:?}");
+    assert!(pendientes[0].contains("primera.rs"), "{pendientes:?}");
+}
+
 #[test]
 fn escribir_propuesta_publica_entrega_inmediatamente_en_buzon() {
     // Visto en uso real: el buzón no puede quedarse mudo mientras la propuesta
@@ -793,7 +1008,7 @@ fn escribir_propuesta_con_resumen_leido_propaga_acuse_al_buzon() {
     let leido = crate::protocolo::ResumenLeido {
         entradas: vec![("codex.md".to_string(), "hasta su latido 10:00".to_string())],
     };
-    let mut r = Repertorio::nuevo(ambito, canal).con_leido(leido);
+    let mut r = Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal).con_leido(leido);
 
     let decision = r.atender(&solicitar(
         "escribir_propuesta",
@@ -803,4 +1018,39 @@ fn escribir_propuesta_con_resumen_leido_propaga_acuse_al_buzon() {
     assert!(matches!(decision, Decision::Concedida(_)));
     let buzon = std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
     assert!(buzon.contains("`codex.md` hasta su latido 10:00"));
+}
+
+/// Las líneas son base 1: la línea 0 se deniega.
+#[test]
+fn leer_fichero_deniega_la_linea_cero() {
+    let (_dir, mut r) = repertorio_de_prueba();
+    for argumentos in [
+        serde_json::json!({"ruta": "src/main.rs", "desde_linea": 0}),
+        serde_json::json!({"ruta": "src/main.rs", "hasta_linea": "0"}),
+    ] {
+        let decision = r.atender(&solicitar("leer_fichero", argumentos));
+        let Decision::Denegada(motivo) = decision else {
+            panic!("debía denegarse la línea 0");
+        };
+        assert!(motivo.contains("entero positivo"), "{motivo}");
+    }
+}
+
+/// Prueba 4 con Gestor: la propuesta quedaba sin salto de línea final.
+#[test]
+fn la_propuesta_acaba_en_salto_de_linea() {
+    let (dir, mut r) = repertorio_de_prueba();
+    let decision = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "sin-salto.txt", "contenido": "uno\ndos"}),
+    ));
+    assert!(matches!(decision, Decision::Concedida(_)), "{decision:?}");
+    let ruta = dir
+        .path()
+        .join(".gestor/candidatos/programator/sin-salto.txt");
+    assert_eq!(std::fs::read_to_string(ruta).unwrap(), "uno\ndos\n");
+
+    assert_eq!(con_salto_final(""), "");
+    assert_eq!(con_salto_final("a\n"), "a\n");
+    assert_eq!(con_salto_final("a\r\n"), "a\r\n");
 }

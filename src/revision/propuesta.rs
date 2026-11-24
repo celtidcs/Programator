@@ -1,5 +1,4 @@
-//! Qué modelo gana cada clase y cada familia, cuáles se quedan y cuáles se propone retirar
-//! (especificación, §6).
+//! Qué modelo gana cada clase y cada familia, cuáles se quedan y cuáles se propone retirar.
 //!
 //! Puro: recibe el registro, la tarjeta, lo que hay en la carpeta de modelos y el modelo en uso, y
 //! no toca disco ni GPU. La redacción va aparte, en `redaccion`.
@@ -9,10 +8,8 @@ use std::collections::BTreeMap;
 
 use crate::banco::ficha::{forma_de_puntuar, Familia, FormaDePuntuar};
 use crate::banco::resultados::{FilaDeDesempeno, FAMILIAS, FILAS_DE_DESEMPENO};
+use crate::motor::fichero_de_modelo::nombre_sin_extension;
 use crate::registro::modelo::{CodigoPuntuadoCon, EntradaDeModelo, Registro};
-
-/// La extensión de los modelos de la carpeta: el nombre del registro es el del fichero sin ella.
-const EXTENSION_DEL_MODELO: &str = "gguf";
 
 /// Lo que se compara: una fila de desempeño o una familia del banco.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +128,9 @@ pub struct Propuesta {
     pub sin_comparar: Vec<String>,
     /// Ficheros de la carpeta de modelos sin cifras en esta tarjeta.
     pub sin_medir: Vec<String>,
+    /// Los modelos de esta tarjeta, sin retirar, que están en el registro y no tienen fichero en
+    /// la carpeta de modelos: no cuentan para nada hasta que se repongan.
+    pub sin_fichero: Vec<String>,
     pub en_uso_sin_victorias: Option<EnUsoSinVictorias>,
     /// Hay excluidas y no queda ninguna categoría con ganador: no se propone ninguna sustitución
     /// ni retirada, y se dice por qué.
@@ -146,13 +146,10 @@ struct Medida<'a> {
     tamano: Option<u64>,
 }
 
-pub fn proponer(entrada: &Entrada) -> Propuesta {
-    let cuentan: Vec<&EntradaDeModelo> = entrada
-        .registro
-        .modelo
-        .iter()
-        .filter(|e| e.tarjeta == entrada.tarjeta && e.retirado_el.is_none())
-        .collect();
+/// Quién gana cada categoría, y qué categorías no se comparan. Es la regla única de comparar
+/// modelos: la usan la propuesta de la revisión y la elección del modelo para cada encargo.
+pub fn ganadores(entrada: &Entrada) -> (Vec<Ganador>, Vec<Excluida>) {
+    let cuentan = que_cuentan(entrada);
     let tamanos: BTreeMap<&str, u64> = entrada
         .en_modelos
         .iter()
@@ -163,7 +160,7 @@ pub fn proponer(entrada: &Entrada) -> Propuesta {
         .filter_map(|categoria| excluida(categoria, &cuentan))
         .collect();
     let esta_excluida = |categoria: Categoria| excluidas.iter().any(|x| x.categoria == categoria);
-    let ganadores: Vec<Ganador> = categorias()
+    let ganadores = categorias()
         .into_iter()
         .map(|categoria| Ganador {
             categoria,
@@ -174,6 +171,50 @@ pub fn proponer(entrada: &Entrada) -> Propuesta {
             },
         })
         .collect();
+    (ganadores, excluidas)
+}
+
+/// Si el modelo que se llama `nombre` tiene su fichero en la carpeta de modelos (`en_modelos`, con
+/// su tamaño en bytes). Se compara por el nombre del fichero sin extensión, que es como lo guardan
+/// el registro y la tanda.
+pub fn tiene_fichero(nombre: &str, en_modelos: &[(String, u64)]) -> bool {
+    en_modelos
+        .iter()
+        .filter_map(|(fichero, _)| nombre_sin_extension(fichero))
+        .any(|presente| presente == nombre)
+}
+
+/// Las entradas que cuentan: las de esta tarjeta que no se han retirado y tienen su fichero en la
+/// carpeta de modelos. Un modelo sin fichero no se puede cargar: no gana, no se queda, no se
+/// propone retirar y no sustituye a nadie.
+fn que_cuentan<'a>(entrada: &Entrada<'a>) -> Vec<&'a EntradaDeModelo> {
+    de_esta_tarjeta_sin_retirar(entrada)
+        .filter(|e| tiene_fichero(&e.nombre, entrada.en_modelos))
+        .collect()
+}
+
+/// Las de esta tarjeta, sin retirar, que no tienen fichero: se dicen aparte, para reponerlas.
+fn sin_fichero(entrada: &Entrada) -> Vec<String> {
+    de_esta_tarjeta_sin_retirar(entrada)
+        .filter(|e| !tiene_fichero(&e.nombre, entrada.en_modelos))
+        .map(|e| e.nombre.clone())
+        .collect()
+}
+
+fn de_esta_tarjeta_sin_retirar<'a>(
+    entrada: &Entrada<'a>,
+) -> impl Iterator<Item = &'a EntradaDeModelo> + 'a {
+    let tarjeta = entrada.tarjeta;
+    entrada
+        .registro
+        .modelo
+        .iter()
+        .filter(move |e| e.tarjeta == tarjeta && e.retirado_el.is_none())
+}
+
+pub fn proponer(entrada: &Entrada) -> Propuesta {
+    let cuentan = que_cuentan(entrada);
+    let (ganadores, excluidas) = ganadores(entrada);
     let sin_datos_para_decidir =
         !excluidas.is_empty() && ganadores.iter().all(|g| g.ganador.is_none());
     let mut se_quedan = Vec::new();
@@ -226,6 +267,7 @@ pub fn proponer(entrada: &Entrada) -> Propuesta {
         para_retirar,
         sin_comparar,
         sin_medir: sin_medir(entrada, &sin_notas),
+        sin_fichero: sin_fichero(entrada),
         en_uso_sin_victorias,
         sin_datos_para_decidir,
     }
@@ -372,7 +414,7 @@ fn para_retirar_a(modelo: &EntradaDeModelo, ganadores: &[Ganador]) -> Option<Par
 }
 
 /// El que más categorías gana, de los que se quedan; si empatan, el primero en el registro.
-fn sustituto(se_quedan: &[SeQueda]) -> Option<String> {
+pub(crate) fn sustituto(se_quedan: &[SeQueda]) -> Option<String> {
     se_quedan
         .iter()
         .filter(|q| !q.gana.is_empty())
@@ -401,14 +443,6 @@ fn sin_medir(entrada: &Entrada, sin_notas: &[String]) -> Vec<String> {
             (!medido).then(|| fichero.clone())
         })
         .collect()
-}
-
-/// `modelo.gguf` → `modelo`; lo que no es un GGUF, nada.
-fn nombre_sin_extension(fichero: &str) -> Option<&str> {
-    let (nombre, extension) = fichero.rsplit_once('.')?;
-    extension
-        .eq_ignore_ascii_case(EXTENSION_DEL_MODELO)
-        .then_some(nombre)
 }
 
 #[cfg(test)]
@@ -455,7 +489,34 @@ mod pruebas {
         e
     }
 
+    /// El tamaño del fichero que el montaje pone a los modelos cuyo fichero la prueba no nombra.
+    /// El mayor posible: en el desempate por tamaño va detrás de cualquier tamaño que la prueba
+    /// pase, y entre dos así decide el nombre, como cuando el tamaño faltaba.
+    const TAMANO_DEL_MONTAJE: u64 = u64::MAX;
+
+    /// La propuesta con el fichero de cada modelo de esta tarjeta en la carpeta de modelos: los que
+    /// la prueba nombra en `en_modelos`, con su tamaño, y los demás con [`TAMANO_DEL_MONTAJE`].
     fn proponer_con(
+        modelos: Vec<EntradaDeModelo>,
+        en_modelos: &[(&str, u64)],
+        en_uso: Option<&str>,
+    ) -> Propuesta {
+        let mut todos: Vec<(String, u64)> = en_modelos
+            .iter()
+            .map(|(f, t)| (f.to_string(), *t))
+            .collect();
+        for m in modelos.iter().filter(|m| m.tarjeta == TARJETA) {
+            if !tiene_fichero(&m.nombre, &todos) {
+                todos.push((format!("{}.gguf", m.nombre), TAMANO_DEL_MONTAJE));
+            }
+        }
+        let todos: Vec<(&str, u64)> = todos.iter().map(|(f, t)| (f.as_str(), *t)).collect();
+        proponer_exactamente_con(modelos, &todos, en_uso)
+    }
+
+    /// La propuesta con la carpeta de modelos tal como la da la prueba: un modelo cuyo fichero
+    /// no está en `en_modelos` falta.
+    fn proponer_exactamente_con(
         modelos: Vec<EntradaDeModelo>,
         en_modelos: &[(&str, u64)],
         en_uso: Option<&str>,
@@ -483,6 +544,79 @@ mod pruebas {
     }
 
     const FORMAS: Categoria = Categoria::Clase(FilaDeDesempeno::Formas);
+
+    #[test]
+    fn tiene_fichero_compara_por_el_nombre_sin_extension() {
+        let en_modelos = vec![
+            ("modelo-a.gguf".to_string(), 1),
+            ("modelo-b.GGUF".to_string(), 2),
+            ("modelo-c.bin".to_string(), 3),
+        ];
+
+        assert!(tiene_fichero("modelo-a", &en_modelos));
+        assert!(tiene_fichero("modelo-b", &en_modelos));
+        assert!(!tiene_fichero("modelo-a.gguf", &en_modelos));
+        assert!(!tiene_fichero("modelo-c.bin", &en_modelos));
+        assert!(!tiene_fichero("modelo-c", &en_modelos));
+        assert!(!tiene_fichero("modelo-a", &[]));
+    }
+
+    /// Un modelo sin fichero no se puede cargar, así que no gana nada aunque sus cifras sean las
+    /// mejores.
+    #[test]
+    fn un_ausente_que_ganaria_no_gana_y_gana_el_mejor_presente() {
+        let propuesta = proponer_exactamente_con(
+            vec![modelo("fuerte", 4.0), modelo("flojo", 2.0)],
+            &[("flojo.gguf", 1)],
+            None,
+        );
+        assert_eq!(ganador(&propuesta, FORMAS), Some("flojo"));
+        assert!(propuesta.se_quedan.iter().all(|q| q.nombre != "fuerte"));
+    }
+
+    #[test]
+    fn un_ausente_que_no_gana_nada_no_se_propone_retirar() {
+        let propuesta = proponer_exactamente_con(
+            vec![modelo("fuerte", 4.0), modelo("flojo", 2.0)],
+            &[("fuerte.gguf", 1)],
+            None,
+        );
+        assert!(propuesta.para_retirar.is_empty(), "{propuesta:?}");
+    }
+
+    #[test]
+    fn un_ausente_no_puede_ser_el_sustituto_del_modelo_en_uso() {
+        let propuesta = proponer_exactamente_con(
+            vec![
+                modelo("en-uso", 1.0),
+                modelo("mejor", 4.0),
+                modelo("medio", 2.0),
+            ],
+            &[("en-uso.gguf", 1), ("medio.gguf", 1)],
+            Some("en-uso"),
+        );
+        assert_eq!(
+            propuesta.en_uso_sin_victorias,
+            Some(EnUsoSinVictorias {
+                nombre: "en-uso".into(),
+                sustituto: Some("medio".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn sin_fichero_lista_los_ausentes_de_esta_tarjeta_sin_retirar() {
+        let mut retirado = modelo("retirado", 3.0);
+        retirado.retirado_el = Some("2026-10-01".into());
+        let mut de_otra = modelo("de-otra", 3.0);
+        de_otra.tarjeta = "Otra tarjeta".into();
+        let propuesta = proponer_exactamente_con(
+            vec![modelo("a", 3.0), modelo("b", 3.0), retirado, de_otra],
+            &[("a.gguf", 1)],
+            None,
+        );
+        assert_eq!(propuesta.sin_fichero, ["b"]);
+    }
 
     #[test]
     fn hay_seis_clases_y_tres_familias() {

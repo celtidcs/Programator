@@ -36,6 +36,7 @@ use crate::error::{Error, Resultado};
 use crate::ficheros::{borrar_si_existe, copiar_arbol, crear_carpeta, escribir};
 use crate::orden_acotada::DesenlaceDeOrden;
 use crate::plataforma::sin_prefijo_extendido;
+use crate::terminal::Terminal;
 
 /// La carpeta de la comprobación dentro de la de la tanda.
 pub const CARPETA_DE_COMPROBACION: &str = "comprobacion";
@@ -55,7 +56,10 @@ const SISTEMA_WINDOWS: &str = "windows";
 /// Lo que se ejecuta dentro del envoltorio para ver si funciona: el programa de coreutils que sale
 /// con 0 sin hacer nada.
 const ORDEN_QUE_NO_HACE_NADA: &str = "true";
-/// Para preguntar al intérprete basta muy poco; si tarda más, algo va mal.
+/// Para preguntar al intérprete basta muy poco: el bash de Git contesta en 50-85 ms en el equipo
+/// de desarrollo. Treinta segundos cubren un primer arranque lento o un
+/// antivirus que lo inspeccione; si tarda más, algo va mal. Es un tope de seguridad, no un
+/// ajuste: por eso no está en el TOML.
 const TIEMPO_MAXIMO_PREGUNTA_AL_INTERPRETE: Duration = Duration::from_secs(30);
 
 /// ¿Ejecuta este bash en el sistema donde corre Programator? En Windows, `$OSTYPE` es `msys` o
@@ -186,6 +190,8 @@ pub struct CarpetaLocal<'a, L: LanzadorConEntorno> {
     /// Lo anotado desde la última vez que se preguntó.
     intentos_de_red: Vec<String>,
     red_sin_vigilar_avisada: bool,
+    /// Por dónde se avisa de la red sin vigilar y de un cierre que falla.
+    terminal: &'a dyn Terminal,
     terminado: bool,
 }
 
@@ -199,6 +205,7 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
         carpeta_de_la_tanda: &Path,
         lanzador: L,
         entorno_del_sistema: &BTreeMap<String, String>,
+        terminal: &'a dyn Terminal,
     ) -> Resultado<Self> {
         let actual = std::env::current_dir().map_err(|causa| Error::Lectura {
             ruta: PathBuf::from("."),
@@ -239,6 +246,7 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
             trampa,
             intentos_de_red: Vec::new(),
             red_sin_vigilar_avisada: false,
+            terminal,
             terminado: false,
         };
         // La carpeta se crea y se deja lista para el lanzador antes que lo de dentro, para que lo
@@ -340,7 +348,8 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
         if let Some(fallo) = vigilancia.fallo {
             if !self.red_sin_vigilar_avisada {
                 self.red_sin_vigilar_avisada = true;
-                eprintln!("{}", mensajes::mensaje_red_sin_vigilar(&fallo));
+                self.terminal
+                    .avisar(&mensajes::mensaje_red_sin_vigilar(&fallo));
             }
         }
         let mut nuevos = self.trampa.recoger();
@@ -423,7 +432,8 @@ impl<L: LanzadorConEntorno> LugarDeEjecucion for CarpetaLocal<'_, L> {
 impl<L: LanzadorConEntorno> Drop for CarpetaLocal<'_, L> {
     fn drop(&mut self) {
         if let Err(fallo) = self.cerrar() {
-            eprintln!("⚠️ {fallo}");
+            self.terminal
+                .avisar(&mensajes::aviso_de_cierre_fallido(&fallo));
         }
     }
 }
@@ -432,6 +442,7 @@ impl<L: LanzadorConEntorno> Drop for CarpetaLocal<'_, L> {
 mod pruebas {
     use super::*;
     use crate::banco::comprobacion::lanzador::Vigilancia;
+    use crate::terminal::TerminalReal;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -575,7 +586,13 @@ mod pruebas {
         let (lanzador, _) = falso(bash_de_aqui);
         let preparadas = Rc::clone(&lanzador.preparadas);
 
-        let carpeta = CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new());
+        let carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        );
 
         assert!(carpeta.is_ok());
         let raiz = std::env::current_dir()
@@ -591,7 +608,13 @@ mod pruebas {
         let config = config_con_nombres();
         let (lanzador, _) = falso(|_| termina("linux-gnu\n"));
 
-        let resultado = CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new());
+        let resultado = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        );
 
         if cfg!(windows) {
             let fallo = resultado.err().unwrap();
@@ -642,7 +665,13 @@ mod pruebas {
         let config = config_en_espacio_de_nombres();
         let (lanzador, llamadas) = falso(bash_de_aqui);
 
-        let carpeta = CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new());
+        let carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        );
 
         assert!(carpeta.is_ok());
         let primera = llamadas.borrow()[0].0.clone();
@@ -663,10 +692,16 @@ mod pruebas {
             errores: "unshare: write failed /proc/self/uid_map: Operation not permitted".into(),
         });
 
-        let fallo = CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new())
-            .err()
-            .unwrap()
-            .to_string();
+        let fallo = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .err()
+        .unwrap()
+        .to_string();
 
         assert!(fallo.contains("no se pudo aislar"), "{fallo}");
         assert!(fallo.contains("Operation not permitted"), "{fallo}");
@@ -679,8 +714,14 @@ mod pruebas {
         let config = config_con_nombres();
         let (lanzador, llamadas) = falso(bash_de_aqui);
 
-        let carpeta =
-            CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new()).unwrap();
+        let carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .unwrap();
 
         let entorno: BTreeMap<_, _> = llamadas.borrow()[0].2.iter().cloned().collect();
         let esperado = format!("http://127.0.0.1:{}", carpeta.trampa.puerto());
@@ -697,8 +738,14 @@ mod pruebas {
             intentos_de_red: vec!["151.101.0.223:443".into()],
             fallo: None,
         };
-        let mut carpeta =
-            CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new()).unwrap();
+        let mut carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .unwrap();
 
         carpeta.ejecutar_en_la_base("true");
         carpeta.ejecutar_en_la_base("true");
@@ -720,8 +767,14 @@ mod pruebas {
             ],
             fallo: None,
         };
-        let mut carpeta =
-            CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new()).unwrap();
+        let mut carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .unwrap();
 
         carpeta.ejecutar_en_la_base("true");
 
@@ -763,8 +816,14 @@ mod pruebas {
             intentos_de_red: vec!["registry.npmjs.org:443".into()],
             fallo: None,
         };
-        let mut carpeta =
-            CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new()).unwrap();
+        let mut carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .unwrap();
         carpeta.intentos_de_red();
 
         let salida = carpeta.preparar("E04-semilla-42", "npm install");
@@ -793,7 +852,8 @@ mod pruebas {
         let config = config_con_nombres();
         let (lanzador, llamadas) = falso(bash_de_aqui);
         let mut carpeta =
-            CarpetaLocal::empezar(&config, &tanda, lanzador, &BTreeMap::new()).unwrap();
+            CarpetaLocal::empezar(&config, &tanda, lanzador, &BTreeMap::new(), &TerminalReal)
+                .unwrap();
 
         carpeta.llevar(&montada, "E01-semilla-42").unwrap();
         let salida = carpeta.ejecutar("E01-semilla-42", "python3 prueba.py");
@@ -832,16 +892,28 @@ mod pruebas {
         let raiz = dir.path().join(CARPETA_DE_COMPROBACION);
 
         let (lanzador, _) = falso(bash_de_aqui);
-        let mut carpeta =
-            CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new()).unwrap();
+        let mut carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .unwrap();
         assert!(raiz.exists());
         carpeta.terminar().unwrap();
         assert!(!raiz.exists());
         drop(carpeta);
 
         let (lanzador, _) = falso(bash_de_aqui);
-        let carpeta =
-            CarpetaLocal::empezar(&config, dir.path(), lanzador, &BTreeMap::new()).unwrap();
+        let carpeta = CarpetaLocal::empezar(
+            &config,
+            dir.path(),
+            lanzador,
+            &BTreeMap::new(),
+            &TerminalReal,
+        )
+        .unwrap();
         assert!(raiz.exists());
         drop(carpeta);
         assert!(!raiz.exists());
@@ -860,8 +932,14 @@ mod pruebas {
         let entorno: BTreeMap<String, String> =
             [("PERFIL".to_string(), perfil.display().to_string())].into();
         let (lanzador, _) = falso(bash_de_aqui);
-        let mut carpeta =
-            CarpetaLocal::empezar(&config, &dir.path().join("tanda"), lanzador, &entorno).unwrap();
+        let mut carpeta = CarpetaLocal::empezar(
+            &config,
+            &dir.path().join("tanda"),
+            lanzador,
+            &entorno,
+            &TerminalReal,
+        )
+        .unwrap();
         std::fs::create_dir_all(perfil.join(".npm")).unwrap();
         std::fs::write(perfil.join(".npm").join("paquete"), "x").unwrap();
 

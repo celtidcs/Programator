@@ -38,11 +38,9 @@
 preguntar_siempre = true
 
 [agente]
-# Nombre con el que Programator se identifica ante el equipo. Por defecto: "Programator".
+# Nombre con el que Programator se identifica ante el equipo. De él sale su buzón: el nombre en
+# minúsculas con «.md» («.gestor/canal/programator.md»). Por defecto: "Programator".
 nombre = "Programator"
-# Bandeja de escritura exclusiva de Programator dentro del canal. Nunca debe apuntar a la bandeja
-# de otro agente. Por defecto: ".gestor/canal/programator.md".
-buzon = ".gestor/canal/programator.md"
 # Plantilla de las instrucciones que se instalan en el proyecto si este aún no tiene las suyas
 # (nunca se sobrescribe unas que ya existan). Su sección de verificación no viene escrita: la
 # compone el arnés con los comprobadores de [verificacion.comprobadores], para que lo que el modelo
@@ -52,10 +50,12 @@ plantilla_normas = "plantillas/instrucciones-del-proyecto.md"
 # Las instrucciones de sistema que ve el modelo en cada encargo. Por defecto:
 # "plantillas/preambulo-del-modelo.md".
 #
-# NO son las normas completas del equipo. El protocolo entero ocupa unos 8.000 tokens de los 16.384
-# del contexto —la mitad de la ventana para un texto que el modelo relee cada vez, y del que la
-# mayor parte no le aplica— mientras que el preámbulo trae lo que necesita para actuar en unos
-# 1.000. Las normas completas siguen en PROGRAMATOR.md y puede leerlas con «leer_fichero».
+# NO son las normas completas del equipo: meterlas enteras en las instrucciones de sistema gastaría
+# ventana en un texto que el modelo releería en cada encargo y del que la mayor parte no le aplica.
+# El preámbulo trae lo que necesita para actuar. Las normas completas se instalan en
+# «.gestor/<agente>/PROGRAMATOR.md» de la carpeta de trabajo (si una instalación de la 0.9.0 o
+# anterior dejó un PROGRAMATOR.md en la raíz del proyecto, se usa ese) y el modelo puede leerlas
+# con «leer_fichero».
 preambulo = "plantillas/preambulo-del-modelo.md"
 # Lo que se le recuerda PEGADO AL ENCARGO, no en las instrucciones de sistema. Por defecto:
 # "plantillas/recordatorio-de-encargo.md".
@@ -72,6 +72,11 @@ guia = "plantillas/como-encargar-a-programator.md"
 # cuenta a los demás agentes. Lo escribe «programator --registro-anotar <tanda>», nunca a mano.
 # Por defecto: "registro-de-modelos.toml", junto a este fichero.
 registro_de_modelos = "registro-de-modelos.toml"
+# El vigilante del canal de Gestor Agentes que trae el paquete. Si el proyecto no tiene uno en
+# .gestor/vigilante/, Programator deja este al arrancar; si ya hay uno, no lo toca. Con él, el
+# agente que encarga se entera de que Programator ha respondido, con Gestor Agentes y sin él.
+# Por defecto: "vigilante/gestor-vigilante.exe" en Windows y "vigilante/gestor-vigilante" en Linux.
+# vigilante = "vigilante/gestor-vigilante.exe"
 # Los históricos del canal, que no son buzones de nadie, son los ficheros que empiezan por
 # "historico-" o "histórico-", y ningún otro. Ya no hay clave para
 # cambiarlos: la antigua «prefijos_ignorados» no se tiene en cuenta y avisa al arrancar.
@@ -95,9 +100,8 @@ puerto = 8080
 #
 # 16384 y no más: medido el 22/09/2026 sobre el Devstral en una RTX 4070 Ti SUPER, con 16k caben
 # casi todas las capas del modelo en la tarjeta y la generación va a 23 tokens por segundo; con
-# 32768 bajaba a 15,4 porque cinco capas se iban a la CPU. Las normas de la casa ocupan unos ocho
-# mil tokens, así que sigue sobrando sitio para un encargo y su respuesta. Súbelo si lo necesitas,
-# sabiendo lo que cuesta.
+# 32768 bajaba a 15,4 porque cinco capas se iban a la CPU. Súbelo si lo necesitas, sabiendo lo que
+# cuesta.
 contexto = 16384
 # Cuántas conversaciones simultáneas reserva el motor. Por defecto: 1.
 #
@@ -114,7 +118,11 @@ paralelo = 1
 # siguientes de la misma conversación siguen aprovechando la caché.
 empezar_en_frio = true
 # Capas del modelo que se cargan en GPU.
-#   "auto"  → Programator mide la VRAM libre, pesa el modelo y decide. Es lo recomendado.
+#   "auto"  → Programator mide la VRAM libre, pesa el modelo y decide. Es lo recomendado. Si el
+#             banco ya midió ese modelo en esta tarjeta, con el mismo contexto y la misma caché,
+#             usa las capas que el banco cargó de verdad, siempre que quepan en la memoria libre
+#             (y en vram_maxima_mib, si lo pones). Así no hay que escribir ninguna recomendación:
+#             la aplica él. Un número escrito aquí manda sobre todo eso.
 #   99      → todas, pase lo que pase. Lo que hacía la 0.3.0.
 #   40      → exactamente 40. Lo que escribas aquí se transcribe sin discutir.
 # El reparto de capas también cambia la respuesta: con "auto" depende de la memoria libre en ese
@@ -127,6 +135,39 @@ capas_gpu = "auto"
 margen_vram_mib = 512
 # Formato de la caché de claves/valores del modelo. Por defecto: "q8_0".
 cache_kv = "q8_0"
+# Atención rápida del motor (la opción --flash-attn de llama-server): "on", "off" o "auto".
+# Por defecto: "on", que ahorra memoria de la tarjeta y tiempo. Con "auto" decide llama-server.
+# llama.cpp la necesita para guardar la caché en un formato reducido como el "q8_0" de cache_kv:
+# si la pones en "off", pon también cache_kv = "f16".
+flash_attn = "on"
+
+# Tope de memoria de la tarjeta, en MiB, que Programator no supera nunca al repartir el modelo.
+# Sirve para decir «como mucho 8 GB» sin tener que pensar en capas, por ejemplo si quieres dejar
+# sitio a otro programa que usa la tarjeta. Sin esta línea no hay tope y se usa toda la memoria
+# libre, como hasta ahora.
+#
+# Manda sobre todo lo demás: con "auto", el reparto nunca lo pasa; con un número fijo en
+# capas_gpu que no quepa en el tope, Programator baja las capas hasta las que caben y lo avisa al
+# arrancar. Bajar el tope deja capas en la CPU, y eso se nota como lentitud.
+# vram_maxima_mib = 8192
+
+# Cuándo se suelta el modelo de la tarjeta entre encargos.
+#   "auto"  → se queda cargado mientras lleguen encargos, y solo se cambia si el siguiente pide
+#             otro modelo. Se suelta tras 15 minutos sin encargos. Es lo recomendado: los encargos
+#             seguidos no esperan a que cargue, y si Programator se queda parado la tarjeta se
+#             libera sola al cuarto de hora.
+#   0       → se suelta al terminar cada encargo. La tarjeta queda libre en cuanto acaba, para
+#             juegos u otros programas, pero cada encargo paga la carga del modelo: de unos
+#             segundos a más de un minuto según el modelo y el disco.
+#   30      → como "auto", pero se suelta tras 30 minutos sin encargos (o los que escribas). Más
+#             minutos, más rapidez en encargos espaciados y más tiempo con la tarjeta ocupada.
+# Si el motor que escucha en el puerto no lo arrancó Programator, no se suelta nunca: no es suyo.
+soltar_modelo = "auto"
+
+# Segundos que se espera a que cargue un modelo distinto cuando un encargo lo pide a mitad de una
+# tanda de encargos. Por defecto: 300. Si no carga a tiempo, el encargo no se pierde: queda en la
+# cola de pendientes y se atiende en una vuelta posterior.
+# espera_de_carga_segundos = 300
 
 # A partir de qué porcentaje de la ventana se avisa de que la conversación va justa. Por defecto: 70.
 #
@@ -165,8 +206,20 @@ bytes_por_token = 4
 # que el modelo escribe. Se comprueba que el lenguaje lo acepte, que es otra cosa —«py_compile» no
 # corre el fichero—.
 [verificacion]
-# Cuánto se espera a un comprobador antes de cortarlo. Por defecto: 30.
+# Cuánto se espera a un comprobador antes de cortarlo. Por defecto: 30. Como mucho 86400 (un día).
 tiempo_maximo_segundos = 30
+# Si no hay comprobador para «py» en [verificacion.comprobadores], buscar al arrancar un Python
+# que responda (primero «python» y luego «python3») y comprobar con él la sintaxis de las
+# propuestas .py, sin ejecutarlas ni dejar «__pycache__». La terminal dice cuál encontró o que no
+# hay. Por defecto: true.
+comprobar_python = true
+# La ruta del Python con que comprobar, si no está en el PATH. Vacía, se busca. Por defecto: "".
+# python = "C:/Python312/python.exe"
+# Cuántos caracteres de lo que dice un comprobador que rechaza se le pasan al modelo para que
+# corrija su propuesta. Un error de compilación puede ocupar pantallas enteras y el contexto del
+# modelo es finito. Súbelo si usas un modelo con más contexto; 0 vuelve al de fábrica.
+# Por defecto: 1200.
+maximo_salida_al_modelo = 1200
 
 [verificacion.comprobadores]
 # Extensión (sin punto) -> la orden que la comprueba. «{fichero}» se sustituye por la ruta absoluta
@@ -237,8 +290,9 @@ penalizacion_repeticion = 1.0
 semilla = 42
 
 [ciclo]
-# Segundos entre cada sondeo del canal. Por defecto: 180.
-intervalo_segundos = 180
+# Segundos entre cada sondeo del canal. Leer el canal no gasta tokens y es barato. Por defecto: 30.
+# Entre 1 y 86400 (un día): por encima se usa un día y se avisa al arrancar.
+intervalo_segundos = 30
 # Número máximo de llamadas a herramientas que se permiten dentro de un mismo encargo, para cortar
 # un bucle improductivo del modelo. Por defecto: 12.
 max_herramientas_por_encargo = 12
@@ -277,20 +331,23 @@ max_reintentos_motor = 2
 # Da margen a que la contención de GPU disminuya antes de volver a solicitar inferencia.
 espera_reintento_motor_segundos = 5
 # Número máximo de veces seguidas que el modelo puede insistir en una misma herramienta denegada
-# antes de abortar el encargo. Por defecto: 2 (Regla de los Dos Intentos del §2.1).
+# antes de abortar el encargo. Por defecto: 2, la regla de los dos intentos de los agentes.
 #
 # Si el modelo insiste en una herramienta que el arnés acaba de denegarle con el mismo nombre,
 # se le devuelve aviso para que rectifique. Si alcanza este tope consecutivo, el encargo se aborta
 # para evitar bucles improductivos. Un modelo más modesto puede necesitar más margen, o uno que se
 # atasca puede requerir cortar antes.
 max_denegaciones_seguidas = 2
-
-[poda]
-# A partir de cuántas líneas activas se considera que un buzón necesita poda. Por defecto: 80.
-# Se cuenta en líneas, y no en bytes, porque es la unidad que usa el propio protocolo del equipo
-# (§3.2: «un tope orientativo de 80 líneas activas»). Es orientativo: la poda la propone el arnés
-# y la revisa una persona o un agente de pago antes de que se aplique nada.
-umbral_lineas = 80
+# Ningún encargo se pierde en silencio. Si no hay un modelo con el que atenderlo (falta su
+# fichero o no cabe en la tarjeta), no se intenta: se responde en el acto a quien lo pidió, con el
+# motivo y la forma de conseguir uno («revisión: buscar»). Si falla por otra causa (el modelo no
+# termina de cargar a tiempo, el motor se cierra, la respuesta no se puede publicar), se guarda en
+# la cola de pendientes, junto a lectura.json, y se vuelve a intentar en la vuelta siguiente,
+# antes que los encargos nuevos.
+#
+# Tras cuántos intentos fallidos se cierra el encargo: sale de la cola y se le responde a quien lo
+# pidió con el motivo. Por defecto: 2, la regla de los dos intentos de los agentes.
+intentos_por_encargo = 2
 
 [actualizaciones]
 # Si Programator comprueba, al arrancar, si hay una versión más nueva publicada en GitHub. Por
@@ -303,17 +360,28 @@ comprobar = true
 # Repositorio de GitHub (propietario/nombre) contra el que se compara la versión instalada.
 # Por defecto: "celtidcs/Programator".
 repositorio = "celtidcs/Programator"
-# Cuánto se espera a GitHub antes de rendirse, en segundos. Por defecto: 3.
+# Cuánto se espera a GitHub antes de rendirse, en segundos. Por defecto: 3. Cero no vale, y
+# la comprobación se salta avisando de por qué.
 #
 # Corto a propósito: es una comprobación informativa sobre una máquina que ya va a tardar minutos
-# en atender un encargo. No tiene sentido que el arranque se note más lento por ella.
+# en atender un encargo. Corre mientras el arranque mide la máquina, así que casi nunca se nota.
+#
+# La consulta sale por el proxy del sistema: las variables HTTPS_PROXY y similares y, en Windows,
+# el de las opciones de internet. Detrás de un proxy con configuración automática (PAC) define
+# HTTPS_PROXY antes de abrir Programator.
 tiempo_espera_segundos = 3
 
 [revision]
 # La revisión de modelos: buscar candidatos en Hugging Face, descargarlos, pasarles el banco y
 # quedarse con el mejor de cada clase. La usan las órdenes «--revision-buscar»,
 # «--descargar-modelo», «--revision-proponer» y «--retirar-modelo», y los encargos de revisión que
-# un modelo de pago deja en el canal (abajo, «buzones_que_ordenan»).
+# un agente deja en el canal (abajo, «identidades_que_ordenan»).
+#
+# Antes de buscar, «revisión: buscar» y «--revision-buscar» reponen los modelos del registro que
+# faltan en «carpeta_de_modelos» y siguen ganando algo (o son el modelo por defecto): los bajan de
+# nuevo del repositorio del que salieron, comprobando que es el mismo fichero que se midió. Los que
+# faltan y ya no ganan nada salen del registro. No hace falta ninguna clave para esto: usa las de
+# la descarga.
 #
 # Las búsquedas que se hacen en Hugging Face: cada una es el parámetro «search» de la API. Son un
 # punto de partida; ajústalas a lo que quieras probar.
@@ -341,22 +409,28 @@ api = "https://huggingface.co/api"
 # La web de Hugging Face: el enlace de cada candidato y de donde se descargan sus ficheros.
 sitio = "https://huggingface.co"
 # Dónde están los modelos, relativo a la carpeta del ejecutable: ahí se mira qué hay ya
-# descargado y ahí se deja cada descarga. Por defecto: "modelos".
+# descargado y ahí se deja cada descarga, también la de los modelos útiles que se reponen porque
+# faltaban. Por defecto: "modelos".
 carpeta_de_modelos = "modelos"
 # Lo que se deja libre en el disco además del fichero al descargar, en MiB. Por defecto: 1024.
 margen_disco_mib = 1024
 # Cada cuántos MiB descargados se dice el avance. Por defecto: 512.
 avisar_cada_mib = 512
 #
-# La revisión por encargo: un modelo de pago le pide a Programator, por el canal, «revisión:
+# La revisión por encargo: un agente (Claude, Codex, Gemini u otro) le pide a Programator, por el canal, «revisión:
 # buscar», «revisión: probar» y «revisión: cerrar», y Programator lo hace solo, sin preguntar.
-# Los buzones (sin «.md») que pueden pedirla. Vacía, por defecto: nadie puede, y Programator lo
-# contesta en el canal.
-buzones_que_ordenan = []
+# Las identidades que pueden pedirla, tal como las declara cada agente en la primera línea de su
+# buzón («# Bandeja de Claude 1»), por ejemplo ["Claude 1"]. Un buzón sin esa línea no puede
+# pedirla. Vacía, por defecto: nadie puede, y Programator lo contesta en el canal. La antigua
+# «buzones_que_ordenan», con nombres de fichero, ya no vale y avisa al arrancar.
+identidades_que_ordenan = []
 # Cuántos candidatos se prueban como mucho en una revisión. Cada uno ocupa la GPU unas dos o tres
 # horas. Por defecto: 3.
 candidatos_por_revision = 3
-# Las pruebas ocultas de cada tanda se ejecutan en este equipo, sin pedir autorización, si el
-# banco.toml de la carpeta del banco trae «[comprobacion_local]»; si no, quedan «no evaluado».
+# Las pruebas ocultas de cada tanda se ejecutan en este equipo, sin pedir autorización. Van
+# encendidas por defecto, también si el banco.toml de la carpeta del banco no trae
+# «[comprobacion_local]», y solo se apagan con «activa = false» en esa sección. Si las de un encargo
+# de código no dan nota (apagadas, o sin poder ejecutarse) y el encargo trae «rubrica.md», su código
+# se puntúa por rúbrica, leyéndolo; sin «rubrica.md», queda «no evaluado».
 # La carpeta del banco, relativa a la del ejecutable. Por defecto: "banco".
 carpeta_del_banco = "banco"

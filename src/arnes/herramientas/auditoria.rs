@@ -100,7 +100,12 @@ pub fn separar_hallazgo(linea: &str) -> Option<Hallazgo<'_>> {
     {
         return None;
     }
-    let linea_citada = campos.linea.parse::<usize>().ok()?;
+    // Base 1: la línea 0 no existe.
+    let linea_citada = campos
+        .linea
+        .parse::<usize>()
+        .ok()
+        .filter(|&linea| linea > 0)?;
     Some(Hallazgo {
         tipo: campos.tipo,
         fichero: campos.fichero,
@@ -143,13 +148,10 @@ fn reescribir_linea(hallazgo: &Hallazgo, verificacion: &Verificacion) -> String 
             hallazgo.linea_citada.to_string()
         }
         Verificacion::UnaCoincidencia(real) => {
-            format!(
-                "{real} (corregida; el modelo dijo {})",
-                hallazgo.linea_citada
-            )
+            super::mensajes::linea_corregida(*real, hallazgo.linea_citada)
         }
         Verificacion::SinCoincidencias | Verificacion::VariasCoincidencias => {
-            format!("{} ⚠️ sin verificar automáticamente", hallazgo.linea_citada)
+            super::mensajes::linea_sin_verificar(hallazgo.linea_citada)
         }
         Verificacion::FicheroIlegible => hallazgo.linea_citada.to_string(),
     };
@@ -355,5 +357,11 @@ mod pruebas {
 
         assert!(corregido.contains("| 1 (corregida; el modelo dijo 9) |"));
         assert!(Path::new(dir.path()).join("sub/f.cs").exists());
+    }
+
+    /// La línea tiene que ser un entero positivo: las líneas son base 1 y el 0 no se admite.
+    #[test]
+    fn un_hallazgo_en_la_linea_cero_no_es_formal() {
+        assert!(separar_hallazgo("SOLID | f.cs | Clase | 0 | class X | partirla").is_none());
     }
 }

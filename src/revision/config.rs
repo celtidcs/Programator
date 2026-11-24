@@ -5,7 +5,7 @@
 use serde::Deserialize;
 
 /// Las búsquedas de partida: lo que un modelo de programación lleva en el nombre de su repositorio
-/// de GGUF. El Director las ajusta en su TOML (especificación, §3.1).
+/// de GGUF. El usuario las ajusta en su TOML.
 const BUSQUEDAS_POR_DEFECTO: [&str; 3] = ["coder GGUF", "devstral GGUF", "code instruct GGUF"];
 /// La biblioteca de Hugging Face de los ficheros que sabe cargar `llama-server`.
 const BIBLIOTECA_POR_DEFECTO: &str = "gguf";
@@ -17,7 +17,7 @@ const MODIFICADOS_EN_LOS_ULTIMOS_DIAS_POR_DEFECTO: u32 = 62;
 /// producción; las demás, más fieles y más grandes, por si caben.
 const CUANTIZACIONES_POR_DEFECTO: [&str; 4] = ["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"];
 /// Lo que se reserva de la tarjeta para el contexto y el motor al decidir si un fichero cabe, en
-/// MiB. Es una cota: el encaje exacto se hace al pasar el banco (especificación, §3.3).
+/// MiB. Es una cota: el encaje exacto se hace al pasar el banco.
 const RESERVA_MIB_POR_DEFECTO: u64 = 2048;
 /// Dónde se guardan las revisiones, relativo a la carpeta del ejecutable.
 const CARPETA_POR_DEFECTO: &str = "revisiones";
@@ -75,10 +75,10 @@ pub struct ConfigRevision {
     pub margen_disco_mib: u64,
     #[serde(default = "avisar_cada_mib_por_defecto")]
     pub avisar_cada_mib: u64,
-    /// Los buzones (sin «.md») que pueden pedir una revisión por el canal. Vacía: la revisión por
-    /// encargo está deshabilitada.
+    /// Las identidades («Claude 1», como en la cabecera de su buzón) que pueden pedir una revisión
+    /// por el canal. Vacía: la revisión por encargo está deshabilitada.
     #[serde(default)]
-    pub buzones_que_ordenan: Vec<String>,
+    pub identidades_que_ordenan: Vec<String>,
     #[serde(default = "candidatos_por_revision_por_defecto")]
     pub candidatos_por_revision: usize,
     #[serde(default = "carpeta_del_banco_por_defecto")]
@@ -101,7 +101,7 @@ impl Default for ConfigRevision {
             carpeta_de_modelos: carpeta_de_modelos_por_defecto(),
             margen_disco_mib: margen_disco_mib_por_defecto(),
             avisar_cada_mib: avisar_cada_mib_por_defecto(),
-            buzones_que_ordenan: Vec::new(),
+            identidades_que_ordenan: Vec::new(),
             candidatos_por_revision: candidatos_por_revision_por_defecto(),
             carpeta_del_banco: carpeta_del_banco_por_defecto(),
         }
@@ -205,7 +205,7 @@ mod pruebas {
         assert_eq!(config.modificados_en_los_ultimos_dias, 62);
         assert_eq!(config.margen_disco_mib, 1024);
         assert_eq!(config.avisar_cada_mib, 512);
-        assert!(config.buzones_que_ordenan.is_empty());
+        assert!(config.identidades_que_ordenan.is_empty());
         assert_eq!(config.candidatos_por_revision, 3);
         assert_eq!(config.carpeta_del_banco, "banco");
         assert_eq!(config.problema(), None);
@@ -240,8 +240,8 @@ mod pruebas {
 
     #[test]
     fn quien_ordena_se_lee_como_se_escribe() {
-        let config = leer("buzones_que_ordenan = [\"claude\"]\n");
-        assert_eq!(config.buzones_que_ordenan, ["claude"]);
+        let config = leer("identidades_que_ordenan = [\"Claude 1\"]\n");
+        assert_eq!(config.identidades_que_ordenan, ["Claude 1"]);
     }
 
     #[test]

@@ -1,30 +1,38 @@
 //! `--revision-buscar`: consulta Hugging Face, clasifica lo encontrado y lo deja en la carpeta del
-//! mes (especificación, §3).
+//! mes.
 //!
 //! Lo que se mide fuera —la tarjeta, la hora, el registro— llega en [`Entorno`], y Hugging Face
 //! llega como un [`CatalogoDeModelos`], para que esto se pruebe sin red, GPU ni reloj. Nada se
 //! escribe hasta que todas las consultas han contestado: un fallo a medias no deja una lista a
 //! medias.
+//!
+//! Entre consultar y clasificar se reponen los modelos útiles del registro que faltan en la
+//! carpeta de modelos (`reponer`): así la búsqueda les aporta su origen y lo repuesto ya está en la
+//! carpeta cuando se clasifica.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use chrono::NaiveDateTime;
 
-use super::candidatos::{clasificar, Clasificacion, Criterios};
+use super::candidatos::{clasificar, huellas_del_registro, Clasificacion, Criterios};
 use super::catalogo::{Busqueda, CatalogoDeModelos, DetalleDeRepositorio};
 use super::config::ConfigRevision;
+use super::descarga::Fuente;
 use super::lista::{self, EntradaDeLaLista, ListaDeCandidatos, NOMBRE_DE_LA_LISTA};
-use super::{informe, mes, BYTES_POR_MIB};
+use super::proponer::ficheros_con_tamano;
+use super::reponer::{self, AvisoDeReposicion, Reposicion};
+use super::{informe, mes, traer, BYTES_POR_MIB, FORMATO_DEL_DIA};
 use crate::error::{Error, Resultado};
 use crate::ficheros;
+use crate::motor::fichero_de_modelo;
 use crate::motor::hardware::Gpu;
-use crate::registro::modelo::Registro;
+use crate::registro::modelo::{self, Registro};
 
-const FORMATO_DEL_DIA: &str = "%Y-%m-%d";
-const NOMBRE_DEL_INFORME: &str = "candidatos.md";
-const CARPETA_DE_RESPUESTAS: &str = "respuestas";
-const EXTENSION_DEL_MODELO: &str = "gguf";
+/// La lista de candidatos para leerla.
+pub const NOMBRE_DEL_INFORME: &str = "candidatos.md";
+/// Lo que contestó Hugging Face, tal cual.
+pub const CARPETA_DE_RESPUESTAS: &str = "respuestas";
 
 /// Lo que la búsqueda necesita del mundo.
 pub struct Entorno<'a> {
@@ -33,10 +41,22 @@ pub struct Entorno<'a> {
     pub tarjeta: Option<Gpu>,
     /// El margen de `[motor]`, en MiB.
     pub margen_vram_mib: u64,
-    pub registro: &'a Registro,
+    pub ruta_del_registro: PathBuf,
     pub carpeta_de_revisiones: PathBuf,
     pub carpeta_de_modelos: PathBuf,
     pub ahora: NaiveDateTime,
+    pub para_reponer: ParaReponer<'a>,
+}
+
+/// Lo que hace falta, además, para reponer los modelos que faltan.
+pub struct ParaReponer<'a> {
+    /// La fuente de un fichero, dado su repositorio y su nombre.
+    pub fuente_de: &'a dyn Fn(&str, &str) -> Box<dyn Fuente>,
+    pub espacio_libre: &'a dyn Fn(&Path) -> Resultado<u64>,
+    pub margen_disco_mib: u64,
+    pub avisar_cada_mib: u64,
+    /// El nombre, sin extensión, del modelo de la configuración.
+    pub modelo_en_uso: Option<String>,
 }
 
 /// Lo que dejó una búsqueda.
@@ -48,6 +68,8 @@ pub struct BusquedaHecha {
     pub descartados: usize,
     /// El nombre con que se guardó la lista anterior del mes, si la había.
     pub anterior: Option<String>,
+    /// Lo que se hizo con los modelos del registro que faltaban.
+    pub reposicion: Reposicion,
 }
 
 /// Las respuestas de todas las consultas, y los detalles de cada repositorio una sola vez.
@@ -57,29 +79,91 @@ struct Consultas {
     respuestas: Vec<(String, String)>,
 }
 
-pub fn buscar(config: &ConfigRevision, entorno: &Entorno) -> Resultado<BusquedaHecha> {
-    let tarjeta = entorno
+/// Consulta Hugging Face, repone los modelos útiles que faltan y clasifica lo encontrado con el
+/// registro y la carpeta como quedan después. Sin tarjeta no se consulta nada.
+pub fn buscar(
+    config: &ConfigRevision,
+    entorno: &Entorno,
+    avisar: &mut dyn FnMut(AvisoDeReposicion),
+) -> Resultado<BusquedaHecha> {
+    let tarjeta = la_tarjeta(entorno)?;
+    let consultas = consultar(entorno.catalogo, config)?;
+    let reposicion = reponer_lo_que_falta(entorno, tarjeta, &consultas, avisar)?;
+    let registro = modelo::leer(&entorno.ruta_del_registro)?;
+    clasificar_y_escribir(config, entorno, &registro, &consultas, reposicion)
+}
+
+fn reponer_lo_que_falta(
+    entorno: &Entorno,
+    tarjeta: &Gpu,
+    consultas: &Consultas,
+    avisar: &mut dyn FnMut(AvisoDeReposicion),
+) -> Resultado<Reposicion> {
+    let para = &entorno.para_reponer;
+    let dia = entorno.ahora.format(FORMATO_DEL_DIA).to_string();
+    reponer::reponer(
+        &reponer::Entorno {
+            descarga: traer::Entorno {
+                carpeta_de_revisiones: entorno.carpeta_de_revisiones.clone(),
+                carpeta_de_modelos: entorno.carpeta_de_modelos.clone(),
+                margen_disco_mib: para.margen_disco_mib,
+                avisar_cada_mib: para.avisar_cada_mib,
+                fuente_de: para.fuente_de,
+                espacio_libre: para.espacio_libre,
+            },
+            catalogo: entorno.catalogo,
+            detalles: &consultas.detalles,
+            tarjeta: &tarjeta.nombre,
+            modelo_en_uso: para.modelo_en_uso.as_deref(),
+            ruta_del_registro: &entorno.ruta_del_registro,
+            dia: &dia,
+        },
+        avisar,
+    )
+}
+
+fn la_tarjeta<'a>(entorno: &'a Entorno) -> Resultado<&'a Gpu> {
+    entorno
         .tarjeta
         .as_ref()
-        .ok_or_else(|| Error::Revision(super::mensajes::SIN_TARJETA.to_string()))?;
-    let consultas = consultar(entorno.catalogo, config)?;
-    let huellas = huellas_del_registro(entorno.registro);
-    let sin_medir = ficheros_sin_medir(&entorno.carpeta_de_modelos, entorno.registro)?;
+        .ok_or_else(|| Error::Revision(super::mensajes::sin_tarjeta()))
+}
+
+/// Clasifica lo que contestaron las consultas con el registro y la carpeta de modelos, y lo deja
+/// en la carpeta del mes.
+fn clasificar_y_escribir(
+    config: &ConfigRevision,
+    entorno: &Entorno,
+    registro: &Registro,
+    consultas: &Consultas,
+    reposicion: Reposicion,
+) -> Resultado<BusquedaHecha> {
+    let tarjeta = la_tarjeta(entorno)?;
+    let en_modelos = ficheros_con_tamano(&entorno.carpeta_de_modelos)?;
+    let huellas = huellas_del_registro(registro, &en_modelos);
+    let sin_medir = ficheros_sin_medir(&entorno.carpeta_de_modelos, registro)?;
     let criterios = Criterios {
         config,
         vram_mib: tarjeta.vram_total / BYTES_POR_MIB,
         margen_vram_mib: entorno.margen_vram_mib,
-        huellas_registradas: &huellas,
+        huellas: &huellas,
         ficheros_en_modelos: &sin_medir,
         hoy: entorno.ahora.date(),
     };
     let clasificacion = clasificar(&consultas.detalles, &criterios);
     let lista = componer_la_lista(&clasificacion, &criterios, tarjeta, config, entorno);
-    escribir(&lista, &clasificacion, &consultas, config, entorno)
+    escribir(
+        &lista,
+        &clasificacion,
+        consultas,
+        reposicion,
+        config,
+        entorno,
+    )
 }
 
 /// Cada búsqueda y, después, el detalle de cada repositorio encontrado, una vez aunque salga en
-/// varias búsquedas.
+/// varias búsquedas. Si una falla, no se devuelve nada.
 fn consultar(catalogo: &dyn CatalogoDeModelos, config: &ConfigRevision) -> Resultado<Consultas> {
     let mut respuestas = Vec::new();
     let mut vistos = BTreeSet::new();
@@ -126,7 +210,7 @@ fn en_la_consulta(cual: &str, fallo: Error) -> Error {
         Error::Revision(texto) => texto,
         otro => otro.to_string(),
     };
-    Error::Revision(format!("{cual} falló, y no se ha escrito nada: {causa}"))
+    Error::Revision(super::mensajes::consulta_fallida_sin_escribir(cual, &causa))
 }
 
 /// Un nombre de fichero sacado de la consulta: `busqueda-coder_GGUF.json`,
@@ -146,14 +230,6 @@ fn nombre_de_la_respuesta(clase: &str, consulta: &str) -> String {
     format!("{clase}-{saneado}.json")
 }
 
-fn huellas_del_registro(registro: &Registro) -> BTreeSet<String> {
-    registro
-        .modelo
-        .iter()
-        .map(|entrada| entrada.huella_sha256.clone())
-        .collect()
-}
-
 /// Los GGUF de `modelos/` cuyo nombre no está en el registro. Sin carpeta, ninguno.
 fn ficheros_sin_medir(carpeta: &Path, registro: &Registro) -> Resultado<BTreeSet<String>> {
     if !carpeta.is_dir() {
@@ -162,13 +238,10 @@ fn ficheros_sin_medir(carpeta: &Path, registro: &Registro) -> Resultado<BTreeSet
     let medidos: BTreeSet<&str> = registro.modelo.iter().map(|e| e.nombre.as_str()).collect();
     Ok(ficheros::entradas(carpeta)?
         .into_iter()
+        .filter(|ruta| fichero_de_modelo::es_ruta_gguf(ruta))
         .filter(|ruta| {
-            ruta.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case(EXTENSION_DEL_MODELO))
-        })
-        .filter(|ruta| {
-            ruta.file_stem()
-                .is_some_and(|nombre| !medidos.contains(nombre.to_string_lossy().as_ref()))
+            fichero_de_modelo::nombre_de_modelo(ruta)
+                .is_some_and(|nombre| !medidos.contains(nombre.as_str()))
         })
         .filter_map(|ruta| Some(ruta.file_name()?.to_string_lossy().into_owned()))
         .collect())
@@ -203,11 +276,17 @@ fn escribir(
     lista: &ListaDeCandidatos,
     clasificacion: &Clasificacion,
     consultas: &Consultas,
+    reposicion: Reposicion,
     config: &ConfigRevision,
     entorno: &Entorno,
 ) -> Resultado<BusquedaHecha> {
     let texto_de_la_lista = lista::escribir(lista)?;
-    let texto_del_informe = informe::componer(lista, &clasificacion.descartados, &config.sitio);
+    let texto_del_informe = informe::componer(
+        lista,
+        &clasificacion.descartados,
+        &reposicion,
+        &config.sitio,
+    );
     let carpeta = mes::carpeta_del_mes(&entorno.carpeta_de_revisiones, entorno.ahora);
     ficheros::crear_carpeta(&carpeta)?;
     let anterior = mes::apartar_lo_anterior(
@@ -229,51 +308,34 @@ fn escribir(
         ya_descargados: clasificacion.ya_descargados.len(),
         descartados: clasificacion.descartados.len(),
         anterior,
+        reposicion,
     })
 }
 
 #[cfg(test)]
 mod pruebas {
-    use std::cell::RefCell;
-
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::revision::catalogo::{leer_busqueda, leer_detalle, Repositorio, Respuesta};
+    use crate::banco::resultados::{FilaDeDesempeno, FILAS_DE_DESEMPENO};
+    use crate::registro::modelo::pruebas::entrada_de_ejemplo;
+    use crate::registro::modelo::{CodigoPuntuadoCon, EntradaDeModelo, NotaDeClase};
+    use crate::revision::catalogo::{leer_busqueda, leer_detalle, FicheroDelRepositorio};
+    use crate::revision::pruebas_comunes::{
+        sobra_espacio, CatalogoFalso, FuenteFija, BUSQUEDA, CONTENIDO_DE_LA_FUENTE_FIJA,
+        CON_LICENCIA,
+    };
+    use crate::revision::reponer::MotivoSinReponer;
 
-    const BUSQUEDA: &str = include_str!("pruebas/busqueda.json");
-    const CON_LICENCIA: &str = include_str!("pruebas/detalle-con-licencia.json");
     const GIB: u64 = 1024 * BYTES_POR_MIB;
 
-    /// Contesta cada búsqueda con la respuesta guardada y cada detalle con el de bartowski,
-    /// cambiándole el nombre. Anota qué se le pidió, y falla en lo que se le diga.
-    #[derive(Default)]
-    struct CatalogoFalso {
-        pedidos: RefCell<Vec<String>>,
-        falla_en: Option<String>,
+    /// La búsqueda de siempre, sin mirar los avisos de la reposición.
+    fn buscar(config: &ConfigRevision, entorno: &Entorno) -> Resultado<BusquedaHecha> {
+        super::buscar(config, entorno, &mut |_| {})
     }
 
-    impl CatalogoDeModelos for CatalogoFalso {
-        fn buscar(&self, busqueda: &Busqueda) -> Resultado<Respuesta<Vec<Repositorio>>> {
-            self.pedidos.borrow_mut().push(busqueda.texto.clone());
-            if self.falla_en.as_deref() == Some(busqueda.texto.as_str()) {
-                return Err(Error::Revision("sin red".into()));
-            }
-            Ok(Respuesta {
-                datos: leer_busqueda(BUSQUEDA)?,
-                en_bruto: BUSQUEDA.into(),
-            })
-        }
-
-        fn detalle(&self, repositorio: &str) -> Resultado<Respuesta<DetalleDeRepositorio>> {
-            self.pedidos.borrow_mut().push(repositorio.to_string());
-            let mut datos = leer_detalle(CON_LICENCIA)?;
-            datos.id = repositorio.to_string();
-            Ok(Respuesta {
-                datos,
-                en_bruto: CON_LICENCIA.into(),
-            })
-        }
+    fn fuente_fija(_: &str, _: &str) -> Box<dyn Fuente> {
+        Box::new(FuenteFija)
     }
 
     fn config() -> ConfigRevision {
@@ -299,21 +361,172 @@ mod pruebas {
             .unwrap()
     }
 
+    /// El entorno de la búsqueda, con `registro` escrito en la carpeta y una fuente que da siempre
+    /// el mismo contenido.
     fn entorno<'a>(
         catalogo: &'a CatalogoFalso,
-        registro: &'a Registro,
+        registro: &Registro,
         raiz: &Path,
         ahora: NaiveDateTime,
     ) -> Entorno<'a> {
+        let ruta_del_registro = raiz.join("registro-de-modelos.toml");
+        modelo::escribir(&ruta_del_registro, registro).unwrap();
         Entorno {
             catalogo,
             tarjeta: Some(tarjeta()),
             margen_vram_mib: 2048,
-            registro,
+            ruta_del_registro,
             carpeta_de_revisiones: raiz.join("revisiones"),
             carpeta_de_modelos: raiz.join("modelos"),
             ahora,
+            para_reponer: ParaReponer {
+                fuente_de: &fuente_fija,
+                espacio_libre: &sobra_espacio,
+                margen_disco_mib: 0,
+                avisar_cada_mib: 512,
+                modelo_en_uso: None,
+            },
         }
+    }
+
+    /// Un modelo medido en la tarjeta de prueba, con `nota` en todas las clases.
+    fn medido(nombre: &str, huella: &str, nota: f64) -> EntradaDeModelo {
+        let mut e = entrada_de_ejemplo();
+        e.nombre = nombre.into();
+        e.tarjeta = tarjeta().nombre;
+        e.huella_sha256 = huella.into();
+        e.codigo_puntuado_con = Some(CodigoPuntuadoCon::PruebasOcultas);
+        e.clase = FILAS_DE_DESEMPENO
+            .iter()
+            .map(|&clase| NotaDeClase {
+                clase,
+                nota: Some(nota),
+                inventados: 0,
+                tokens_por_segundo: Some(10.0),
+            })
+            .collect();
+        e
+    }
+
+    fn en_hugging_face(nombre: &str, huella: &str) -> FicheroDelRepositorio {
+        FicheroDelRepositorio {
+            nombre: nombre.into(),
+            tamano: Some(CONTENIDO_DE_LA_FUENTE_FIJA.len() as u64),
+            huella_sha256: Some(huella.into()),
+        }
+    }
+
+    fn el_informe(hecha: &BusquedaHecha) -> String {
+        ficheros::leer(&hecha.carpeta.join(NOMBRE_DEL_INFORME)).unwrap()
+    }
+
+    #[test]
+    fn la_busqueda_repone_antes_de_clasificar_y_lo_repuesto_sale_como_ya_registrado() {
+        let raiz = tempfile::tempdir().unwrap();
+        let huella = ficheros::huella_sha256_de_bytes(CONTENIDO_DE_LA_FUENTE_FIJA);
+        let catalogo = CatalogoFalso {
+            anadidos: vec![en_hugging_face("Repuesto-Q4_K_M.gguf", &huella)],
+            ..CatalogoFalso::default()
+        };
+        // Sin origen: lo aprende de la búsqueda.
+        let registro = Registro {
+            modelo: vec![medido("repuesto", &huella, 4.0)],
+        };
+        let hecha = buscar(
+            &config(),
+            &entorno(&catalogo, &registro, raiz.path(), a_las(15)),
+        )
+        .unwrap();
+        let nombres: Vec<&str> = hecha
+            .reposicion
+            .repuestos
+            .iter()
+            .map(|r| r.nombre.as_str())
+            .collect();
+        assert_eq!(nombres, ["repuesto"]);
+        assert!(raiz.path().join("modelos").join("repuesto.gguf").is_file());
+        let informe = el_informe(&hecha);
+        assert!(
+            informe.contains(
+                "## Modelos del registro que faltaban (1)\n\n- `repuesto.gguf`: repuesto"
+            ),
+            "{informe}"
+        );
+        let registrados = informe.find("### Ya en el registro").unwrap();
+        assert!(
+            informe[registrados..].contains("Repuesto-Q4_K_M.gguf"),
+            "{informe}"
+        );
+        assert!(
+            !informe.contains("### En el registro, sin fichero"),
+            "{informe}"
+        );
+        let lista =
+            lista::leer(&ficheros::leer(&hecha.carpeta.join(NOMBRE_DE_LA_LISTA)).unwrap()).unwrap();
+        assert!(lista
+            .candidatos
+            .iter()
+            .all(|c| c.fichero.fichero != "Repuesto-Q4_K_M.gguf"));
+    }
+
+    #[test]
+    fn el_registro_de_probador_1_con_modelos_vacia() {
+        // El registro del 23/11, con huellas cortas de mentira: el modelo por defecto, que no gana
+        // nada, y los dos que ganaban una clase cada uno. Hugging Face los tiene con esas huellas,
+        // pero lo que se baja no cuadra con ellas: no se repone ninguno, y ninguno sale como «ya
+        // en el registro».
+        let raiz = tempfile::tempdir().unwrap();
+        let por_defecto = "devstral-small-2-24b-Q4_K_M";
+        let mut jackod = medido("JackOD-9B-Coder-CD-Q4_K_M", "j1", 2.0);
+        let mut qwen = medido("Qwen2.5-Coder-14B-Instruct-Q4_K_M", "q1", 2.0);
+        for (modelo, fila) in [
+            (&mut jackod, FilaDeDesempeno::Diagnostico),
+            (&mut qwen, FilaDeDesempeno::FicheroLimpio),
+        ] {
+            for clase in modelo.clase.iter_mut().filter(|c| c.clase == fila) {
+                clase.nota = Some(5.0);
+            }
+        }
+        let registro = Registro {
+            modelo: vec![medido(por_defecto, "d1", 1.0), jackod, qwen],
+        };
+        let catalogo = CatalogoFalso {
+            anadidos: vec![
+                en_hugging_face("Devstral-Q4_K_M.gguf", "d1"),
+                en_hugging_face("JackOD-Q6_K.gguf", "J1"),
+                en_hugging_face("Qwen-Q8_0.gguf", "q1"),
+            ],
+            ..CatalogoFalso::default()
+        };
+        let mut con_el_de_por_defecto = entorno(&catalogo, &registro, raiz.path(), a_las(15));
+        con_el_de_por_defecto.para_reponer.modelo_en_uso = Some(por_defecto.into());
+        let hecha = buscar(&config(), &con_el_de_por_defecto).unwrap();
+
+        let sin_reponer: Vec<&str> = hecha
+            .reposicion
+            .sin_reponer
+            .iter()
+            .map(|s| s.nombre.as_str())
+            .collect();
+        assert_eq!(
+            sin_reponer,
+            [
+                por_defecto,
+                "JackOD-9B-Coder-CD-Q4_K_M",
+                "Qwen2.5-Coder-14B-Instruct-Q4_K_M"
+            ]
+        );
+        assert!(hecha
+            .reposicion
+            .sin_reponer
+            .iter()
+            .all(|s| matches!(s.motivo, MotivoSinReponer::FalloAlDescargar(_))));
+        let informe = el_informe(&hecha);
+        assert!(!informe.contains("### Ya en el registro"), "{informe}");
+        assert!(
+            informe.contains("### En el registro, sin fichero"),
+            "{informe}"
+        );
     }
 
     #[test]

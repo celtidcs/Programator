@@ -93,9 +93,8 @@ pub fn montar_carpeta_de_pruebas(
     destino: &Path,
 ) -> Resultado<()> {
     let Some(colocar_en) = &encargo.ficha.colocar_en else {
-        return Err(Error::Banco(format!(
-            "{}: la ficha no dice dónde colocar la entrega",
-            encargo.ficha.id
+        return Err(Error::Banco(mensajes::ficha_sin_colocar_en(
+            &encargo.ficha.id,
         )));
     };
     copiar_arbol(&encargo.carpeta.join(CARPETA_DE_PRUEBAS), destino)?;

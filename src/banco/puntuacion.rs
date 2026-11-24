@@ -168,7 +168,11 @@ pub fn contar_auditoria(
         sembrados: defectos.len(),
         aciertos,
         inventados: fuera,
-        repetidos: lectura.hallazgos.len() - aciertos - fuera,
+        repetidos: lectura
+            .hallazgos
+            .len()
+            .saturating_sub(aciertos)
+            .saturating_sub(fuera),
         sin_formato: lectura.sin_formato,
     }
 }

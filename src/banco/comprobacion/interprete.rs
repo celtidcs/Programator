@@ -17,8 +17,6 @@ use crate::banco::mensajes;
 const PROGRAMA_GIT: &str = "git.exe";
 #[cfg(not(windows))]
 const PROGRAMA_GIT: &str = "git";
-/// El bash que trae Git for Windows, en la carpeta `bin` de su instalación.
-const BASH_DE_GIT: &str = "bin/bash.exe";
 /// Cuántas carpetas por encima de la de `git.exe` puede estar la raíz de Git: `git.exe` está en
 /// `cmd\` en la instalación normal y en `mingw64\bin\` en la portable.
 const NIVELES_HASTA_LA_RAIZ_DE_GIT: [usize; 2] = [1, 2];
@@ -73,14 +71,14 @@ fn candidatos_junto_a_git(git: &Path) -> Vec<PathBuf> {
     NIVELES_HASTA_LA_RAIZ_DE_GIT
         .iter()
         .filter_map(|niveles| git.ancestors().nth(niveles + 1))
-        .map(|raiz| raiz.join(BASH_DE_GIT))
+        .map(super::copia_del_interprete::bash_de_git)
         .collect()
 }
 
 /// El primer `programa` que aparece en las carpetas del PATH.
 fn buscar_en_el_path(programa: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+    let carpetas_del_path = std::env::var_os("PATH")?;
+    std::env::split_paths(&carpetas_del_path)
         .map(|carpeta| carpeta.join(programa))
         .find(|candidato| candidato.is_file())
 }
@@ -158,7 +156,7 @@ mod pruebas {
 
     #[test]
     fn se_encuentra_junto_al_git_de_una_instalacion_normal() {
-        let esperado = absoluta("d/Git").join(BASH_DE_GIT);
+        let esperado = super::super::copia_del_interprete::bash_de_git(&absoluta("d/Git"));
         let existe = |ruta: &Path| ruta == esperado;
 
         let (interprete, origen) = resolver(
@@ -177,7 +175,7 @@ mod pruebas {
 
     #[test]
     fn se_encuentra_junto_al_git_portable() {
-        let esperado = absoluta("p/Git").join(BASH_DE_GIT);
+        let esperado = super::super::copia_del_interprete::bash_de_git(&absoluta("p/Git"));
         let existe = |ruta: &Path| ruta == esperado;
 
         let (_, origen) = resolver(

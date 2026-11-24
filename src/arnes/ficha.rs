@@ -10,10 +10,12 @@
 //! Aquí se declara una vez y de aquí come todo. **Este módulo no ejecuta nada**: no toca disco, no
 //! llama al motor y no decide si una solicitud se concede. Eso sigue siendo de `herramientas.rs`.
 
+use crate::motor::declaracion::{Declaracion, Parametro};
+
 /// Un argumento de un verbo, con el nombre **exacto** que el modelo tiene que escribir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Argumento {
-    /// El nombre tal y como lo lee `Repertorio::argumento`. Si esto y el código discrepan, el
+    /// El nombre tal y como lo lee `herramientas::argumentos::texto`. Si esto y el código discrepan, el
     /// modelo recibe una denegación por seguir sus propias instrucciones.
     pub nombre: &'static str,
     /// Una línea para el modelo y para quien dirige. No es documentación interna: se publica.
@@ -72,6 +74,44 @@ impl Ficha {
         partes.extend(self.opcionales.iter().map(|a| format!("[{}]", a.nombre)));
         format!("{}({})", self.nombre, partes.join(", "))
     }
+
+    /// Cómo se le anuncia al modelo: lo que `MotorLlama` traduce a la API. El motor no lee las
+    /// fichas; se las da hechas el arnés.
+    pub fn declaracion(&self) -> Declaracion {
+        let parametro = |a: &Argumento| Parametro {
+            nombre: a.nombre,
+            tipo: a.tipo,
+            para_que: a.para_que,
+        };
+        Declaracion {
+            nombre: self.nombre,
+            para_que: self.para_que,
+            obligatorios: self.obligatorios.iter().map(parametro).collect(),
+            opcionales: self.opcionales.iter().map(parametro).collect(),
+        }
+    }
+}
+
+/// Las declaraciones de los verbos que hoy se conceden, en el orden del repertorio.
+pub fn declaraciones_concedibles() -> Vec<Declaracion> {
+    todas()
+        .iter()
+        .filter(|f| f.es_concedible())
+        .map(Ficha::declaracion)
+        .collect()
+}
+
+/// El nombre de cada verbo, en un solo sitio: lo usan el repertorio, el despacho de
+/// `herramientas.rs`, las repeticiones del ciclo y la publicación.
+pub mod verbo {
+    pub const LEER_FICHERO: &str = "leer_fichero";
+    pub const LISTAR: &str = "listar";
+    pub const BUSCAR: &str = "buscar";
+    pub const VERIFICAR: &str = "verificar";
+    pub const PUBLICAR: &str = "publicar";
+    pub const ESCRIBIR_PROPUESTA: &str = "escribir_propuesta";
+    pub const PROPONER_PODA: &str = "proponer_poda";
+    pub const RESERVAR: &str = "reservar";
 }
 
 /// Los ocho verbos que el arnés reconoce, en el orden del repertorio del protocolo.
@@ -83,7 +123,7 @@ impl Ficha {
 /// Por eso el orden se copia tal cual, no se reinventa.
 pub const REPERTORIO: &[Ficha] = &[
     Ficha {
-        nombre: "leer_fichero",
+        nombre: verbo::LEER_FICHERO,
         para_que: "Leer un fichero de la carpeta de trabajo, para no tener que suponer qué dice",
         obligatorios: &[Argumento {
             nombre: "ruta",
@@ -101,11 +141,17 @@ pub const REPERTORIO: &[Ficha] = &[
                 para_que: "Última línea a leer inclusive (base 1, opcional)",
                 tipo: "integer",
             },
+            Argumento {
+                nombre: "numerar",
+                para_que: "Si es true, pone delante de cada línea su número real; úsalo para \
+                           saber en qué línea está algo, no para copiar el código (opcional)",
+                tipo: "boolean",
+            },
         ],
         estado: Estado::Concedible,
     },
     Ficha {
-        nombre: "listar",
+        nombre: verbo::LISTAR,
         para_que: "Ver qué hay en un directorio de la carpeta de trabajo",
         obligatorios: &[Argumento {
             nombre: "ruta",
@@ -116,7 +162,7 @@ pub const REPERTORIO: &[Ficha] = &[
         estado: Estado::Concedible,
     },
     Ficha {
-        nombre: "buscar",
+        nombre: verbo::BUSCAR,
         para_que: "Buscar texto en los ficheros de la carpeta de trabajo",
         // Sin argumentos declarados a propósito: llega en la v1.1 y su forma no está decidida.
         // Inventarla aquí sería escribir una firma que nadie ha diseñado.
@@ -127,7 +173,7 @@ pub const REPERTORIO: &[Ficha] = &[
         },
     },
     Ficha {
-        nombre: "verificar",
+        nombre: verbo::VERIFICAR,
         para_que: "Pedir que se ejecute una verificación del proyecto y darte su resultado",
         obligatorios: &[Argumento {
             nombre: "cual",
@@ -145,7 +191,7 @@ pub const REPERTORIO: &[Ficha] = &[
         },
     },
     Ficha {
-        nombre: "publicar",
+        nombre: verbo::PUBLICAR,
         para_que: "Dejar tu respuesta en tu buzón del canal, para que la lea el equipo",
         obligatorios: &[Argumento {
             nombre: "texto",
@@ -156,7 +202,7 @@ pub const REPERTORIO: &[Ficha] = &[
         estado: Estado::Concedible,
     },
     Ficha {
-        nombre: "escribir_propuesta",
+        nombre: verbo::ESCRIBIR_PROPUESTA,
         para_que: "Entregar código o un documento como candidato, para que alguien lo revise",
         obligatorios: &[
             Argumento {
@@ -174,7 +220,7 @@ pub const REPERTORIO: &[Ficha] = &[
         estado: Estado::Concedible,
     },
     Ficha {
-        nombre: "proponer_poda",
+        nombre: verbo::PROPONER_PODA,
         para_que: "Proponer qué bloques de un buzón ya están superados",
         obligatorios: &[],
         opcionales: &[],
@@ -183,7 +229,7 @@ pub const REPERTORIO: &[Ficha] = &[
         },
     },
     Ficha {
-        nombre: "reservar",
+        nombre: verbo::RESERVAR,
         para_que: "Avisar al equipo de que vas a trabajar sobre un fichero",
         obligatorios: &[
             Argumento {
@@ -237,7 +283,7 @@ mod pruebas {
         let leer = buscar("leer_fichero").expect("está en el repertorio");
         assert_eq!(
             leer.firma(),
-            "leer_fichero(ruta, [desde_linea], [hasta_linea])"
+            "leer_fichero(ruta, [desde_linea], [hasta_linea], [numerar])"
         );
     }
 
@@ -284,6 +330,26 @@ mod pruebas {
             .collect();
         assert_eq!(
             concedibles,
+            vec![
+                "leer_fichero",
+                "listar",
+                "publicar",
+                "escribir_propuesta",
+                "reservar"
+            ]
+        );
+    }
+
+    /// Al modelo solo se le anuncian los verbos que se le conceden: anunciarle `buscar` o
+    /// `proponer_poda` sería invitarle a pedir lo que se le va a denegar siempre.
+    #[test]
+    fn al_modelo_solo_se_le_declaran_los_verbos_concedibles() {
+        let declarados: Vec<&str> = declaraciones_concedibles()
+            .iter()
+            .map(|d| d.nombre)
+            .collect();
+        assert_eq!(
+            declarados,
             vec![
                 "leer_fichero",
                 "listar",

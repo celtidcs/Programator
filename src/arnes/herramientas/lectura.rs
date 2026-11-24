@@ -4,6 +4,8 @@
 //! de línea (LF y CRLF) se preserven intactos para no inducir diferencias fantasma en Windows,
 //! y que el modelo sea advertido explícitamente cuando visualiza un fragmento acotado o recortado.
 
+use super::mensajes;
+
 /// Recorta `texto` a lo sumo a `tope` bytes sin partir un carácter multibyte por la mitad: baja
 /// hasta el límite de carácter válido más cercano. Devuelve también si hubo recorte.
 pub(super) fn recortar_por_caracter(texto: &str, tope: usize) -> (&str, bool) {
@@ -15,6 +17,48 @@ pub(super) fn recortar_por_caracter(texto: &str, tope: usize) -> (&str, bool) {
         corte -= 1;
     }
     (&texto[..corte], true)
+}
+
+/// Lo que separa el número de línea del texto cuando se piden números (`numerar`).
+const SEPARADOR_DEL_NUMERO: &str = ": ";
+
+/// El texto con el número real de cada línea delante: `primera` es el número de la primera. Los
+/// finales de línea se conservan tal cual.
+pub(super) fn numerar_lineas(texto: &str, primera: usize) -> String {
+    let mut salida = String::with_capacity(texto.len());
+    for (desplazamiento, (inicio, fin)) in indices_de_lineas(texto).into_iter().enumerate() {
+        salida.push_str(&format!(
+            "{}{SEPARADOR_DEL_NUMERO}",
+            primera + desplazamiento
+        ));
+        salida.push_str(&texto[inicio..fin]);
+    }
+    salida
+}
+
+/// Cómo empieza la lectura de un fichero entero: cuántas líneas tiene, para que el modelo no las
+/// cuente a ojo.
+fn encabezado_del_fichero_entero(ruta: &str, total: usize) -> String {
+    format!("[«{ruta}»: {}]:\n", cuantas_lineas(total))
+}
+
+/// «1 línea», «2 líneas».
+fn cuantas_lineas(total: usize) -> String {
+    if total == 1 {
+        "1 línea".to_string()
+    } else {
+        format!("{total} líneas")
+    }
+}
+
+/// Cómo empieza la lectura de un rango de líneas.
+fn encabezado_del_rango(ruta: &str, acotacion: &AcotacionLineas<'_>) -> String {
+    format!(
+        "[Líneas {} a {} de «{ruta}» (total {})]:\n",
+        acotacion.linea_desde,
+        acotacion.linea_hasta,
+        cuantas_lineas(acotacion.total_lineas)
+    )
 }
 
 /// Identifica los intervalos de bytes de cada línea (1-indexada) dentro de `contenido`.
@@ -87,11 +131,11 @@ pub(super) fn acotar_por_lineas(
         None => total_lineas,
     };
 
-    let idx_desde = d - 1;
-    let idx_hasta = h - 1;
+    let indice_desde = d - 1;
+    let indice_hasta = h - 1;
 
-    let byte_inicio = lineas[idx_desde].0;
-    let byte_fin = lineas[idx_hasta].1;
+    let byte_inicio = lineas[indice_desde].0;
+    let byte_fin = lineas[indice_hasta].1;
 
     let es_completo = d == 1 && h == total_lineas && desde.is_none() && hasta.is_none();
 
@@ -106,7 +150,9 @@ pub(super) fn acotar_por_lineas(
 }
 
 /// Deja un fichero en condiciones de entrar en la conversación:
-/// - Si se indicaron líneas (`desde_linea`, `hasta_linea`), extrae el rango indicado e informa.
+/// - Empieza diciendo cuántas líneas tiene el fichero y, si se indicaron (`desde_linea`,
+///   `hasta_linea`), cuáles se muestran.
+/// - Con `numerar`, antepone a cada línea su número real; sin él, el texto va intacto.
 /// - Lo recorta al tope indicado si excede la capacidad configurada.
 /// - Si lo recortó, le dice al modelo cuánto ocupa de verdad, para que sepa que está viendo un trozo.
 ///
@@ -121,43 +167,61 @@ pub(super) fn acotar_por_lineas(
 /// modelo lea código **y lo reescriba**, en un proyecto de Windows: corromper así el fichero
 /// que tiene que manipular metería diferencias fantasma de CRLF en sus propuestas. Por la
 /// misma razón tampoco se usa `citar`, que le pondría un `> ` a cada línea.
+/// Si la lectura antepone a cada línea su número. Es un tipo propio y no un `bool`, que se
+/// perdería suelto entre los demás argumentos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Numeracion {
+    /// El texto tal cual, para reescribirlo.
+    SinNumeros,
+    /// Cada línea con su número real delante, para citarla.
+    ConNumeros,
+}
+
+impl Numeracion {
+    /// Lo que pidió el modelo con el argumento lógico `numerar`.
+    pub(super) fn segun(numerar: bool) -> Self {
+        if numerar {
+            Self::ConNumeros
+        } else {
+            Self::SinNumeros
+        }
+    }
+}
+
 pub(super) fn preparar_lectura(
     ruta: &str,
     contenido: &str,
     tope: usize,
     desde_linea: Option<usize>,
     hasta_linea: Option<usize>,
+    numeracion: Numeracion,
 ) -> String {
     let acotacion = acotar_por_lineas(contenido, desde_linea, hasta_linea);
 
     if acotacion.fuera_de_rango {
-        return format!(
-            "[Aviso del arnés: «{ruta}» tiene {} líneas; el rango solicitado (desde {}) comienza después del final del fichero.]",
-            acotacion.total_lineas, acotacion.linea_desde
-        );
+        return mensajes::rango_tras_el_final(ruta, acotacion.total_lineas, acotacion.linea_desde);
     }
 
-    let (trozo, recortado) = recortar_por_caracter(acotacion.texto, tope);
+    let mostrado = if numeracion == Numeracion::ConNumeros {
+        std::borrow::Cow::Owned(numerar_lineas(acotacion.texto, acotacion.linea_desde))
+    } else {
+        std::borrow::Cow::Borrowed(acotacion.texto)
+    };
+    let (trozo, recortado) = recortar_por_caracter(&mostrado, tope);
 
     let mut salida = if acotacion.acotado {
-        format!(
-            "[Líneas {} a {} de «{ruta}» (total {} líneas)]:\n{trozo}",
-            acotacion.linea_desde, acotacion.linea_hasta, acotacion.total_lineas
-        )
+        encabezado_del_rango(ruta, &acotacion)
     } else {
-        trozo.to_string()
+        encabezado_del_fichero_entero(ruta, acotacion.total_lineas)
     };
+    salida.push_str(trozo);
 
     if recortado {
-        let ocupacion = acotacion.texto.len();
+        let ocupacion = mostrado.len();
         if acotacion.acotado {
-            salida.push_str(&format!(
-                "\n\n[Aviso del arnés: el fragmento solicitado de «{ruta}» ocupa {ocupacion} bytes y solo se te muestran los primeros {tope}. NO has visto el resto; acota un rango menor con «desde_linea» y «hasta_linea».]"
-            ));
+            salida.push_str(&mensajes::fragmento_recortado(ruta, ocupacion, tope));
         } else {
-            salida.push_str(&format!(
-                "\n\n[Aviso del arnés: «{ruta}» ocupa {ocupacion} bytes y solo se te muestran los primeros {tope}. NO has visto el resto del fichero; no supongas lo que dice. Puedes acotar con «desde_linea» y «hasta_linea».]"
-            ));
+            salida.push_str(&mensajes::fichero_recortado(ruta, ocupacion, tope));
         }
     }
 
@@ -167,6 +231,62 @@ pub(super) fn preparar_lectura(
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn leyendo_entero_empieza_por_el_total_y_el_texto_va_intacto() {
+        assert_eq!(
+            preparar_lectura(
+                "a.rs",
+                "uno\ndos\n",
+                100,
+                None,
+                None,
+                Numeracion::SinNumeros
+            ),
+            "[«a.rs»: 2 líneas]:\nuno\ndos\n"
+        );
+        assert_eq!(
+            preparar_lectura(
+                "a.rs",
+                "uno\r\ndos",
+                100,
+                None,
+                None,
+                Numeracion::SinNumeros
+            ),
+            "[«a.rs»: 2 líneas]:\nuno\r\ndos"
+        );
+        assert_eq!(
+            preparar_lectura("vacio.rs", "", 100, None, None, Numeracion::SinNumeros),
+            "[«vacio.rs»: 0 líneas]:\n"
+        );
+    }
+
+    #[test]
+    fn numerar_pone_el_numero_real_tambien_con_rango_y_conserva_los_finales() {
+        assert_eq!(
+            preparar_lectura(
+                "a.rs",
+                "uno\r\ndos\r\n",
+                100,
+                None,
+                None,
+                Numeracion::ConNumeros
+            ),
+            "[«a.rs»: 2 líneas]:\n1: uno\r\n2: dos\r\n"
+        );
+        assert_eq!(
+            preparar_lectura(
+                "a.rs",
+                "a\nb\nc\nd",
+                100,
+                Some(3),
+                Some(4),
+                Numeracion::ConNumeros
+            ),
+            "[Líneas 3 a 4 de «a.rs» (total 4 líneas)]:\n3: c\n4: d"
+        );
+    }
 
     #[test]
     fn el_recorte_no_parte_un_caracter_multibyte_por_la_mitad() {
@@ -191,11 +311,25 @@ mod pruebas {
 
     #[test]
     fn preparar_lectura_incluye_aviso_solo_si_se_recorta() {
-        let corto = preparar_lectura("src/main.rs", "fn main() {}", 100, None, None);
-        assert_eq!(corto, "fn main() {}");
+        let corto = preparar_lectura(
+            "src/main.rs",
+            "fn main() {}",
+            100,
+            None,
+            None,
+            Numeracion::SinNumeros,
+        );
+        assert_eq!(corto, "[«src/main.rs»: 1 línea]:\nfn main() {}");
 
-        let largo = preparar_lectura("src/largo.rs", "abcdefghij", 5, None, None);
-        assert!(largo.starts_with("abcde"));
+        let largo = preparar_lectura(
+            "src/largo.rs",
+            "abcdefghij",
+            5,
+            None,
+            None,
+            Numeracion::SinNumeros,
+        );
+        assert!(largo.starts_with("[«src/largo.rs»: 1 línea]:\nabcde"));
         assert!(largo.contains(
             "[Aviso del arnés: «src/largo.rs» ocupa 10 bytes y solo se te muestran los primeros 5."
         ));
@@ -229,7 +363,14 @@ mod pruebas {
         assert!(acotado.fuera_de_rango);
         assert_eq!(acotado.total_lineas, 2);
 
-        let preparado = preparar_lectura("test.txt", contenido, 100, Some(10), None);
+        let preparado = preparar_lectura(
+            "test.txt",
+            contenido,
+            100,
+            Some(10),
+            None,
+            Numeracion::SinNumeros,
+        );
         assert!(preparado.contains("«test.txt» tiene 2 líneas; el rango solicitado (desde 10)"));
     }
 
@@ -245,16 +386,28 @@ mod pruebas {
     #[test]
     fn preparar_lectura_con_lineas_incluye_encabezado_y_aviso_si_recorta() {
         let contenido = "linea 1\nlinea 2\nlinea 3\n";
-        let res = preparar_lectura("codigo.rs", contenido, 1000, Some(1), Some(2));
-        assert!(
-            res.starts_with("[Líneas 1 a 2 de «codigo.rs» (total 3 líneas)]:\nlinea 1\nlinea 2\n")
+        let lectura = preparar_lectura(
+            "codigo.rs",
+            contenido,
+            1000,
+            Some(1),
+            Some(2),
+            Numeracion::SinNumeros,
         );
+        assert!(lectura
+            .starts_with("[Líneas 1 a 2 de «codigo.rs» (total 3 líneas)]:\nlinea 1\nlinea 2\n"));
 
         // Si excede el tope de bytes, avisa indicando acotar rango menor
-        let res_corta = preparar_lectura("codigo.rs", contenido, 5, Some(1), Some(2));
-        assert!(
-            res_corta.contains("[Aviso del arnés: el fragmento solicitado de «codigo.rs» ocupa")
+        let lectura_corta = preparar_lectura(
+            "codigo.rs",
+            contenido,
+            5,
+            Some(1),
+            Some(2),
+            Numeracion::SinNumeros,
         );
-        assert!(res_corta.contains("acota un rango menor"));
+        assert!(lectura_corta
+            .contains("[Aviso del arnés: el fragmento solicitado de «codigo.rs» ocupa"));
+        assert!(lectura_corta.contains("acota un rango menor"));
     }
 }

@@ -7,13 +7,18 @@ use super::comparacion::{Campo, EstadoDePasada, Veredicto};
 use super::config::CLAVE_ACTIVA;
 use super::ficha::NOMBRE_RUBRICA;
 use super::pasadas::NOMBRE_PASADAS;
+use super::tanda::{CARPETA_DE_RESULTADOS, CARPETA_DE_RUBRICAS};
+use crate::argumentos::{OPCION_BANCO_COMPROBAR, OPCION_BANCO_INFORME};
+use crate::arnes::sesion::DesenlacePasada;
+use crate::concordancia::{cantidad, juntar_con_y, segun};
 use crate::error::Error;
 use crate::orden_acotada::DesenlaceDeOrden;
+use crate::plataforma::NOMBRE_DEL_EJECUTABLE;
+use crate::unidades::MINUTOS_POR_HORA;
 
 /// Lo que tardó un encargo con Devstral, medido el 22/09/2026: entre dos y tres minutos. Solo sirve
 /// para avisar de cuánto durará la tanda; no corta nada.
 const MINUTOS_POR_ENCARGO: (u64, u64) = (2, 3);
-const MINUTOS_POR_HORA: u64 = 60;
 
 /// Lo que se cuenta antes de empezar.
 pub struct Inicio<'a> {
@@ -50,7 +55,8 @@ fn texto_de_minutos(minutos: u64) -> String {
 }
 
 pub fn mensaje_de_inicio(inicio: &Inicio) -> String {
-    let pasadas = (inicio.encargos * inicio.semillas.len()) as u64;
+    let pasadas =
+        u64::try_from(inicio.encargos.saturating_mul(inicio.semillas.len())).unwrap_or(u64::MAX);
     let (corto, largo) = MINUTOS_POR_ENCARGO;
     let codigo = match (
         inicio.carpeta_de_comprobacion,
@@ -71,13 +77,13 @@ pub fn mensaje_de_inicio(inicio: &Inicio) -> String {
         ),
     };
     format!(
-        "Banco de modelos: {} encargos × {} semillas {:?} = {pasadas} pasadas.\n\
+        "Banco de modelos: {} encargos × {} semillas ({}) = {pasadas} pasadas.\n\
          Calculado entre {} y {}, a {corto}-{largo} minutos por encargo.\n\
          {codigo}\n\
          Resultados en {}",
         inicio.encargos,
         inicio.semillas.len(),
-        inicio.semillas,
+        semillas_legibles(inicio.semillas),
         texto_de_minutos(pasadas * corto),
         texto_de_minutos(pasadas * largo),
         inicio.resultados.display(),
@@ -234,14 +240,12 @@ pub fn mensaje_herramientas_ausentes(ausentes: &[String]) -> String {
 
 /// Por qué no se comprobó una entrega cuyas herramientas no están instaladas.
 pub fn motivo_herramientas_no_instaladas(faltan: &[String]) -> String {
-    let (cuales, verbo) = match faltan {
-        [una] => (una.clone(), "no está instalado"),
-        [primeras @ .., ultima] => (
-            format!("{} y {ultima}", primeras.join(", ")),
-            "no están instalados",
-        ),
-        [] => (String::new(), "no está instalado"),
+    let verbo = if faltan.len() > 1 {
+        "no están instalados"
+    } else {
+        "no está instalado"
     };
+    let cuales = juntar_con_y(faltan.to_vec());
     escrito_pero_sin_ejecutar(&format!(
         "{cuales} {verbo} en este equipo. Para comprobarlo, instálalo; si no quieres comprobar \
          ejecutando, apaga las pruebas ocultas con {}",
@@ -340,6 +344,12 @@ pub fn motivo_preparacion_fallida(salida: &str) -> String {
     ))
 }
 
+/// La carpeta de la comprobación local no se pudo cerrar del todo al soltarla. No hay a quién
+/// devolver el error: solo se avisa.
+pub fn aviso_de_cierre_fallido(fallo: &Error) -> String {
+    format!("⚠️ {fallo}")
+}
+
 /// La vigilancia de la red falló: lo que se haya conectado no se ve. Se dice una vez por tanda.
 pub fn mensaje_red_sin_vigilar(motivo: &str) -> String {
     format!(
@@ -393,6 +403,11 @@ pub fn mensaje_motor_ajeno() -> String {
     "Ya hay un motor escuchando en el puerto configurado: se usa ese y no se mide su carga.".into()
 }
 
+/// El error de la tanda cuando el motor no termina de cargar dentro del tope.
+pub fn mensaje_carga_agotada(tope: Duration) -> String {
+    format!("el motor no terminó de cargar en {} s", tope.as_secs())
+}
+
 pub fn mensaje_motor_cargado(capas: u32, vram_mib: Option<u64>, carga: Duration) -> String {
     let vram = vram_mib
         .map(|v| format!("{v} MiB de VRAM"))
@@ -414,11 +429,40 @@ pub fn mensaje_de_avance(
     entregas: usize,
 ) -> String {
     let como = if a_tiempo {
-        format!("{} s, {entregas} ficheros entregados", duracion.as_secs())
+        format!(
+            "{} s, {}",
+            duracion.as_secs(),
+            cantidad(entregas, "fichero entregado", "ficheros entregados")
+        )
     } else {
         format!("sin respuesta a tiempo ({} s)", duracion.as_secs())
     };
     format!("[{numero}/{total}] {id}, semilla {semilla}: {como}")
+}
+
+/// Las semillas separadas por comas, para una persona: no `[1, 2, 3]`, el `Debug` de la lista.
+pub fn semillas_legibles(semillas: &[i64]) -> String {
+    semillas
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// La pasada del banco que no llegó a atender el encargo, contada en palabras y no con el `Debug`
+/// de `DesenlacePasada`.
+pub fn encargo_no_detectado(id: &str, desenlace: &DesenlacePasada) -> String {
+    let que_paso = match desenlace {
+        DesenlacePasada::PrimeraPasada => {
+            "el ciclo la tomó por la primera y solo fotografió el canal"
+        }
+        DesenlacePasada::SinEncargos => {
+            "el ciclo no encontró en el canal ningún encargo para el agente"
+        }
+        DesenlacePasada::MotorCargando => "el motor seguía cargando el modelo",
+        DesenlacePasada::Atendidos(_) => "el ciclo dice que lo atendió",
+    };
+    format!("{id}: la pasada no fue la esperada, porque {que_paso}; el encargo no llegó al ciclo")
 }
 
 fn texto_de_pendientes(pendientes: usize, resultados: &Path) -> String {
@@ -426,13 +470,15 @@ fn texto_de_pendientes(pendientes: usize, resultados: &Path) -> String {
         return "No queda ninguna rúbrica por puntuar.".into();
     }
     format!(
-        "Quedan {pendientes} rúbricas por puntuar en {}. Cuando estén, rehaz el informe con \
-         «--banco-informe {}».",
+        "{} {} por puntuar en {}. Cuando {}, rehaz el informe con «{OPCION_BANCO_INFORME} {}».",
+        segun(pendientes, "Queda", "Quedan"),
+        cantidad(pendientes, "rúbrica", "rúbricas"),
         resultados
             .parent()
             .unwrap_or(resultados)
-            .join("rubricas")
+            .join(CARPETA_DE_RUBRICAS)
             .display(),
+        segun(pendientes, "esté", "estén"),
         resultados.display(),
     )
 }
@@ -462,7 +508,7 @@ pub fn mensaje_tanda_sin_cerrar(fallo: &Error, tanda: &Path) -> String {
     format!(
         "no se pudo terminar la tanda: {fallo}. Lo pasado con el modelo está a salvo en «{}». \
          Cuando lo hayas arreglado, termínala sin volver a pasar los encargos con \
-         «programator --banco-comprobar {}»",
+         «{NOMBRE_DEL_EJECUTABLE} {OPCION_BANCO_COMPROBAR} {}»",
         tanda.join(NOMBRE_PASADAS).display(),
         tanda.display(),
     )
@@ -580,10 +626,148 @@ pub fn mensaje_fallo(fallo: &Error) -> String {
     format!("🔴 El banco de modelos se detuvo: {texto}.")
 }
 
+/// Los ajustes del motor de una tanda, en palabras y no con el `Debug` del tipo, para la
+/// comparación de dos tandas.
+pub fn ajustes_del_motor(ajustes: &super::resultados::AjustesDelMotor) -> String {
+    let frio = if ajustes.empezar_en_frio {
+        "en frío"
+    } else {
+        "sin empezar en frío"
+    };
+    format!(
+        "contexto {}, caché {}, {} en paralelo, {frio}, top_k {}, top_p {}, min_p {}, \
+         penalización de repetición {}",
+        ajustes.contexto,
+        ajustes.cache_kv,
+        ajustes.paralelo,
+        ajustes.top_k,
+        ajustes.top_p,
+        ajustes.min_p,
+        ajustes.penalizacion_repeticion
+    )
+}
+
+/// El proxy trampa no pudo abrir su puerto en la dirección local.
+pub(crate) fn proxy_trampa_sin_abrir(
+    direccion: std::net::Ipv4Addr,
+    causa: &dyn std::fmt::Display,
+) -> String {
+    format!("no se pudo abrir el proxy trampa en {direccion}: {causa}")
+}
+
+/// La ficha de un encargo no dice dónde colocar la entrega para comprobarla.
+pub(crate) fn ficha_sin_colocar_en(id: &str) -> String {
+    format!("{id}: la ficha no dice dónde colocar la entrega")
+}
+
+/// `banco.toml` no se deja interpretar.
+pub(crate) fn banco_toml_ilegible(causa: &dyn std::fmt::Display) -> String {
+    format!("banco.toml no se puede leer: {causa}")
+}
+
+/// La sección `[comprobacion_local]` de `banco.toml` tiene un problema.
+pub(crate) fn comprobacion_local_con_problema(problema: &str) -> String {
+    format!("banco.toml: [comprobacion_local]: {problema}")
+}
+
+/// La carpeta de trabajo de un encargo ya existía antes de empezar.
+pub(crate) fn carpeta_de_trabajo_ya_existe(carpeta: &Path) -> String {
+    format!(
+        "la carpeta de trabajo «{}» ya existe; cada encargo empieza en una nueva",
+        carpeta.display()
+    )
+}
+
+/// Las pasadas de una tanda no se pudieron pasar a TOML.
+pub(crate) fn pasadas_sin_componer(causa: &dyn std::fmt::Display) -> String {
+    format!("no se pudieron componer las pasadas: {causa}")
+}
+
+/// El texto de las pasadas de una tanda no se deja interpretar.
+pub(crate) fn pasadas_ilegibles(causa: &dyn std::fmt::Display) -> String {
+    format!("las pasadas no se pueden leer: {causa}")
+}
+
+/// La carpeta no tiene pasadas guardadas: no es de una tanda o es de antes de guardarlas.
+pub(crate) fn sin_pasadas_guardadas(carpeta_de_la_tanda: &Path) -> String {
+    format!(
+        "no hay {} en «{}»: no es la carpeta de una tanda, o es de antes de que el banco \
+         guardara cada pasada (12/11/2026) y hay que repetirla entera",
+        NOMBRE_PASADAS,
+        carpeta_de_la_tanda.display()
+    )
+}
+
+/// Una pasada guardada nombra un encargo que el banco ya no tiene.
+pub(crate) fn pasada_sin_encargo(encargo: &str) -> String {
+    format!(
+        "la pasada de {encargo} no tiene encargo en el banco: ¿se ha borrado o renombrado \
+         su carpeta?"
+    )
+}
+
+/// Falta la carpeta de trabajo de una pasada guardada.
+pub(crate) fn falta_carpeta_de_pasada(carpeta: &Path) -> String {
+    format!(
+        "falta la carpeta de trabajo «{}» de una pasada guardada",
+        carpeta.display()
+    )
+}
+
+/// Una pasada guardada trae una duración que no se puede representar.
+pub(crate) fn duracion_imposible(encargo: &str, semilla: i64, segundos: f64) -> String {
+    format!(
+        "la pasada de {encargo} con la semilla {semilla} tiene una duración imposible: {segundos}"
+    )
+}
+
+/// Los resultados de una tanda no se pudieron pasar a TOML.
+pub(crate) fn resultados_sin_componer(causa: &dyn std::fmt::Display) -> String {
+    format!("no se pudieron componer los resultados: {causa}")
+}
+
+/// El texto de los resultados de una tanda no se deja interpretar.
+pub(crate) fn resultados_ilegibles(causa: &dyn std::fmt::Display) -> String {
+    format!("los resultados no se pueden leer: {causa}")
+}
+
+/// Un fichero de rúbrica no vale; el texto empieza por qué fichero es.
+pub(crate) fn rubrica_que_no_vale(ruta: &Path, motivo: &str) -> String {
+    format!("{}: {motivo}", ruta.display())
+}
+
+/// La carpeta de una tanda no está dentro de la carpeta de resultados de un banco.
+pub(crate) fn tanda_fuera_de_un_banco(carpeta_de_la_tanda: &Path) -> String {
+    format!(
+        "«{}» no está en la carpeta «{CARPETA_DE_RESULTADOS}» de un banco",
+        carpeta_de_la_tanda.display()
+    )
+}
+
+/// La familia y la clase de una ficha no dan ninguna manera de puntuarla.
+pub(crate) fn familia_y_clase_no_casan(id: &str) -> String {
+    format!("{id}: familia y clase no casan")
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
     use crate::banco::comparacion::{ComparacionDePasada, Diferencia};
+
+    /// Las semillas no salen como `[1, 2, 3]` ni la pasada como su `Debug`.
+    #[test]
+    fn las_semillas_y_la_pasada_se_cuentan_sin_formato_de_rust() {
+        assert_eq!(semillas_legibles(&[42, 7, 1]), "42, 7, 1");
+        assert_eq!(semillas_legibles(&[]), "");
+        for desenlace in [DesenlacePasada::PrimeraPasada, DesenlacePasada::SinEncargos] {
+            let texto = encargo_no_detectado("E01", &desenlace);
+            assert!(texto.starts_with("E01: la pasada no fue la esperada, porque el ciclo "));
+            assert!(
+                !texto.contains("Pasada") && !texto.contains("Encargos"),
+                "{texto}"
+            );
+        }
+    }
 
     fn inicio(carpeta: Option<&Path>, codigo: bool) -> Inicio<'_> {
         Inicio {
@@ -703,6 +887,12 @@ mod pruebas {
         assert!(texto.contains("Quedan 4 rúbricas"));
         assert!(texto.contains("--banco-informe"));
         assert!(mensaje_de_fin(&resultados, &resultados, 0).contains("ninguna rúbrica"));
+        // Con una sola, en singular.
+        let una = mensaje_de_fin(&resultados, &resultados, 1);
+        assert!(
+            una.contains("Queda 1 rúbrica por puntuar") && una.contains("Cuando esté,"),
+            "{una}"
+        );
     }
 
     #[test]
@@ -811,7 +1001,7 @@ mod pruebas {
         let bien = mensaje_de_avance(1, 45, "E03", 42, true, Duration::from_secs(130), 1);
         let mal = mensaje_de_avance(2, 45, "E04", 42, false, Duration::from_secs(901), 0);
 
-        assert_eq!(bien, "[1/45] E03, semilla 42: 130 s, 1 ficheros entregados");
+        assert_eq!(bien, "[1/45] E03, semilla 42: 130 s, 1 fichero entregado");
         assert!(mal.contains("sin respuesta a tiempo"));
     }
 

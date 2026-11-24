@@ -230,7 +230,7 @@ fn diferencias(a: &DatosDeTanda, b: &DatosDeTanda) -> Vec<Diferencia> {
         Campo::AjustesDelMotor,
         a.ajustes_del_motor.as_ref(),
         b.ajustes_del_motor.as_ref(),
-        |ajustes| format!("{ajustes:?}"),
+        super::mensajes::ajustes_del_motor,
     ));
     diferencias.extend(diferencia_si_las_dos_lo_tienen(
         Campo::Tarjeta,
@@ -406,6 +406,18 @@ mod pruebas {
         let veredicto = comparar(&a, &b);
 
         assert_eq!(veredicto.diferencias[0].campo, Campo::AjustesDelMotor);
+        // En palabras, no con el `Debug` del tipo.
+        let en_a = &veredicto.diferencias[0].en_a;
+        assert!(!en_a.contains("AjustesDelMotor"), "{en_a}");
+        assert!(en_a.contains("contexto 32768"), "{en_a}");
+        assert!(en_a.contains("en frío"), "{en_a}");
+        assert!(
+            veredicto.diferencias[0]
+                .en_b
+                .contains("sin empezar en frío"),
+            "{}",
+            veredicto.diferencias[0].en_b
+        );
     }
 
     #[test]

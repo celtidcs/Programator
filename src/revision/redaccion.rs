@@ -1,23 +1,27 @@
-//! Cómo queda escrita una propuesta: `propuesta.md`, para que la lea el Director, y
+//! Cómo queda escrita una propuesta: `propuesta.md`, para que la lea el usuario, y
 //! `propuesta.toml`, con el motivo de cada retirada propuesta para que `--retirar-modelo` lo anote
-//! en el registro sin tener que leer el Markdown (especificación, §6 y §7, punto 2).
+//! en el registro sin tener que leer el Markdown.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::informe::NINGUNO;
 use super::mensajes::{
     motivo_de_exclusion, motivo_de_retirada, nombre_de_categoria,
     sin_comparar as mensaje_sin_comparar, sin_datos_para_decidir,
 };
 use super::propuesta::Propuesta;
 use super::DECIMALES_DE_LA_NOTA;
+use crate::argumentos::OPCION_RETIRAR_MODELO;
 use crate::banco::resultados::decimal;
 use crate::error::{Error, Resultado};
+use crate::plataforma::NOMBRE_DEL_EJECUTABLE;
 
+/// La propuesta para que la lea el usuario.
 pub const NOMBRE_DE_LA_PROPUESTA: &str = "propuesta.md";
+/// Las retiradas propuestas, con su motivo, para que las lea `--retirar-modelo`.
 pub const NOMBRE_DE_LAS_RETIRADAS: &str = "propuesta.toml";
-const NINGUNO: &str = "Ninguno.\n";
 /// Lo que dice la tabla de ganadores en una categoría que no se compara.
 const SE_DEJA_FUERA: &str = "se deja fuera";
 
@@ -49,17 +53,13 @@ pub fn retiradas(propuesta: &Propuesta) -> RetiradasPropuestas {
 }
 
 pub fn escribir_retiradas(retiradas: &RetiradasPropuestas) -> Resultado<String> {
-    toml::to_string(retiradas).map_err(|causa| {
-        Error::Revision(format!("las retiradas propuestas no se componen: {causa}"))
-    })
+    toml::to_string(retiradas)
+        .map_err(|causa| Error::Revision(super::mensajes::retiradas_sin_componer(&causa)))
 }
 
 pub fn leer_retiradas(texto: &str) -> Resultado<RetiradasPropuestas> {
-    toml::from_str(texto).map_err(|causa| {
-        Error::Revision(format!(
-            "«{NOMBRE_DE_LAS_RETIRADAS}» no se entiende: {causa}"
-        ))
-    })
+    toml::from_str(texto)
+        .map_err(|causa| Error::Revision(super::mensajes::retiradas_que_no_se_entienden(&causa)))
 }
 
 /// `propuesta.md`. Empieza por de dónde salen las cifras, para que se puedan comprobar.
@@ -71,11 +71,22 @@ pub fn componer(propuesta: &Propuesta, registro: &Path, fecha: &str) -> String {
     texto += &se_quedan(propuesta);
     texto += &para_retirar(propuesta);
     texto += &sin_medir(propuesta);
-    texto += "## Lo que decide el Director\n\n\
-              Nada se retira ni se descarga sin su orden. Cada retirada se hace con \
-              `programator --retirar-modelo <fichero>`, y se anota aquí debajo con la frase del \
-              Director que la autoriza.\n";
+    texto += &sin_fichero(propuesta);
+    texto += &lo_que_pasa_al_cerrar();
     texto
+}
+
+/// Lo que hace `revisión: cerrar` con esta propuesta. Lo deciden las reglas de puntuación, sin
+/// pedir permiso a nadie; antes este apartado decía que nada se retiraba sin una orden, y el cierre
+/// retiraba igual.
+fn lo_que_pasa_al_cerrar() -> String {
+    format!(
+        "## Lo que pasa al cerrar\n\n\
+         Con «revisión: cerrar» se retiran los modelos de «Para retirar» y, si el modelo en uso no \
+         gana nada y hay otro que lo sustituya, se cambia por él. Lo deciden las reglas de \
+         puntuación, sin pedir permiso. A mano, un modelo se retira con \
+         `{NOMBRE_DEL_EJECUTABLE} {OPCION_RETIRAR_MODELO} <fichero>`.\n"
+    )
 }
 
 fn procedencia(propuesta: &Propuesta, registro: &Path) -> String {
@@ -111,7 +122,7 @@ fn ganadores(propuesta: &Propuesta) -> String {
                 decimal(v.nota, DECIMALES_DE_LA_NOTA),
             ),
             None if excluida => (SE_DEJA_FUERA.to_string(), "—".to_string()),
-            None => ("sin medir".to_string(), "—".to_string()),
+            None => (crate::unidades::SIN_MEDIR.to_string(), "—".to_string()),
         };
         texto += &format!(
             "| {} | {quien} | {nota} |\n",
@@ -162,15 +173,12 @@ fn se_quedan(propuesta: &Propuesta) -> String {
         texto += &format!("- `{}`{en_uso}: {gana}.\n", q.nombre);
     }
     if let Some(en_uso) = &propuesta.en_uso_sin_victorias {
-        let sustituto = en_uso
-            .sustituto
-            .as_deref()
-            .map_or("ningún otro modelo gana nada todavía".to_string(), |s| {
-                format!("lo sustituiría `{s}`, el que más gana")
-            });
+        let sustituto = en_uso.sustituto.as_deref().map_or(
+            "ningún otro modelo gana nada todavía, así que se queda".to_string(),
+            |s| format!("al cerrar la revisión se cambia por `{s}`, el que más gana"),
+        );
         texto += &format!(
-            "\nEl modelo en uso, `{}`, no gana ninguna clase ni familia: {sustituto}. Se queda \
-             hasta que el Director cambie `[motor] modelo`.\n",
+            "\nEl modelo en uso, `{}`, no gana ninguna clase ni familia: {sustituto}.\n",
             en_uso.nombre
         );
     }
@@ -201,6 +209,29 @@ fn sin_medir(propuesta: &Propuesta) -> String {
     }
     texto + "\n"
 }
+
+/// Los modelos del registro que no tienen fichero: no se han tenido en cuenta para nada.
+fn sin_fichero(propuesta: &Propuesta) -> String {
+    let mut texto = format!(
+        "## En el registro, sin fichero ({})\n\n",
+        propuesta.sin_fichero.len()
+    );
+    if propuesta.sin_fichero.is_empty() {
+        return texto + NINGUNO + "\n";
+    }
+    for nombre in &propuesta.sin_fichero {
+        texto += &format!(
+            "- `{nombre}`: tiene cifras en el registro, pero su fichero no está en la carpeta de \
+             modelos, así que no se ha tenido en cuenta.\n"
+        );
+    }
+    texto + "\n" + QUE_SE_HACE_CON_LOS_QUE_FALTAN + "\n\n"
+}
+
+/// Lo que hace la revisión con los modelos del registro cuyo fichero falta.
+const QUE_SE_HACE_CON_LOS_QUE_FALTAN: &str =
+    "Los que ganarían algo, y el modelo por defecto, los intenta reponer la siguiente «revisión: \
+     buscar»; los que no ganarían nada, «revisión: cerrar» los saca del registro.";
 
 #[cfg(test)]
 mod pruebas {
@@ -258,6 +289,7 @@ mod pruebas {
                 },
             }],
             sin_medir: vec!["nuevo.gguf".into()],
+            sin_fichero: Vec::new(),
             en_uso_sin_victorias: Some(EnUsoSinVictorias {
                 nombre: "en-uso".into(),
                 sustituto: Some("fuerte".into()),
@@ -266,6 +298,28 @@ mod pruebas {
             sin_comparar: Vec::new(),
             sin_datos_para_decidir: false,
         }
+    }
+
+    #[test]
+    fn dice_lo_que_hace_el_cierre_sin_pedir_permiso() {
+        let texto = componer(&propuesta(), Path::new("r.toml"), "2026-11-25");
+        assert!(texto.contains("## Lo que pasa al cerrar"), "{texto}");
+        assert!(texto.contains("sin pedir permiso"), "{texto}");
+        assert!(
+            texto.contains("al cerrar la revisión se cambia por `fuerte`, el que más gana."),
+            "{texto}"
+        );
+        assert!(!texto.contains("Director"), "{texto}");
+
+        let mut sin_sustituto = propuesta();
+        if let Some(en_uso) = sin_sustituto.en_uso_sin_victorias.as_mut() {
+            en_uso.sustituto = None;
+        }
+        let texto = componer(&sin_sustituto, Path::new("r.toml"), "2026-11-25");
+        assert!(
+            texto.contains("ningún otro modelo gana nada todavía, así que se queda."),
+            "{texto}"
+        );
     }
 
     #[test]
@@ -308,11 +362,52 @@ mod pruebas {
     }
 
     #[test]
+    fn nombra_los_modelos_del_registro_que_no_tienen_fichero() {
+        let mut con_ausente = propuesta();
+        con_ausente.sin_fichero = vec!["perdido".into()];
+
+        let texto = componer(&con_ausente, Path::new("r.toml"), "2026-11-24");
+        let sin_ausentes = componer(&propuesta(), Path::new("r.toml"), "2026-11-24");
+
+        assert!(
+            texto.contains(
+                "## En el registro, sin fichero (1)\n\n- `perdido`: tiene cifras en el registro, \
+                 pero su fichero no está en la carpeta de modelos, así que no se ha tenido en \
+                 cuenta.\n\nLos que ganarían algo, y el modelo por defecto, los intenta reponer la \
+                 siguiente «revisión: buscar»; los que no ganarían nada, «revisión: cerrar» los \
+                 saca del registro.\n\n"
+            ),
+            "{texto}"
+        );
+        assert!(
+            !sin_ausentes.contains("los intenta reponer"),
+            "{sin_ausentes}"
+        );
+        assert!(
+            sin_ausentes.contains("## En el registro, sin fichero (0)\n\nNinguno."),
+            "{sin_ausentes}"
+        );
+    }
+
+    /// La orden de retirada se escribe con el nombre del programa en cada sistema: en Windows,
+    /// con su extensión.
+    #[test]
+    fn la_orden_de_retirada_lleva_el_nombre_del_programa_de_cada_sistema() {
+        let texto = componer(&propuesta(), Path::new("r.toml"), "2026-11-12");
+        let esperada = if cfg!(windows) {
+            "`programator.exe --retirar-modelo <fichero>`"
+        } else {
+            "`programator --retirar-modelo <fichero>`"
+        };
+        assert!(texto.contains(esperada), "{texto}");
+    }
+
+    #[test]
     fn el_modelo_en_uso_sin_victorias_dice_quien_lo_sustituiria() {
         let texto = componer(&propuesta(), Path::new("r.toml"), "2026-11-12");
         assert!(texto.contains("- `en-uso` (el de `programator.toml`): no gana nada."));
         assert!(
-            texto.contains("lo sustituiría `fuerte`") && texto.contains("[motor] modelo"),
+            texto.contains("se cambia por `fuerte`") && texto.contains("revisión: cerrar"),
             "{texto}"
         );
     }

@@ -32,12 +32,12 @@ const VERSIONES_SOPORTADAS: std::ops::RangeInclusive<u32> = 1..=3;
 /// Tope de una cadena de la cabecera. Los nombres de modelo y plantillas de chat reales miden
 /// como mucho unos pocos kilobytes; 1 MiB da margen de sobra sin aceptar la mentira de «esta
 /// cadena mide varios exabytes» que cabría en un `u64`.
-const LIMITE_LONGITUD_CADENA: u64 = 1024 * 1024;
+const LIMITE_LONGITUD_CADENA: u64 = crate::unidades::BYTES_POR_MIB;
 
 /// Tope de elementos de un array. El array real más grande de un GGUF es el vocabulario del
 /// tokenizador (cientos de miles de entradas); cinco millones da veinte veces ese margen sin
 /// quedarse iterando ante un contador inventado.
-const LIMITE_ELEMENTOS_ARRAY: u64 = 5_000_000;
+const LIMITE_ELEMENTOS_LISTA: u64 = 5_000_000;
 
 /// Tope de pares clave-valor. Los GGUF reales traen de una decena a un par de centenares; cien
 /// mil es generoso sin dejar que un contador absurdo obligue a iterar sin fin.
@@ -45,13 +45,13 @@ const LIMITE_NUMERO_CLAVES: u64 = 100_000;
 
 /// Profundidad máxima de arrays anidados. Ningún GGUF real anida arrays: el tope solo evita que
 /// un fichero adversario fuerce una recursión sin fondo repitiendo array-de-array.
-const LIMITE_PROFUNDIDAD_ARRAY: u32 = 8;
+const LIMITE_PROFUNDIDAD_LISTA: u32 = 8;
 
 /// Tope total de bytes que este lector consume de la cabecera, se guarden o se descarten. La
 /// cabecera de un GGUF real se queda en pocos megabytes; 64 MiB da margen amplio y, sobre todo,
 /// no depende de acertar con ningún límite individual: por muchas claves y arrays que alguien
 /// encadene, el total nunca se acerca a los gigabytes de los pesos del modelo.
-const LIMITE_BYTES_METADATOS: u64 = 64 * 1024 * 1024;
+const LIMITE_BYTES_METADATOS: u64 = 64 * crate::unidades::BYTES_POR_MIB;
 
 /// Lo que se puede extraer de la cabecera de un GGUF. Todo opcional: hay arquitecturas raras que
 /// no traen alguna clave, y quien use esto tiene que poder distinguir «no cabe» de «no lo sé».
@@ -299,10 +299,10 @@ mod pruebas {
             ("relleno.i16", ValorPrueba::I16(-700)),
             ("relleno.i32", ValorPrueba::I32(-70000)),
             ("relleno.f32", ValorPrueba::F32(1.5)),
-            ("relleno.bool", ValorPrueba::Bool(true)),
+            ("relleno.bool", ValorPrueba::Logico(true)),
             ("relleno.i64", ValorPrueba::I64(-70000)),
             ("relleno.f64", ValorPrueba::F64(2.5)),
-            ("relleno.array", ValorPrueba::ArrayU32(vec![1, 2, 3, 4, 5])),
+            ("relleno.array", ValorPrueba::ListaU32(vec![1, 2, 3, 4, 5])),
             ("general.architecture", ValorPrueba::Cadena("llama".into())),
             ("llama.block_count", ValorPrueba::U64(32)),
         ];
@@ -318,12 +318,12 @@ mod pruebas {
 
     #[test]
     fn magia_incorrecta_da_error_legible_sin_panico() {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"OTRA");
-        buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        let (_dir, ruta) = escribir_temporal(&buf);
+        let mut contenido = Vec::new();
+        contenido.extend_from_slice(b"OTRA");
+        contenido.extend_from_slice(&3u32.to_le_bytes());
+        contenido.extend_from_slice(&0u64.to_le_bytes());
+        contenido.extend_from_slice(&0u64.to_le_bytes());
+        let (_dir, ruta) = escribir_temporal(&contenido);
 
         let error = leer_metadatos(&ruta).unwrap_err();
 
@@ -332,14 +332,14 @@ mod pruebas {
 
     #[test]
     fn fichero_truncado_a_mitad_de_una_cadena_da_error_legible() {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"GGUF");
-        buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&1u64.to_le_bytes()); // dice que viene un par
-        buf.extend_from_slice(&20u64.to_le_bytes()); // la clave mide 20 bytes...
-        buf.extend_from_slice(b"corta"); // ...pero el fichero se acaba a los 5
-        let (_dir, ruta) = escribir_temporal(&buf);
+        let mut contenido = Vec::new();
+        contenido.extend_from_slice(b"GGUF");
+        contenido.extend_from_slice(&3u32.to_le_bytes());
+        contenido.extend_from_slice(&0u64.to_le_bytes());
+        contenido.extend_from_slice(&1u64.to_le_bytes()); // dice que viene un par
+        contenido.extend_from_slice(&20u64.to_le_bytes()); // la clave mide 20 bytes...
+        contenido.extend_from_slice(b"corta"); // ...pero el fichero se acaba a los 5
+        let (_dir, ruta) = escribir_temporal(&contenido);
 
         let error = leer_metadatos(&ruta).unwrap_err();
 
@@ -348,13 +348,13 @@ mod pruebas {
 
     #[test]
     fn longitud_de_cadena_absurda_da_error_en_vez_de_reservar_memoria() {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"GGUF");
-        buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&1u64.to_le_bytes());
-        buf.extend_from_slice(&u64::MAX.to_le_bytes()); // «esta clave mide 18 exabytes»
-        let (_dir, ruta) = escribir_temporal(&buf);
+        let mut contenido = Vec::new();
+        contenido.extend_from_slice(b"GGUF");
+        contenido.extend_from_slice(&3u32.to_le_bytes());
+        contenido.extend_from_slice(&0u64.to_le_bytes());
+        contenido.extend_from_slice(&1u64.to_le_bytes());
+        contenido.extend_from_slice(&u64::MAX.to_le_bytes()); // «esta clave mide 18 exabytes»
+        let (_dir, ruta) = escribir_temporal(&contenido);
 
         let error = leer_metadatos(&ruta).unwrap_err();
 
@@ -362,17 +362,17 @@ mod pruebas {
     }
 
     #[test]
-    fn array_con_longitud_absurda_da_error_en_vez_de_colgarse() {
+    fn lista_con_longitud_absurda_da_error_en_vez_de_colgarse() {
         let pares = vec![("general.architecture", ValorPrueba::Cadena("llama".into()))];
-        let mut buf = cabecera_valida(&pares);
+        let mut contenido = cabecera_valida(&pares);
         // Un segundo par a mano, con un array que dice tener u64::MAX elementos de tipo U8.
-        escribir_cadena(&mut buf, "otra.clave");
-        buf.extend_from_slice(&9u32.to_le_bytes()); // tipo ARRAY
-        buf.extend_from_slice(&0u32.to_le_bytes()); // elementos de tipo U8
-        buf.extend_from_slice(&u64::MAX.to_le_bytes()); // «con dieciocho trillones de elementos»
-                                                        // Hay que corregir el contador de pares: eran 1 y ahora son 2.
-        buf[4 + 4 + 8..4 + 4 + 8 + 8].copy_from_slice(&2u64.to_le_bytes());
-        let (_dir, ruta) = escribir_temporal(&buf);
+        escribir_cadena(&mut contenido, "otra.clave");
+        contenido.extend_from_slice(&9u32.to_le_bytes()); // tipo ARRAY
+        contenido.extend_from_slice(&0u32.to_le_bytes()); // elementos de tipo U8
+        contenido.extend_from_slice(&u64::MAX.to_le_bytes()); // «con dieciocho trillones de elementos»
+                                                              // Hay que corregir el contador de pares: eran 1 y ahora son 2.
+        contenido[4 + 4 + 8..4 + 4 + 8 + 8].copy_from_slice(&2u64.to_le_bytes());
+        let (_dir, ruta) = escribir_temporal(&contenido);
 
         let error = leer_metadatos(&ruta).unwrap_err();
 
@@ -381,14 +381,14 @@ mod pruebas {
 
     #[test]
     fn tipo_de_valor_inexistente_da_error_legible() {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"GGUF");
-        buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&1u64.to_le_bytes());
-        escribir_cadena(&mut buf, "clave.rara");
-        buf.extend_from_slice(&99u32.to_le_bytes()); // tipo que no existe en la especificación
-        let (_dir, ruta) = escribir_temporal(&buf);
+        let mut contenido = Vec::new();
+        contenido.extend_from_slice(b"GGUF");
+        contenido.extend_from_slice(&3u32.to_le_bytes());
+        contenido.extend_from_slice(&0u64.to_le_bytes());
+        contenido.extend_from_slice(&1u64.to_le_bytes());
+        escribir_cadena(&mut contenido, "clave.rara");
+        contenido.extend_from_slice(&99u32.to_le_bytes()); // tipo que no existe en la especificación
+        let (_dir, ruta) = escribir_temporal(&contenido);
 
         let error = leer_metadatos(&ruta).unwrap_err();
 
@@ -397,13 +397,13 @@ mod pruebas {
 
     #[test]
     fn no_lee_el_fichero_entero() {
-        let mut buf = cabecera_valida(&pares_llama_completos());
-        let tamano_cabecera = buf.len();
+        let mut contenido = cabecera_valida(&pares_llama_completos());
+        let tamano_cabecera = contenido.len();
         // Cien megabytes de relleno detrás de la cabecera: si el lector los tocara, esta prueba
         // tardaría segundos en vez de milisegundos, y en un `.gguf` real serían gigabytes de
         // pesos.
-        buf.resize(tamano_cabecera + 100 * 1024 * 1024, 0xAA);
-        let (_dir, ruta) = escribir_temporal(&buf);
+        contenido.resize(tamano_cabecera + 100 * 1024 * 1024, 0xAA);
+        let (_dir, ruta) = escribir_temporal(&contenido);
 
         let inicio = std::time::Instant::now();
         let metadatos = leer_metadatos(&ruta).unwrap();

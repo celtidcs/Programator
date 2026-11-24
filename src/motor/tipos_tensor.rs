@@ -4,12 +4,17 @@
 //! Vive fuera de `gguf` porque **no es propia del formato GGUF**: la usan tanto el peso de los
 //! tensores como el caché KV, y un caché KV no es un fichero GGUF.
 
+use std::num::NonZeroU64;
+
 /// Cuántos valores lleva un bloque de un tipo de tensor y cuántos bytes ocupa ese bloque. En ggml
 /// los tipos cuantizados no guardan valores sueltos sino bloques con sus escalas, así que el peso
 /// de un tensor no es «elementos × algo»: es «bloques × tamaño de bloque».
+///
+/// El bloque nunca es cero, y lo dice el tipo: antes era un `u64` público y
+/// `bytes_de_tensor` tenía que vigilar a mano un bloque de cero construido fuera de la tabla.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TipoTensor {
-    pub bloque: u64,
+    pub bloque: NonZeroU64,
     pub tamano: u64,
 }
 
@@ -23,46 +28,81 @@ pub struct TipoTensor {
 /// hará que el encaje se declare incalculable, que es la respuesta honesta; inventar un tamaño
 /// produciría un número creíble y falso, que es mucho peor que no tener número.
 pub fn tipo_tensor(codigo: u32) -> Option<TipoTensor> {
-    let (bloque, tamano) = match codigo {
-        0 => (1, 4),      // F32
-        1 => (1, 2),      // F16
-        2 => (32, 18),    // Q4_0
-        3 => (32, 20),    // Q4_1
-        6 => (32, 22),    // Q5_0
-        7 => (32, 24),    // Q5_1
-        8 => (32, 34),    // Q8_0
-        9 => (32, 36),    // Q8_1
-        10 => (256, 84),  // Q2_K
-        11 => (256, 110), // Q3_K
-        12 => (256, 144), // Q4_K
-        13 => (256, 176), // Q5_K
-        14 => (256, 210), // Q6_K
-        15 => (256, 292), // Q8_K
-        16 => (256, 66),  // IQ2_XXS
-        17 => (256, 74),  // IQ2_XS
-        18 => (256, 98),  // IQ3_XXS
-        19 => (256, 50),  // IQ1_S
-        20 => (32, 18),   // IQ4_NL
-        21 => (256, 110), // IQ3_S
-        22 => (256, 82),  // IQ2_S
-        23 => (256, 136), // IQ4_XS
-        24 => (1, 1),     // I8
-        25 => (1, 2),     // I16
-        26 => (1, 4),     // I32
-        27 => (1, 8),     // I64
-        28 => (1, 8),     // F64
-        29 => (256, 56),  // IQ1_M
-        30 => (1, 2),     // BF16
-        34 => (256, 54),  // TQ1_0
-        35 => (256, 66),  // TQ2_0
-        39 => (32, 17),   // MXFP4
-        40 => (64, 36),   // NVFP4
-        41 => (128, 18),  // Q1_0
-        42 => (64, 18),   // Q2_0
-        _ => return None,
-    };
-    Some(TipoTensor { bloque, tamano })
+    let fila = TABLA.iter().find(|tipo| tipo.codigo == codigo)?;
+    // Ninguna fila de la tabla tiene bloque cero (lo fija una prueba); si alguna lo tuviera, ese
+    // tipo no se sabría pesar, que es lo honesto.
+    Some(TipoTensor {
+        bloque: NonZeroU64::new(fila.bloque)?,
+        tamano: fila.tamano,
+    })
 }
+
+/// El código de ggml de un tipo, por su nombre (`q8_0`, `bf16`…), sin distinguir mayúsculas.
+/// `None` si no es ninguno de la tabla.
+pub fn codigo_por_nombre(nombre: &str) -> Option<u32> {
+    TABLA
+        .iter()
+        .find(|tipo| tipo.nombre.eq_ignore_ascii_case(nombre))
+        .map(|tipo| tipo.codigo)
+}
+
+/// Una fila de la tabla: el código del `enum ggml_type`, el nombre con que lo escribe ggml, los
+/// valores por bloque y los bytes por bloque.
+struct FilaDeTipo {
+    codigo: u32,
+    nombre: &'static str,
+    bloque: u64,
+    tamano: u64,
+}
+
+const fn fila(codigo: u32, nombre: &'static str, bloque: u64, tamano: u64) -> FilaDeTipo {
+    FilaDeTipo {
+        codigo,
+        nombre,
+        bloque,
+        tamano,
+    }
+}
+
+/// La tabla única de tipos: también el caché KV la usa, sin copia propia de los códigos en
+/// `motor::encaje`.
+const TABLA: [FilaDeTipo; 35] = [
+    fila(0, "f32", 1, 4),
+    fila(1, "f16", 1, 2),
+    fila(2, "q4_0", 32, 18),
+    fila(3, "q4_1", 32, 20),
+    fila(6, "q5_0", 32, 22),
+    fila(7, "q5_1", 32, 24),
+    fila(8, "q8_0", 32, 34),
+    fila(9, "q8_1", 32, 36),
+    fila(10, "q2_k", 256, 84),
+    fila(11, "q3_k", 256, 110),
+    fila(12, "q4_k", 256, 144),
+    fila(13, "q5_k", 256, 176),
+    fila(14, "q6_k", 256, 210),
+    fila(15, "q8_k", 256, 292),
+    fila(16, "iq2_xxs", 256, 66),
+    fila(17, "iq2_xs", 256, 74),
+    fila(18, "iq3_xxs", 256, 98),
+    fila(19, "iq1_s", 256, 50),
+    fila(20, "iq4_nl", 32, 18),
+    fila(21, "iq3_s", 256, 110),
+    fila(22, "iq2_s", 256, 82),
+    fila(23, "iq4_xs", 256, 136),
+    fila(24, "i8", 1, 1),
+    fila(25, "i16", 1, 2),
+    fila(26, "i32", 1, 4),
+    fila(27, "i64", 1, 8),
+    fila(28, "f64", 1, 8),
+    fila(29, "iq1_m", 256, 56),
+    fila(30, "bf16", 1, 2),
+    fila(34, "tq1_0", 256, 54),
+    fila(35, "tq2_0", 256, 66),
+    fila(39, "mxfp4", 32, 17),
+    fila(40, "nvfp4", 64, 36),
+    fila(41, "q1_0", 128, 18),
+    fila(42, "q2_0", 64, 18),
+];
 
 /// Bytes que ocupa un tensor de esas dimensiones y ese tipo.
 ///
@@ -70,25 +110,59 @@ pub fn tipo_tensor(codigo: u32) -> Option<TipoTensor> {
 /// declarar dimensiones absurdas, y multiplicarlas con envoltura daría un peso pequeño y falso que
 /// haría creer al encaje que un modelo imposible cabe de sobra.
 ///
-/// También devuelve `None` si el bloque es cero, que aunque no ocurre en la tabla estándar, podría
-/// construirse a mano dado que los campos de `TipoTensor` son públicos, y una resta que desborda
-/// entraría en pánico en modo depuración.
 pub fn bytes_de_tensor(dimensiones: &[u64], tipo: TipoTensor) -> Option<u64> {
-    if tipo.bloque == 0 {
-        return None;
-    }
     let mut elementos: u64 = 1;
     for dimension in dimensiones {
         elementos = elementos.checked_mul(*dimension)?;
     }
     // Redondeo hacia arriba: un bloque a medias sigue ocupando un bloque entero en el fichero.
-    let bloques = elementos.checked_add(tipo.bloque - 1)? / tipo.bloque;
+    let bloques = elementos.div_ceil(tipo.bloque.get());
     bloques.checked_mul(tipo.tamano)
 }
 
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// Cada código y cada nombre aparecen una sola vez, y el nombre lleva a su código.
+    #[test]
+    fn la_tabla_no_repite_codigos_ni_nombres_y_el_nombre_lleva_al_codigo() {
+        for (i, tipo) in TABLA.iter().enumerate() {
+            assert!(
+                TABLA[i + 1..]
+                    .iter()
+                    .all(|otro| otro.codigo != tipo.codigo && otro.nombre != tipo.nombre),
+                "{} ({}) repetido",
+                tipo.nombre,
+                tipo.codigo
+            );
+            assert_eq!(codigo_por_nombre(tipo.nombre), Some(tipo.codigo));
+            assert_eq!(
+                codigo_por_nombre(&tipo.nombre.to_ascii_uppercase()),
+                Some(tipo.codigo)
+            );
+        }
+        assert_eq!(codigo_por_nombre("q3_k_m"), None);
+    }
+
+    /// Los códigos del caché que antes tenía `motor::encaje` por su cuenta (`ggml.h`).
+    #[test]
+    fn los_codigos_del_cache_son_los_de_ggml() {
+        let esperados = [
+            ("f32", 0),
+            ("f16", 1),
+            ("q4_0", 2),
+            ("q4_1", 3),
+            ("q5_0", 6),
+            ("q5_1", 7),
+            ("q8_0", 8),
+            ("iq4_nl", 20),
+            ("bf16", 30),
+        ];
+        for (nombre, codigo) in esperados {
+            assert_eq!(codigo_por_nombre(nombre), Some(codigo), "{nombre}");
+        }
+    }
 
     /// Por qué existe esta prueba, aunque ya haya otra («la_suma_de_los_tensores_cuadra_con_el_
     /// tamano_del_fichero», en `motor::gguf::tensores`) que también verifica la tabla contra un
@@ -174,7 +248,8 @@ mod pruebas {
             let tipo = tipo_tensor(codigo)
                 .unwrap_or_else(|| panic!("el código {codigo} debería ser un tipo conocido"));
             assert_eq!(
-                tipo.bloque, bloque_esperado,
+                tipo.bloque.get(),
+                bloque_esperado,
                 "código {codigo}: el bloque de la tabla no cuadra con la fórmula de \
                  ggml-common.h"
             );
@@ -209,7 +284,7 @@ mod pruebas {
     #[test]
     fn un_bloque_de_q4_k_ocupa_144_bytes_cada_256_valores() {
         let tipo = tipo_tensor(12).expect("Q4_K es un tipo conocido");
-        assert_eq!(tipo.bloque, 256);
+        assert_eq!(tipo.bloque.get(), 256);
         assert_eq!(tipo.tamano, 144);
         assert_eq!(bytes_de_tensor(&[256], tipo), Some(144));
     }
@@ -255,14 +330,30 @@ mod pruebas {
         assert_eq!(bytes_de_tensor(&[257], tipo), Some(288));
     }
 
+    /// Sustituye a `un_tipo_con_bloque_de_cero_no_entra_en_panico`: un `TipoTensor`
+    /// con bloque cero no se puede construir. Lo que queda por vigilar es la tabla: si una fila
+    /// trajera bloque cero, su tipo dejaría de pesarse sin avisar.
     #[test]
-    fn un_tipo_con_bloque_de_cero_no_entra_en_panico() {
-        // No sale de `tipo_tensor`, pero los campos de `TipoTensor` son públicos y nada impide
-        // construirlo a mano. Una resta que desborda sería un pánico en modo depuración.
-        let absurdo = TipoTensor {
-            bloque: 0,
-            tamano: 4,
-        };
-        assert_eq!(bytes_de_tensor(&[256], absurdo), None);
+    fn ninguna_fila_de_la_tabla_tiene_bloque_cero() {
+        for fila in TABLA {
+            assert!(
+                tipo_tensor(fila.codigo).is_some(),
+                "la fila {} ({}) no da un tipo",
+                fila.codigo,
+                fila.nombre
+            );
+        }
+    }
+
+    /// Cerca del final de un u64 el redondeo sumaba `bloque - 1` y desbordaba: un tensor que sí
+    /// se puede pesar salía como imposible. Con `div_ceil` no hay suma.
+    #[test]
+    fn el_redondeo_no_da_por_imposible_un_tensor_que_se_puede_pesar() {
+        let tipo = tipo_tensor(12).expect("Q4_K es un tipo conocido");
+        let bloques = 1u64 << 56; // u64::MAX / 256, redondeado hacia arriba
+        assert_eq!(bytes_de_tensor(&[u64::MAX], tipo), Some(bloques * 144));
+        // Y lo que de verdad no cabe en bytes sigue saliendo como `None`.
+        let f32 = tipo_tensor(0).expect("F32 es un tipo conocido");
+        assert_eq!(bytes_de_tensor(&[u64::MAX], f32), None);
     }
 }

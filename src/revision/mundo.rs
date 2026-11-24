@@ -8,14 +8,19 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
+use super::ausentes::{clasificar, Ausentes};
 use super::cerrar::Mesa;
 use super::encargo::CandidatoPedido;
 use super::mensajes;
 use super::ordenes;
+use super::origenes::anotar_con_su_origen;
 use super::probados::{self, Probados};
 use super::probar::Taller;
-use super::propuesta::Propuesta;
+use super::proponer::ficheros_con_tamano;
+use super::propuesta::{ParaRetirar, Propuesta};
+use super::reponer;
 use super::traer::Traido;
+use super::FORMATO_DEL_DIA;
 use crate::banco::resultados::{
     leer_con_las_rubricas, rehacer_informe, EstadoDeNota, ResultadosDeTanda, NOMBRE_RESULTADOS,
 };
@@ -24,11 +29,11 @@ use crate::config::{modelo_por_defecto, Config};
 use crate::error::{Error, Resultado};
 use crate::motor::proceso::{self, EstadoServidor, ServidorLocal};
 use crate::protocolo::{DetalleEncargo, Latido};
-use crate::registro::anotar_tanda::{anotar_tanda, Desenlace};
+use crate::registro::anotar_tanda::Desenlace;
 use crate::registro::mensajes::mensaje_no_se_anota;
-
-/// La extensión de los modelos: el nombre del registro es el del fichero sin ella.
-const EXTENSION_DEL_MODELO: &str = ".gguf";
+use crate::registro::modelo;
+use crate::reloj::RelojReal;
+use crate::terminal::Terminal;
 
 /// Lo que comparten el taller y la mesa.
 pub struct Mundo<'a> {
@@ -43,6 +48,8 @@ pub struct Mundo<'a> {
     pub cambio_el_modelo: bool,
     /// Dónde se dice lo que se va haciendo, para que quien mire el canal sepa que no está colgado.
     pub latido: AvisoEnElLatido,
+    /// Por dónde se cuenta lo que se va haciendo en la terminal.
+    pub terminal: &'a dyn Terminal,
 }
 
 /// El latido del ciclo, que la revisión va poniendo al día.
@@ -55,21 +62,27 @@ pub struct AvisoEnElLatido {
 
 impl Mundo<'_> {
     fn comprobar(&self, tanda: &Path) -> Resultado<()> {
-        tanda::comprobar(&self.config, tanda)
+        tanda::comprobar(&self.config, tanda, self.terminal)
     }
 
     fn guardar(&self, probados: &Probados) -> Resultado<()> {
         probados::guardar(&self.carpeta_del_mes, probados)
     }
+
+    fn ruta_del_registro(&self) -> PathBuf {
+        self.config
+            .resolver(&self.config.agente.registro_de_modelos)
+    }
 }
 
 impl Taller for Mundo<'_> {
     fn descargar(&mut self, candidato: &CandidatoPedido) -> Resultado<PathBuf> {
+        let terminal = self.terminal;
         let traido = ordenes::descargar(
             &self.config,
             &candidato.repositorio,
             &candidato.fichero,
-            &mut |aviso| println!("{}", mensajes::aviso_de_descarga(&aviso)),
+            &mut |aviso| terminal.decir(&mensajes::aviso_de_descarga(&aviso)),
         )?;
         Ok(match traido {
             Traido::Descargado(hecho) => hecho.ruta,
@@ -97,7 +110,13 @@ impl Taller for Mundo<'_> {
         let carpeta_del_banco = self
             .config
             .resolver(&self.config.revision.carpeta_del_banco);
-        tanda::pasar(&config, &carpeta_del_banco, self.version)
+        tanda::pasar(
+            &config,
+            &carpeta_del_banco,
+            self.version,
+            &mut RelojReal::desde_ahora(),
+            self.terminal,
+        )
     }
 
     fn comprobar_tanda(&mut self, tanda: &Path) -> Resultado<()> {
@@ -105,13 +124,13 @@ impl Taller for Mundo<'_> {
     }
 
     fn avisar(&mut self, linea: &str) {
-        println!("{linea}");
+        self.terminal.decir(linea);
         Latido::en_atencion(
             chrono::Local::now(),
             self.latido.intervalo_segundos,
             DetalleEncargo::nuevo(&self.latido.buzon, linea),
         )
-        .guardar_con_aviso(&self.latido.ruta);
+        .guardar_con_aviso(&self.latido.ruta, self.terminal);
     }
 
     fn guardar_lo_probado(&mut self, probados: &Probados) -> Resultado<()> {
@@ -133,10 +152,9 @@ impl Mesa for Mundo<'_> {
     }
 
     fn anotar(&mut self, tanda: &Path) -> Resultado<Result<(), String>> {
-        let registro = self
-            .config
-            .resolver(&self.config.agente.registro_de_modelos);
-        Ok(match anotar_tanda(tanda, &registro)? {
+        let registro = self.ruta_del_registro();
+        let revisiones = self.config.resolver(&self.config.revision.carpeta);
+        Ok(match anotar_con_su_origen(tanda, &registro, &revisiones)? {
             Desenlace::Anotada(..) => Ok(()),
             Desenlace::NoSeAnota(motivo) => Err(mensaje_no_se_anota(&motivo, tanda)),
         })
@@ -162,13 +180,31 @@ impl Mesa for Mundo<'_> {
     }
 
     fn retirar(&mut self, nombre: &str, modelo_en_uso: Option<&str>) -> Resultado<u64> {
-        let fichero = format!("{nombre}{EXTENSION_DEL_MODELO}");
+        let fichero = crate::motor::fichero_de_modelo::con_extension(nombre);
         ordenes::retirar_con(&self.config, &fichero, modelo_en_uso.map(str::to_string))
             .map(|retirada| retirada.liberados)
     }
 
     fn guardar_lo_probado(&mut self, probados: &Probados) -> Resultado<()> {
         self.guardar(probados)
+    }
+
+    fn ausentes(&mut self, tarjeta: &str, modelo_en_uso: Option<&str>) -> Resultado<Ausentes> {
+        let registro = modelo::leer(&self.ruta_del_registro())?;
+        let carpeta = self
+            .config
+            .resolver(&self.config.revision.carpeta_de_modelos);
+        let en_modelos = ficheros_con_tamano(&carpeta)?;
+        Ok(clasificar(&registro, tarjeta, &en_modelos, modelo_en_uso))
+    }
+
+    fn sacar_del_registro(
+        &mut self,
+        tarjeta: &str,
+        no_utiles: &[ParaRetirar],
+    ) -> Resultado<Vec<String>> {
+        let dia = chrono::Local::now().format(FORMATO_DEL_DIA).to_string();
+        reponer::sacar_del_registro(&self.ruta_del_registro(), no_utiles, tarjeta, &dia)
     }
 }
 
@@ -192,7 +228,7 @@ fn pendientes(resultados: &ResultadosDeTanda, tanda: &Path) -> Vec<PathBuf> {
 /// Cómo se escribe en `programator.toml` el modelo nuevo: en la misma carpeta que el actual, tal
 /// como esté escrita; sin modelo actual, en la carpeta de modelos de `[revision]`.
 fn ruta_del_sustituto(actual: Option<&str>, carpeta_de_modelos: &str, nombre: &str) -> String {
-    let fichero = format!("{nombre}{EXTENSION_DEL_MODELO}");
+    let fichero = crate::motor::fichero_de_modelo::con_extension(nombre);
     match actual.and_then(|ruta| ruta.rfind(['/', '\\']).map(|corte| &ruta[..=corte])) {
         Some(carpeta) => format!("{carpeta}{fichero}"),
         None if actual.is_some() => fichero,

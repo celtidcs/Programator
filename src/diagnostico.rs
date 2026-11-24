@@ -4,13 +4,17 @@
 //! **Es la contraparte impura de `informe`.** Aquí se mide, se abre el GGUF y se mira el disco;
 //! allí solo se redacta el texto con lo que ya se sabe. Separarlos es lo que permite probar todos
 //! los desenlaces del informe sin GPU, sin motor y sin modelo, y es la misma frontera que hay
-//! entre `encaje::decidir` —aritmética pura— y `encaje::resolver`, que orquesta.
+//! entre `encaje/reparto.rs` —aritmética pura— y `encaje::resolver`, que orquesta.
 
 use crate::config::Config;
-use crate::informe::ResumenModelo;
+use crate::informe::{
+    linea_de_encaje, modelo_sin_pesar, ResumenModelo, ENCAJE_SIN_FICHERO, ENCAJE_SIN_MODELO,
+};
 use crate::motor::hardware::Gpu;
 use crate::motor::proceso::MotorInstalado;
 use crate::motor::{encaje, gguf, hardware, proceso};
+use crate::motores::preparar::medida_registrada;
+use crate::terminal::Terminal;
 use std::path::Path;
 
 /// Lo que se ha podido averiguar de la máquina, el motor y el modelo al arrancar, ya reunido pero
@@ -32,11 +36,11 @@ pub struct DatosReunidos {
 
 /// Reúne lo que se sabe de la máquina, el motor y el modelo. Cada dato que falte se convierte en
 /// su desenlace correspondiente: **nada de esto aborta el arranque**, porque el canal se puede
-/// sondear sin motor y el Director puede colocar las piezas con el programa ya corriendo.
+/// sondear sin motor y el usuario puede colocar las piezas con el programa ya corriendo.
 ///
 /// `describir_gpu()` se llama **una sola vez** aquí, y el mismo valor sirve para el informe y para
 /// `encaje::resolver`: medirla dos veces arriesgaría dos respuestas distintas en el mismo arranque.
-pub fn reunir_datos_de_arranque(config: &Config) -> DatosReunidos {
+pub fn reunir_datos_de_arranque(config: &Config, terminal: &dyn Terminal) -> DatosReunidos {
     let gpu = hardware::describir_gpu();
 
     let motor = match &config.motor.binario {
@@ -47,33 +51,32 @@ pub fn reunir_datos_de_arranque(config: &Config) -> DatosReunidos {
     let (modelo, encaje, capas_en_gpu) = match &config.motor.modelo {
         None => (
             ResumenModelo::NoDeclarado,
-            "no calculado: la configuración no declara ningún modelo".to_string(),
+            ENCAJE_SIN_MODELO.to_string(),
             None,
         ),
         Some(cadena) => {
             let ruta_modelo = config.resolver(cadena);
             let modelo = resumir_modelo(&ruta_modelo);
-            let resolucion = encaje::resolver(&config.motor, &ruta_modelo, gpu.as_ref());
-            // `resolucion.capas` es lo que de verdad se le pasa a `llama-server`: con
-            // `capas_gpu` fija en el TOML, puede no coincidir con el número que menciona el
-            // aviso (redactado siempre desde el cálculo automático), así que en principio se dice
-            // aparte y no se da por sobreentendido. Pero el aviso ya nombra ese mismo número en
-            // sus propias palabras cuando coincide —por ejemplo, «se piden 99 capas como hasta
-            // ahora» cuando `capas_gpu = "auto"` no pudo calcular nada—, y repetirlo entonces
-            // queda como un eco ridículo. Se comprueba con una búsqueda de texto, no comparando
-            // con el cálculo interno de `encaje` (que no sale de `Resolucion`), así que basta con
-            // que el aviso mencione la cifra en la forma «N capas» para no repetirla.
-            let cifra_ya_mencionada = resolucion
-                .aviso
-                .contains(&format!("{} capas", resolucion.capas));
-            let encaje = if cifra_ya_mencionada {
-                resolucion.aviso
-            } else {
-                format!(
-                    "{}; se pedirán {} capas",
-                    resolucion.aviso, resolucion.capas
-                )
-            };
+            let medida =
+                config
+                    .motor
+                    .nombre_del_modelo()
+                    .zip(gpu.as_ref())
+                    .and_then(|(nombre, gpu)| {
+                        medida_registrada(config, &nombre, &gpu.nombre, terminal)
+                    });
+            if let ResumenModelo::Falta { .. } = modelo {
+                return DatosReunidos {
+                    gpu,
+                    motor,
+                    modelo,
+                    encaje: ENCAJE_SIN_FICHERO.to_string(),
+                    capas_en_gpu: None,
+                };
+            }
+            let resolucion =
+                encaje::resolver(&config.motor, &ruta_modelo, gpu.as_ref(), medida.as_ref());
+            let encaje = linea_de_encaje(resolucion.aviso, resolucion.capas);
             (modelo, encaje, Some(resolucion.capas))
         }
     };
@@ -114,7 +117,7 @@ fn resumir_modelo(ruta: &Path) -> ResumenModelo {
                 },
                 Err(causa) => ResumenModelo::Ilegible {
                     nombre,
-                    causa: format!("no se ha podido pesar el fichero: {causa}"),
+                    causa: modelo_sin_pesar(&causa),
                 },
             }
         }
@@ -122,5 +125,30 @@ fn resumir_modelo(ruta: &Path) -> ResumenModelo {
             nombre,
             causa: fallo.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    /// Sin modelo, la línea «Encaje:» no habla de 99 capas.
+    #[test]
+    fn sin_el_fichero_del_modelo_el_encaje_no_habla_de_capas() {
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = dir.path().join("programator.toml");
+        std::fs::write(
+            &ruta,
+            "[motor]\nmodelo = \"modelos/no-existe.gguf\"\ncapas_gpu = \"auto\"\n",
+        )
+        .unwrap();
+        let config = Config::cargar(&ruta).unwrap();
+
+        let datos =
+            reunir_datos_de_arranque(&config, &crate::terminal::TerminalDeMentira::default());
+
+        assert_eq!(datos.encaje, ENCAJE_SIN_FICHERO);
+        assert!(!datos.encaje.contains("capas"), "{}", datos.encaje);
+        assert_eq!(datos.capas_en_gpu, None);
     }
 }

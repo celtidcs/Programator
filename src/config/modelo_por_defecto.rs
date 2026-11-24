@@ -1,9 +1,9 @@
 //! Cambiar `[motor] modelo` en `programator.toml` sin tocar nada más del fichero.
 //!
-//! Lo usa `revisión: cerrar` cuando el modelo por defecto ya no gana nada y hay sustituto
-//! (especificación de la revisión autónoma, §6). El fichero lo escribe el usuario a mano y está
-//! lleno de comentarios que explican cada clave: reescribirlo desde la estructura los perdería, así
-//! que se edita el documento tal cual con `toml_edit`.
+//! Lo usa `revisión: cerrar` cuando el modelo por defecto ya no gana nada y hay sustituto. El
+//! fichero lo escribe el usuario a mano y está lleno de comentarios que explican cada clave:
+//! reescribirlo desde la estructura los perdería, así que se edita el documento tal cual con
+//! `toml_edit`.
 
 use std::path::Path;
 
@@ -16,16 +16,26 @@ use crate::ficheros;
 const TABLA_DEL_MOTOR: &str = "motor";
 const CLAVE_DEL_MODELO: &str = "modelo";
 
+/// La configuración no se deja leer como documento TOML para editarla.
+fn configuracion_ineditable(causa: &dyn std::fmt::Display) -> String {
+    format!("no se puede editar la configuración: {causa}")
+}
+
+/// La configuración no tiene tabla del motor donde cambiar el modelo.
+fn falta_la_tabla_del_motor() -> String {
+    format!("falta la tabla «[{TABLA_DEL_MOTOR}]»")
+}
+
 /// El texto de la configuración con `[motor] modelo` cambiado a `modelo`. El resto queda igual,
 /// comentarios y orden incluidos, y el comentario que acompaña a la clave también.
 pub fn cambiar(texto: &str, modelo: &str) -> Resultado<String> {
-    let mut documento: DocumentMut = texto.parse().map_err(|causa| {
-        Error::Configuracion(format!("no se puede editar la configuración: {causa}"))
-    })?;
+    let mut documento: DocumentMut = texto
+        .parse()
+        .map_err(|causa| Error::Configuracion(configuracion_ineditable(&causa)))?;
     let motor = documento
         .get_mut(TABLA_DEL_MOTOR)
         .and_then(|tabla| tabla.as_table_like_mut())
-        .ok_or_else(|| Error::Configuracion(format!("falta la tabla «[{TABLA_DEL_MOTOR}]»")))?;
+        .ok_or_else(|| Error::ConfiguracionDelMotor(falta_la_tabla_del_motor()))?;
     match motor.get_mut(CLAVE_DEL_MODELO) {
         Some(anterior) => {
             let adorno = anterior.as_value().map(|v| v.decor().clone());

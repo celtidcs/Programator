@@ -1,7 +1,6 @@
 //! `revisión: cerrar`: terminar las tandas que quedaron sin comprobar, rehacer los informes,
 //! anotar las tandas en el registro y aplicar la regla: se queda quien gana algo, se retira quien no
-//! gana nada y, si el modelo por defecto no gana nada y hay sustituto, se cambia (especificación de
-//! la revisión autónoma, §8).
+//! gana nada y, si el modelo por defecto no gana nada y hay sustituto, se cambia.
 //!
 //! Aquí solo se decide el recorrido. Lo que toca disco y procesos va en el rasgo [`Mesa`], y las
 //! piezas de verdad son las mismas de `--banco-comprobar`, `--registro-anotar`,
@@ -9,8 +8,9 @@
 
 use std::path::{Path, PathBuf};
 
+use super::ausentes::Ausentes;
 use super::probados::{Estado, Probados};
-use super::propuesta::{EnUsoSinVictorias, Propuesta};
+use super::propuesta::{sustituto, EnUsoSinVictorias, ParaRetirar, Propuesta};
 use crate::error::Resultado;
 
 /// Lo que `cerrar` necesita del mundo.
@@ -29,6 +29,14 @@ pub trait Mesa {
     /// Retira el modelo de ese nombre. Devuelve los bytes que liberó.
     fn retirar(&mut self, nombre: &str, modelo_en_uso: Option<&str>) -> Resultado<u64>;
     fn guardar_lo_probado(&mut self, probados: &Probados) -> Resultado<()>;
+    /// Los modelos del registro medidos en `tarjeta` que faltan en la carpeta de modelos.
+    fn ausentes(&mut self, tarjeta: &str, modelo_en_uso: Option<&str>) -> Resultado<Ausentes>;
+    /// Marca retirados en `tarjeta` los ausentes que no ganan nada. Devuelve sus nombres.
+    fn sacar_del_registro(
+        &mut self,
+        tarjeta: &str,
+        no_utiles: &[ParaRetirar],
+    ) -> Resultado<Vec<String>>;
 }
 
 /// Lo que pasó al cerrar.
@@ -45,7 +53,7 @@ pub struct Cerrado {
 pub enum Desenlace {
     /// Quedan rúbricas sin nota: no se ha anotado, propuesto ni retirado nada.
     FaltanRubricas(Vec<PathBuf>),
-    Aplicada(Regla),
+    Aplicada(Box<Regla>),
 }
 
 /// La regla aplicada.
@@ -62,6 +70,20 @@ pub struct Regla {
     pub retirados: Vec<(String, u64)>,
     /// Los que tocaba retirar y no se pudo, con el motivo.
     pub sin_retirar: Vec<(String, String)>,
+    /// El modelo por defecto falta en la carpeta de modelos y no se pudo reponer.
+    pub en_uso_ausente: Option<EnUsoAusente>,
+    /// Los ausentes que no ganan nada, que se han marcado retirados en el registro.
+    pub fuera_del_registro: Vec<String>,
+    /// Los ausentes útiles, que la siguiente `revisión: buscar` intentará reponer.
+    pub faltan_utiles: Vec<String>,
+}
+
+/// El modelo por defecto que falta, y por cuál se cambió.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnUsoAusente {
+    pub nombre: String,
+    /// El presente que más gana. `None`: no hay quien lo sustituya y no se ha cambiado.
+    pub sustituto: Option<String>,
 }
 
 /// Cierra la revisión del mes. `modelo_en_uso` es el nombre, sin extensión, del modelo de
@@ -83,7 +105,7 @@ pub fn cerrar(
         faltan.extend(mesa.rubricas_sin_puntuar(tanda)?);
     }
     let desenlace = if faltan.is_empty() {
-        Desenlace::Aplicada(aplicar_la_regla(&tandas, modelo_en_uso, mesa)?)
+        Desenlace::Aplicada(Box::new(aplicar_la_regla(&tandas, modelo_en_uso, mesa)?))
     } else {
         Desenlace::FaltanRubricas(faltan)
     };
@@ -140,23 +162,45 @@ fn aplicar_la_regla(
     }
     let mut en_uso = modelo_en_uso.map(str::to_string);
     let mut propuesta = mesa.proponer(en_uso.as_deref())?;
-    match propuesta.en_uso_sin_victorias.clone() {
-        Some(EnUsoSinVictorias {
-            nombre,
-            sustituto: Some(sustituto),
-        }) => {
-            mesa.cambiar_el_modelo_por_defecto(&sustituto)?;
+    // Con el modelo en uso de antes: si falta, es útil y sigue en el registro aunque se cambie.
+    let ausentes = mesa.ausentes(&propuesta.tarjeta, en_uso.as_deref())?;
+    let en_uso_que_falta = ausentes
+        .utiles
+        .iter()
+        .find(|u| u.en_uso)
+        .map(|u| u.nombre.clone());
+    match (propuesta.en_uso_sin_victorias.clone(), en_uso_que_falta) {
+        (
+            Some(EnUsoSinVictorias {
+                nombre,
+                sustituto: Some(sustituto),
+            }),
+            _,
+        ) => {
             // Con el sustituto en uso, el viejo ya cuenta como cualquier otro: si no gana nada,
             // sale en las retiradas de la propuesta nueva, con su motivo.
-            propuesta = mesa.proponer(Some(&sustituto))?;
+            propuesta = cambiar_a(&sustituto, mesa)?;
             en_uso = Some(sustituto.clone());
             regla.cambio_de_modelo = Some((nombre, sustituto));
         }
-        Some(EnUsoSinVictorias {
-            nombre,
-            sustituto: None,
-        }) => regla.en_uso_sin_sustituto = Some(nombre),
-        None => {}
+        (
+            Some(EnUsoSinVictorias {
+                nombre,
+                sustituto: None,
+            }),
+            _,
+        ) => regla.en_uso_sin_sustituto = Some(nombre),
+        // Falta y no se pudo reponer: lo sustituye el presente que más gana. El viejo sigue en el
+        // registro, para reponerlo en la revisión siguiente.
+        (None, Some(nombre)) => {
+            let sustituto = sustituto(&propuesta.se_quedan);
+            if let Some(sustituto) = &sustituto {
+                propuesta = cambiar_a(sustituto, mesa)?;
+                en_uso = Some(sustituto.clone());
+            }
+            regla.en_uso_ausente = Some(EnUsoAusente { nombre, sustituto });
+        }
+        (None, None) => {}
     }
     for retirar in &propuesta.para_retirar {
         match mesa.retirar(&retirar.nombre, en_uso.as_deref()) {
@@ -171,7 +215,18 @@ fn aplicar_la_regla(
         .iter()
         .map(|q| q.nombre.clone())
         .collect();
+    if !ausentes.no_utiles.is_empty() {
+        regla.fuera_del_registro =
+            mesa.sacar_del_registro(&propuesta.tarjeta, &ausentes.no_utiles)?;
+    }
+    regla.faltan_utiles = ausentes.utiles.into_iter().map(|u| u.nombre).collect();
     Ok(regla)
+}
+
+/// Cambia el modelo por defecto y vuelve a proponer con él en uso.
+fn cambiar_a(sustituto: &str, mesa: &mut dyn Mesa) -> Resultado<Propuesta> {
+    mesa.cambiar_el_modelo_por_defecto(sustituto)?;
+    mesa.proponer(Some(sustituto))
 }
 
 #[cfg(test)]
@@ -179,8 +234,9 @@ mod pruebas {
     use super::*;
     use crate::banco::ficha::Familia;
     use crate::error::Error;
+    use crate::revision::ausentes::Util;
     use crate::revision::probados::Probado;
-    use crate::revision::propuesta::{Categoria, ParaRetirar, SeQueda, Vencedor};
+    use crate::revision::propuesta::{Categoria, SeQueda, Vencedor};
     use std::collections::{BTreeMap, VecDeque};
 
     #[derive(Default)]
@@ -190,6 +246,8 @@ mod pruebas {
         sin_puntuar: BTreeMap<PathBuf, Vec<PathBuf>>,
         propuestas: VecDeque<Propuesta>,
         no_se_retira: Vec<String>,
+        /// Lo que contesta `ausentes`. Por defecto, ninguno: así quedan las pruebas de antes.
+        ausentes: Ausentes,
     }
 
     impl Mesa for MesaFalsa {
@@ -231,6 +289,186 @@ mod pruebas {
             self.llamadas.push("guardar lo probado".into());
             Ok(())
         }
+        fn ausentes(&mut self, _tarjeta: &str, _en_uso: Option<&str>) -> Resultado<Ausentes> {
+            Ok(self.ausentes.clone())
+        }
+        fn sacar_del_registro(
+            &mut self,
+            tarjeta: &str,
+            no_utiles: &[ParaRetirar],
+        ) -> Resultado<Vec<String>> {
+            let nombres: Vec<String> = no_utiles.iter().map(|r| r.nombre.clone()).collect();
+            self.llamadas.push(format!(
+                "sacar del registro {} en {tarjeta}",
+                nombres.join(", ")
+            ));
+            Ok(nombres)
+        }
+    }
+
+    fn util(nombre: &str, en_uso: bool) -> Util {
+        Util {
+            nombre: nombre.into(),
+            gana: if en_uso {
+                Vec::new()
+            } else {
+                vec![Categoria::Familia(Familia::Oficio)]
+            },
+            en_uso,
+            huella: format!("huella-{nombre}"),
+            origen: None,
+        }
+    }
+
+    fn la_regla(cerrado: Cerrado) -> Regla {
+        match cerrado.desenlace {
+            Desenlace::Aplicada(regla) => *regla,
+            otro => panic!("tenía que aplicarse la regla: {otro:?}"),
+        }
+    }
+
+    #[test]
+    fn cerrar_saca_del_registro_los_ausentes_que_dejan_de_ganar() {
+        let mut mesa = MesaFalsa {
+            propuestas: VecDeque::from([Propuesta {
+                se_quedan: vec![se_queda("devstral", true)],
+                ..propuesta()
+            }]),
+            ausentes: Ausentes {
+                no_utiles: vec![para_retirar("perdido")],
+                ..Ausentes::default()
+            },
+            ..MesaFalsa::default()
+        };
+
+        let regla =
+            la_regla(cerrar(&mut Probados::default(), Some("devstral"), &mut mesa).unwrap());
+
+        assert_eq!(
+            mesa.llamadas,
+            [
+                "proponer con devstral",
+                "sacar del registro perdido en NVIDIA de prueba"
+            ]
+        );
+        assert_eq!(regla.fuera_del_registro, ["perdido"]);
+        assert!(regla.retirados.is_empty());
+    }
+
+    #[test]
+    fn cerrar_nombra_los_utiles_que_faltan() {
+        let mut mesa = MesaFalsa {
+            propuestas: VecDeque::from([Propuesta {
+                se_quedan: vec![se_queda("devstral", true)],
+                ..propuesta()
+            }]),
+            ausentes: Ausentes {
+                utiles: vec![util("bueno", false)],
+                ..Ausentes::default()
+            },
+            ..MesaFalsa::default()
+        };
+
+        let regla =
+            la_regla(cerrar(&mut Probados::default(), Some("devstral"), &mut mesa).unwrap());
+
+        assert_eq!(regla.faltan_utiles, ["bueno"]);
+        assert_eq!(regla.en_uso_ausente, None);
+        assert_eq!(mesa.llamadas, ["proponer con devstral"]);
+    }
+
+    #[test]
+    fn con_el_modelo_en_uso_ausente_se_cambia_al_sustituto() {
+        let mut mesa = MesaFalsa {
+            propuestas: VecDeque::from([
+                Propuesta {
+                    se_quedan: vec![se_queda("poco", false), se_queda("nuevo", false)],
+                    ..propuesta()
+                },
+                Propuesta {
+                    se_quedan: vec![se_queda("nuevo", true)],
+                    ..propuesta()
+                },
+            ]),
+            ausentes: Ausentes {
+                utiles: vec![util("devstral", true)],
+                ..Ausentes::default()
+            },
+            ..MesaFalsa::default()
+        };
+        mesa.propuestas[0].se_quedan[1]
+            .gana
+            .push(Categoria::Familia(Familia::Criterio));
+
+        let regla =
+            la_regla(cerrar(&mut Probados::default(), Some("devstral"), &mut mesa).unwrap());
+
+        assert_eq!(
+            mesa.llamadas,
+            [
+                "proponer con devstral",
+                "por defecto nuevo",
+                "proponer con nuevo"
+            ]
+        );
+        assert_eq!(
+            regla.en_uso_ausente,
+            Some(EnUsoAusente {
+                nombre: "devstral".into(),
+                sustituto: Some("nuevo".into()),
+            })
+        );
+        // Sigue en el registro: no se saca, y se dice que falta.
+        assert_eq!(regla.faltan_utiles, ["devstral"]);
+        assert_eq!(regla.cambio_de_modelo, None);
+        assert_eq!(regla.se_quedan, ["nuevo"]);
+    }
+
+    #[test]
+    fn con_el_modelo_en_uso_ausente_y_nadie_que_gane_no_se_cambia() {
+        let mut mesa = MesaFalsa {
+            ausentes: Ausentes {
+                utiles: vec![util("devstral", true)],
+                ..Ausentes::default()
+            },
+            ..MesaFalsa::default()
+        };
+
+        let regla =
+            la_regla(cerrar(&mut Probados::default(), Some("devstral"), &mut mesa).unwrap());
+
+        assert_eq!(mesa.llamadas, ["proponer con devstral"]);
+        assert_eq!(
+            regla.en_uso_ausente,
+            Some(EnUsoAusente {
+                nombre: "devstral".into(),
+                sustituto: None,
+            })
+        );
+    }
+
+    #[test]
+    fn sin_ausentes_la_regla_no_cambia() {
+        let mut mesa = MesaFalsa {
+            propuestas: VecDeque::from([Propuesta {
+                se_quedan: vec![se_queda("devstral", true), se_queda("nuevo", false)],
+                para_retirar: vec![para_retirar("viejo")],
+                ..propuesta()
+            }]),
+            ..MesaFalsa::default()
+        };
+
+        let regla =
+            la_regla(cerrar(&mut Probados::default(), Some("devstral"), &mut mesa).unwrap());
+
+        assert_eq!(
+            regla,
+            Regla {
+                se_quedan: vec!["devstral".into(), "nuevo".into()],
+                retirados: vec![("viejo".into(), 1000)],
+                ..Regla::default()
+            }
+        );
     }
 
     fn propuesta() -> Propuesta {
@@ -241,6 +479,7 @@ mod pruebas {
             se_quedan: Vec::new(),
             para_retirar: Vec::new(),
             sin_medir: Vec::new(),
+            sin_fichero: Vec::new(),
             en_uso_sin_victorias: None,
             excluidas: Vec::new(),
             sin_comparar: Vec::new(),

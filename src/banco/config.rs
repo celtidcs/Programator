@@ -29,8 +29,7 @@ mod local;
 
 /// Las semillas de la evaluación del 22/09/2026, más dos para medir la dispersión.
 const SEMILLAS_POR_DEFECTO: [i64; 3] = [42, 43, 44];
-/// La temperatura de la evaluación del 22/09/2026, la misma que usa `[muestreo]` por defecto.
-const TEMPERATURA_POR_DEFECTO: f32 = 0.2;
+use crate::config::TEMPERATURA_POR_DEFECTO;
 /// A cuántas líneas de un defecto sembrado puede caer un hallazgo para contar como acierto: el
 /// modelo cuenta mal las líneas (visto en uso real) y el arnés solo corrige las que puede.
 const MARGEN_LINEAS_POR_DEFECTO: usize = 2;
@@ -128,7 +127,7 @@ impl ConfigBanco {
     /// Interpreta y valida el texto de un `banco.toml`.
     pub fn desde_texto(texto: &str) -> Resultado<Self> {
         let config: Self = toml::from_str(texto)
-            .map_err(|causa| Error::Banco(format!("banco.toml no se puede leer: {causa}")))?;
+            .map_err(|causa| Error::Banco(mensajes::banco_toml_ilegible(&causa)))?;
         config.validar()?;
         Ok(config)
     }
@@ -153,15 +152,15 @@ impl ConfigBanco {
         // un aislamiento de otro sistema, no tiene por qué impedir pasar el banco.
         let local = &self.comprobacion_local;
         if let Some(problema) = local.problema().filter(|_| local.activa) {
-            return Err(Error::Banco(format!(
-                "banco.toml: [comprobacion_local]: {problema}"
+            return Err(Error::Banco(mensajes::comprobacion_local_con_problema(
+                &problema,
             )));
         }
         Ok(())
     }
 
     /// La configuración de Programator con lo que el banco sustituye para la tanda. La del
-    /// Director no se toca: se devuelve una copia.
+    /// usuario no se toca: se devuelve una copia.
     pub fn para_la_tanda(&self, config: &Config) -> Config {
         let mut tanda = config.clone();
         if let Some(capas) = self.capas_gpu {
@@ -213,6 +212,19 @@ fn buzon_que_encarga_por_defecto() -> String {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// El informe reconoce el aislamiento por su nombre, sin repetir los nombres por su cuenta.
+    #[test]
+    fn cada_aislamiento_se_reconoce_por_su_nombre() {
+        for manera in [
+            Aislamiento::IntegridadBaja,
+            Aislamiento::EspacioDeNombres,
+            Aislamiento::Ninguno,
+        ] {
+            assert_eq!(Aislamiento::desde_nombre(manera.nombre()), Some(manera));
+        }
+        assert_eq!(Aislamiento::desde_nombre("otro"), None);
+    }
 
     #[test]
     fn las_herramientas_de_serie_tienen_nombres_validos() {

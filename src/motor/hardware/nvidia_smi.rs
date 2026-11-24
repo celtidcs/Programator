@@ -20,12 +20,20 @@
 //! siempre, y la suite lo verifica en cada tanda, en cualquier máquina.
 
 use super::Gpu;
+use crate::orden_acotada::DesenlaceDeOrden;
 #[cfg(any(target_os = "linux", windows))]
-use std::process::Command;
+use std::time::Duration;
 
 /// El programa que trae el controlador de NVIDIA, y que se busca en el `PATH`.
 #[cfg(any(target_os = "linux", windows))]
 const PROGRAMA: &str = "nvidia-smi";
+
+/// Tope de la consulta. En el equipo de desarrollo (RTX 4070 Ti SUPER, Windows) contesta en unos
+/// 60 ms; el primer arranque del controlador puede tardar algunos segundos. Diez segundos lo
+/// cubren con margen, y un `nvidia-smi` colgado no cuelga a Programator. Es un tope de seguridad,
+/// no un ajuste: por eso no está en el TOML.
+#[cfg(any(target_os = "linux", windows))]
+const TIEMPO_MAXIMO: Duration = Duration::from_secs(10);
 
 /// Lo que se le pide: nombre, memoria total y memoria libre, en ese orden.
 ///
@@ -37,8 +45,7 @@ const CONSULTA: [&str; 2] = [
     "--format=csv,noheader,nounits",
 ];
 
-/// `nvidia-smi` da la memoria en mebibytes; el resto de Programator la cuenta en bytes.
-const BYTES_POR_MIB: u64 = 1024 * 1024;
+use crate::unidades::BYTES_POR_MIB;
 
 /// La GPU de NVIDIA con más memoria, o `None` si no se puede saber.
 ///
@@ -51,11 +58,26 @@ const BYTES_POR_MIB: u64 = 1024 * 1024;
 /// el margen de seguridad de `motor::encaje`.
 #[cfg(any(target_os = "linux", windows))]
 pub fn describir_gpu() -> Option<Gpu> {
-    let salida = Command::new(PROGRAMA).args(CONSULTA).output().ok()?;
-    if !salida.status.success() {
-        return None;
+    let argumentos = CONSULTA.map(str::to_owned);
+    gpu_de_la_respuesta(crate::orden_acotada::ejecutar_con_tope(
+        PROGRAMA,
+        &argumentos,
+        std::path::Path::new("."),
+        TIEMPO_MAXIMO,
+    ))
+}
+
+/// La tarjeta que da la respuesta de `nvidia-smi`. Si no terminó bien —no está, falló o se agotó
+/// el tiempo—, no se sabe.
+fn gpu_de_la_respuesta(desenlace: DesenlaceDeOrden) -> Option<Gpu> {
+    match desenlace {
+        DesenlaceDeOrden::Terminada {
+            exito: true,
+            salida,
+            ..
+        } => interpretar(&salida),
+        _ => None,
     }
-    interpretar(&String::from_utf8_lossy(&salida.stdout))
 }
 
 /// Saca de la salida de `nvidia-smi` la tarjeta con más memoria total.
@@ -86,8 +108,19 @@ fn interpretar(salida: &str) -> Option<Gpu> {
 fn interpretar_linea(linea: &str) -> Option<Gpu> {
     let mut campos = linea.split(',');
     let nombre = campos.next()?.trim().to_string();
-    let vram_total = campos.next()?.trim().parse::<u64>().ok()? * BYTES_POR_MIB;
-    let vram_libre = campos.next()?.trim().parse::<u64>().ok()? * BYTES_POR_MIB;
+    // La salida es de un programa ajeno: una cifra que no cabe en bytes no es una tarjeta.
+    let vram_total = campos
+        .next()?
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(BYTES_POR_MIB)?;
+    let vram_libre = campos
+        .next()?
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(BYTES_POR_MIB)?;
 
     if nombre.is_empty() || vram_total == 0 {
         return None;
@@ -109,6 +142,32 @@ mod pruebas {
 
     /// La salida real de una máquina con una sola tarjeta, tal como la escribe `nvidia-smi`.
     const UNA_TARJETA: &str = "NVIDIA GeForce RTX 4070 Ti SUPER, 16376, 15234\n";
+
+    fn terminada(exito: bool, salida: &str) -> DesenlaceDeOrden {
+        DesenlaceDeOrden::Terminada {
+            exito,
+            codigo: Some(if exito { 0 } else { 1 }),
+            estado: String::new(),
+            salida: salida.into(),
+            errores: String::new(),
+        }
+    }
+
+    #[test]
+    fn solo_una_respuesta_terminada_con_exito_da_tarjeta() {
+        assert!(gpu_de_la_respuesta(terminada(true, UNA_TARJETA)).is_some());
+        assert_eq!(gpu_de_la_respuesta(terminada(false, UNA_TARJETA)), None);
+    }
+
+    /// Un `nvidia-smi` colgado se corta y se toma como «no se sabe».
+    #[test]
+    fn un_nvidia_smi_cortado_por_tiempo_no_da_tarjeta() {
+        assert_eq!(gpu_de_la_respuesta(DesenlaceDeOrden::Agotada), None);
+        assert_eq!(
+            gpu_de_la_respuesta(DesenlaceDeOrden::NoSeLanzo("no está".into())),
+            None
+        );
+    }
 
     #[test]
     fn una_tarjeta_se_lee_entera_y_en_bytes() {
@@ -144,6 +203,16 @@ mod pruebas {
         // El equivalente al adaptador software que Windows filtra: no es un sitio donde cargar
         // nada, y dejarla pasar la convertiría en la elegida en cuanto la buena estuviera ocupada.
         assert_eq!(interpretar("Dispositivo raro, 0, 0\n"), None);
+    }
+
+    /// La cifra en MiB por los bytes de un MiB se multiplica comprobando el desbordamiento. Sin
+    /// comprobar, una salida absurda desbordaba: en depuración, pánico; en la compilación final,
+    /// una tarjeta con una memoria cualquiera.
+    #[test]
+    fn una_memoria_que_no_cabe_en_bytes_no_es_una_tarjeta() {
+        let enorme = u64::MAX / 2;
+        assert_eq!(interpretar(&format!("Tarjeta, {enorme}, 1000\n")), None);
+        assert_eq!(interpretar(&format!("Tarjeta, 24564, {enorme}\n")), None);
     }
 
     #[test]

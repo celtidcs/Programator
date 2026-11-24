@@ -1,11 +1,12 @@
 //! Reconocer, en el texto de un encargo del canal, un pedido de revisión.
 //!
-//! Lo reconoce el arnés, no el modelo (especificación de la revisión autónoma, §4): un encargo cuya
-//! primera línea es `revisión: buscar`, `revisión: probar` o `revisión: cerrar` lo atiende el
-//! código, y cualquier otro va al modelo como siempre. Todo aquí es puro.
+//! Lo reconoce el arnés, no el modelo: un encargo cuya primera línea es `revisión: buscar`,
+//! `revisión: probar` o `revisión: cerrar` lo atiende el código, y cualquier otro va al modelo como
+//! siempre. Todo aquí es puro.
 
 use super::config::ConfigRevision;
 use super::mensajes;
+use crate::protocolo::destinatarios::Identidad;
 
 /// La palabra con que empieza un pedido de revisión, con y sin tilde: quien escribe el encargo es
 /// otro modelo, y no siempre la pone.
@@ -77,28 +78,33 @@ fn leer_candidatos<'a>(lineas: impl Iterator<Item = &'a str>) -> Reconocido {
         });
     }
     if candidatos.is_empty() {
-        return Reconocido::MalEscrito(mensajes::PROBAR_SIN_CANDIDATOS.to_string());
+        return Reconocido::MalEscrito(mensajes::probar_sin_candidatos());
     }
     Reconocido::Pedido(Pedido::Probar(candidatos))
 }
 
-/// Si el buzón `de` (un fichero del canal, como `claude.md`) puede pedir una revisión, o el motivo
-/// por el que no, que se publica.
-pub fn puede_pedirla(de: &str, config: &ConfigRevision) -> Result<(), String> {
-    if config.buzones_que_ordenan.is_empty() {
-        return Err(mensajes::REVISION_DESHABILITADA.to_string());
+/// Si `quien` (la identidad de la cabecera de su buzón) puede pedir una revisión, o el motivo por
+/// el que no, que se publica.
+pub fn puede_pedirla(quien: Option<&Identidad>, config: &ConfigRevision) -> Result<(), String> {
+    if config.identidades_que_ordenan.is_empty() {
+        return Err(mensajes::revision_deshabilitada());
     }
-    let buzon = de.trim_end_matches(".md");
+    let Some(quien) = quien else {
+        return Err(mensajes::revision_sin_identidad(
+            &config.identidades_que_ordenan,
+        ));
+    };
     if config
-        .buzones_que_ordenan
+        .identidades_que_ordenan
         .iter()
-        .any(|permitido| permitido.eq_ignore_ascii_case(buzon))
+        .filter_map(|permitida| Identidad::leer(permitida))
+        .any(|permitida| permitida == *quien)
     {
         Ok(())
     } else {
-        Err(mensajes::buzon_sin_permiso(
-            buzon,
-            &config.buzones_que_ordenan,
+        Err(mensajes::identidad_sin_permiso(
+            &quien.to_string(),
+            &config.identidades_que_ordenan,
         ))
     }
 }
@@ -174,15 +180,19 @@ mod pruebas {
 
     #[test]
     fn solo_pide_revision_quien_esta_en_la_lista() {
+        let claude1 = Identidad::leer("Claude 1").unwrap();
+        let gemini1 = Identidad::leer("Gemini 1").unwrap();
         let mut config = ConfigRevision::default();
-        assert!(puede_pedirla("claude.md", &config)
+        assert!(puede_pedirla(Some(&claude1), &config)
             .unwrap_err()
-            .contains("buzones_que_ordenan"));
+            .contains("identidades_que_ordenan"));
 
-        config.buzones_que_ordenan = vec!["Claude".into()];
-        assert_eq!(puede_pedirla("claude.md", &config), Ok(()));
-        let negativa = puede_pedirla("gemini.md", &config).unwrap_err();
-        assert!(negativa.contains("«gemini»"), "{negativa}");
-        assert!(negativa.contains("Claude"), "{negativa}");
+        config.identidades_que_ordenan = vec!["Claude 1".into()];
+        assert_eq!(puede_pedirla(Some(&claude1), &config), Ok(()));
+        let negativa = puede_pedirla(Some(&gemini1), &config).unwrap_err();
+        assert!(negativa.contains("«Gemini 1»"), "{negativa}");
+        assert!(negativa.contains("Claude 1"), "{negativa}");
+        let sin_cabecera = puede_pedirla(None, &config).unwrap_err();
+        assert!(sin_cabecera.contains("# Bandeja de"), "{sin_cabecera}");
     }
 }

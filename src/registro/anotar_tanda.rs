@@ -37,12 +37,13 @@ pub fn anotar_tanda(carpeta: &Path, ruta_del_registro: &Path) -> Resultado<Desen
 }
 
 #[cfg(test)]
-mod pruebas {
+pub(crate) mod pruebas {
     use super::*;
     use crate::banco::resultados::pruebas::tanda_de_ejemplo;
     use crate::banco::resultados::{guardar, AjustesDelMotor};
 
-    fn guardar_tanda(carpeta: &Path, con_tarjeta: bool) {
+    /// Guarda en `carpeta` una tanda de ejemplo que se puede anotar (con `con_tarjeta`).
+    pub(crate) fn guardar_tanda(carpeta: &Path, con_tarjeta: bool) {
         let mut resultados = tanda_de_ejemplo();
         // La de ejemplo deja una rúbrica pendiente: se quita para que se pueda anotar.
         resultados.encargos.retain(|e| e.id != "E01");

@@ -1,5 +1,5 @@
 //! `revisión: probar`: descargar cada candidato, soltar el motor propio, pasarle el banco y
-//! comprobar la tanda (especificación de la revisión autónoma, §3 a §7).
+//! comprobar la tanda.
 //!
 //! Lo que toca el mundo va en el rasgo [`Taller`], y aquí solo se decide el recorrido: así se
 //! prueba sin GPU ni red.

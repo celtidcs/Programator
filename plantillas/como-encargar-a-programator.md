@@ -18,7 +18,7 @@ rápido, y con más contexto, más lento.
 **Repetir un encargo da lo mismo.** El mismo encargo, sobre la misma carpeta y con la misma
 configuración, da la misma respuesta: la semilla va fija y cada encargo empieza sin la caché del
 motor. Si la respuesta no vale, mandarlo otra vez tal cual no sirve de nada. Cambia el encargo
-(más acotado, con el fragmento pegado y numerado) o pide al Director otro intento con otra semilla,
+(más acotado, con el fragmento pegado y numerado) o pide a quien usa Programator otro intento con otra semilla,
 que es configuración de Programator y no algo que se pida en el encargo.
 
 ## Lo que sí puede hacer por su cuenta
@@ -28,17 +28,20 @@ que es configuración de Programator y no algo que se pida en el encargo.
 **`leer_fichero` ahorra ventana, pero pedirle muchas lecturas en el mismo encargo tiene un coste
 medido.** En vez de pegarle un fichero de 19 KB entero dentro del encargo, dale la ruta y pídele que
 lea solo el tramo que necesita acotando el rango de líneas. Para una consulta puntual («¿existe
-ya esta constante?») es la vía más barata.
+ya esta constante?») es la vía más barata. Cada lectura le dice cuántas líneas tiene el fichero, y
+si le pides que lea con `numerar` ve cada línea con su número real, que es lo que necesita para
+citar líneas sin equivocarse.
 
 Pero si el encargo es una auditoría o necesita varios tramos de un fichero grande, medido en
 uso real: pegar el fragmento exacto en el propio encargo, **numerado con su línea real**, entrega
-con más fiabilidad que pedirle que lea — tanto en si entrega algo (encadenar varias lecturas en el
-mismo encargo ha hecho que el modelo confunda el rótulo `[solicito leer_fichero]` que ve en su
-propio historial con una respuesta de texto normal y la repita, perdiendo el encargo entero) como en
-la precisión de las líneas que cita después (de un fichero leído, prácticamente ninguna línea citada
-coincidía con la real; de un fichero pegado y numerado, la inmensa mayoría sí). El arnés ya detecta
-y corrige ese rótulo imitado dándole un aviso en vez de cerrar el encargo, así que el riesgo de
-perderlo entero es menor que antes.
+con más fiabilidad que pedirle que lea, sobre todo en la precisión de las líneas que cita después
+(de un fichero leído, prácticamente ninguna línea citada coincidía con la real; de un fichero pegado
+y numerado, la inmensa mayoría sí). Antes, además, encadenar varias lecturas podía hacerle perder el
+encargo entero: imitaba como texto el rótulo `[solicito leer_fichero]` con que el arnés anotaba
+cada llamada en su historial. Desde el 12/11/2026 las llamadas a herramientas van en el historial
+como llamadas nativas del motor, sin ese rótulo, y si aun así lo escribe como texto el arnés le
+da un aviso en vez de cerrar el encargo; solo lo aborta si insiste más veces de las que permite
+`[ciclo] max_denegaciones_seguidas`.
 
 **La línea que cita en una auditoría tampoco es fiable, y para eso hay una vía aparte.** Si pegas
 `plantillas/formato-auditoria.md` junto al encargo, el arnés comprueba por sí mismo —buscando el
@@ -94,10 +97,20 @@ biblioteca.
 
 ## Cómo escribir un encargo que salga bien
 
+### 0. Di quién eres, una vez
+
+La primera línea de tu buzón tiene que ser `# Bandeja de <tu identidad>`, con la identidad de la
+forma `Herramienta N` (`# Bandeja de Claude 1`). Con Gestor Agentes ya la tienes; sin él, escríbela
+tú antes del primer encargo. El nombre del fichero da igual: manda esa línea, y solo ella. Un buzón
+antiguo sin esa línea sigue funcionando a medias: Programator atiende tus encargos pero no sabe a
+quién dirigir la respuesta, así que el vigilante no te avisa, y te lo dice al final de cada
+respuesta. En cuanto escribas la línea, la respuesta siguiente ya te llega.
+
 ### 1. Dirígelo bien o no lo verá
 
 Se publica en **tu propio buzón** del canal, como cualquier otro encargo del canal: en una
-intervención nueva, con una línea que **empieza** por `Para Programator`:
+intervención nueva, con una línea que lleve `Para Programator`, con la P mayúscula. Lo normal es
+que la línea empiece así, pero vale también detrás de la hora o de una viñeta:
 
 ```markdown
 LATIDO: 2026-11-13 16:05:00
@@ -114,15 +127,23 @@ para Programator y otro para otro agente, cada uno en su línea `Para …`.
   (`Para Claude 1 y Programator: …`). `Para Programator 2` es para la segunda instancia, no para la
   primera.
 - **No es un encargo** si Programator solo va con copia (`Para Gemini 1, con copia a Programator.`),
-  si la línea va citada (`> Para Programator…`) o si lo nombras en medio de una frase.
+  si escribes «para» en minúscula o si lo nombras sin `Para` (`Se lo diré a Programator.`). Ojo:
+  `Para Programator` en medio de una línea, o citado con `>`, **sí** es un encargo; es la misma
+  regla que usa Gestor Agentes para todos los agentes. Por eso, **no cites en tu buzón una línea
+  `Para Programator` de otro encargo** (para comentarla o resumirla): Programator la toma por un
+  encargo nuevo y le responde. Nómbralo por su etiqueta o di «el encargo de las 16:05».
+- **Etiqueta, si quieres seguirlo.** Si justo tras los dos puntos pones una palabra en mayúsculas
+  con alguna cifra o guion (`Para Programator: PG-12 cuenta las líneas de a.rs`), la respuesta
+  la acusa con `RECIBIDO <hora>: PG-12`, y la línea `Para` de la respuesta lo nombra sin ella
+  (`respuesta a cuenta las líneas de a.rs`).
 - Se sigue atendiendo la forma antigua, un encabezado `## Para Programator: …` con el encargo
   debajo hasta el siguiente encabezado. Úsala solo si tu canal todavía trabaja así.
 
 **Tres situaciones en las que un encargo no se atiende:**
 
-- **Publicar antes de que Programator avise de que está listo.** La primera vez que Programator se ejecuta en un proyecto nuevo, toma una instantánea inicial del canal para fijar el punto de partida y no atiende textos anteriores. En todos los arranques posteriores, Programator ya conserva su registro y atiende cualquier novedad publicada desde la última lectura. Para no tener que recordar esta distinción, basta con mirar la terminal: Programator anuncia de forma explícita cuándo comienza a escuchar y con qué cadencia de sondeo. Además, escribe su estado en `.gestor/<agente>/latido.json`. Espera a ver ese aviso de listo antes de publicar el encargo.
+- **Encargos anteriores en un canal donde se perdió el registro de lectura.** Da igual que publiques antes o después de que arranque Programator: si nunca ha respondido en este canal, atiende todo lo que vaya para él, y al arrancar mira el canal enseguida. La excepción es un canal donde Programator ya respondió alguna vez pero ha perdido su registro de lectura: ahí toma lo que hay como punto de partida y no lo atiende, para no repetir respuestas. Su estado está en `.gestor/<agente>/latido.json`.
 - **Añadir texto a un encargo anterior.** Programator solo procesa lo nuevo. Una línea añadida a un encargo que ya atendió no se interpreta como una petición de trabajo. Si necesitas corregir o ampliar algo, escribe un encargo nuevo con su propia línea `Para Programator`.
-- **Mencionar a Programator sin que la línea empiece por `Para Programator`.** Nombrar al agente dentro de un párrafo no genera ninguna acción.
+- **Mencionar a Programator sin `Para`.** Nombrarlo sin más («se lo diré a Programator»), con «para» en minúscula o solo en copia no genera ninguna acción.
 
 ### 2. Dile los requisitos, uno por línea
 
@@ -157,14 +178,38 @@ trabajar.
 ### 4. Dile cómo entregar
 
 Si quieres un fichero: **«entrégalo con `escribir_propuesta`, nombre exacto `X`»**. Su herramienta
-necesita dos argumentos, `nombre` y `contenido`, y si se le olvida el segundo el arnés aborta el
-encargo. Recordárselo en el encargo evita ese viaje en balde.
+necesita dos argumentos, `nombre` y `contenido`. Si se le olvida el segundo, el arnés le deniega la
+llamada recordándole la firma, y si insiste sin él tantas veces seguidas como marca
+`[ciclo] max_denegaciones_seguidas`, aborta el encargo. Recordárselo en el encargo
+evita esos viajes en balde.
+
+### 5. Dile la clase, si sabes cuál es
+
+Una línea `Clase:` dentro del encargo le dice a Programator qué clase de trabajo es, y con ella
+carga el modelo que mejor la hace según el banco de modelos:
+
+```markdown
+Para Programator: validar el formato de las fechas.
+Clase: validaciones
+Lo que le pides, en las líneas que hagan falta.
+```
+
+- Lo que se escribe tras `Clase:` es el nombre corto de la primera columna de la tabla «Qué modelo
+  atiende cada clase de encargo», de más arriba. Da igual en mayúsculas o con tildes.
+- **Sin la línea**, el encargo lo atiende el modelo por defecto, como siempre.
+- **Con un nombre que no es ninguna clase**, también lo atiende el modelo por defecto, y la entrega
+  lo avisa y dice qué nombres valen. No se pierde el encargo.
+- Si el encargo pide otro modelo que el que está cargado, Programator lo cambia antes de
+  atenderlo. Eso cuesta la carga, de segundos a decenas de segundos, así que agrupa los encargos de
+  una misma clase cuando puedas: los que llegan juntos con el mismo modelo se atienden seguidos.
 
 ## Qué te va a devolver
 
 Publica en `.gestor/canal/programator.md`, con el formato del canal: cada intervención
-empieza con `LATIDO: AAAA-MM-DD HH:MM:SS`, y debajo van su resumen y `LEÍDO:`, lo que leyó de cada
-buzón. Si reserva un fichero, lo anota en `## Reservas activas` de `estado.md`
+empieza con `LATIDO: AAAA-MM-DD HH:MM:SS`. Si responde a un encargo tuyo, debajo va
+`Para <tu identidad>: respuesta a <nombre del encargo>` y, si el encargo trae etiqueta,
+`RECIBIDO <hora>: <etiqueta>` (más abajo, en «Cómo enterarte de la respuesta»). Después van su
+resumen y `LEÍDO:`, lo que leyó de cada buzón. Si reserva un fichero, lo anota en `## Reservas activas` de `estado.md`
 (`- Programator, AAAA-MM-DD HH:MM: ruta — motivo`) y lo quita al cerrar el encargo, publique o no.
 Debajo de lo que él escriba, **el arnés añade el resultado de compilar sus propuestas**:
 
@@ -174,8 +219,11 @@ Debajo de lo que él escriba, **el arnés añade el resultado de compilar sus pr
 ```
 
 **Esa línea la escribe el arnés, no él.** Si dice que no pasa, no pasa, lo que él haya escrito
-arriba da igual. Y si dice «sin verificar», es que no hay comprobador configurado para esa
-extensión: que compile sigue sin saberse.
+arriba da igual. Y si dice `SIN COMPROBAR — no hay comprobador configurado para «.<extensión>»`,
+es que no hay comprobador para esa extensión: que compile sigue sin saberse. Para `.py` no hace
+falta configurarlo: si no hay uno en `[verificacion.comprobadores]`, Programator busca al arrancar
+un Python que responda (la ruta de `[verificacion] python` o, sin ella, `python` y `python3` en el
+PATH) y lo usa para compilar la sintaxis de las propuestas, sin ejecutarlas.
 
 {comprobadores}
 
@@ -185,6 +233,32 @@ del propio fichero. Si tu lenguaje tiene referencias cruzadas entre ficheros (un
 Godot/.NET, de Unity, cualquier framework con un fichero de proyecto), un comprobador contra el
 fichero suelto no basta — ahí dentro del mismo fichero hay un ejemplo de cómo apuntar a un script
 propio que copie la propuesta sobre una copia de tu proyecto real antes de compilar.
+
+**Cada entrega dice también cuánta memoria de la tarjeta costó**, en una línea que empieza por
+`Memoria:` con el modelo, las capas que cupieron en la tarjeta y la memoria libre antes de cargar,
+la que ocupa el motor y la libre al terminar. Si cupieron menos capas que las que midió el banco, lo
+avisa: el encargo se hizo igual, solo que más despacio. Un mismo modelo puede salir con tres cifras
+de capas distintas, y cada una mide otra cosa: la lista de modelos disponibles, cuántas cabrían con
+la tarjeta entera para él; el registro del banco, cuántas cargó al medirlo; y la línea `Memoria:`,
+cuántas cupieron en ese encargo con la memoria libre de ese momento. Que no coincidan no es un
+error.
+
+**Un encargo que no se pudo atender no se pierde en silencio.** Si no hay un modelo con el que
+atenderlo (falta su fichero o no cabe en la tarjeta), Programator no lo intenta: te responde en el
+acto con el motivo y te pide que encargues `revisión: buscar`, que busca, descarga y prueba en el
+banco los modelos que caben. La revisión solo se atiende con Programator y tú abiertos en la
+carpeta donde está instalado Programator, donde están sus modelos y su banco; pedida desde otro
+proyecto, te contesta con esa carpeta y no hace nada. Ese encargo queda cerrado: cuando haya modelo, vuelve a pedirlo. Si
+falla por otra causa (el modelo no termina de cargar a tiempo, el motor se cierra, la entrega no
+se puede publicar), queda pendiente y Programator vuelve por él en la vuelta siguiente, antes que
+por los nuevos. Al segundo intento fallido (`[ciclo] intentos_por_encargo`) lo cierra y te
+responde con el motivo: revisa la causa y vuelve a pedirlo.
+
+**`revisión: buscar` repone antes de buscar.** Si en la carpeta de modelos falta algún modelo del
+registro, la respuesta empieza por un bloque `Reposición:`, una línea por modelo: `repuesto` (se
+bajó otra vez y su huella es la que se midió), `sin reponer` (no se pudo, con el motivo), `fuera del
+registro` (faltaba y ya no ganaría nada, así que se marcó retirado) o `sin decidir` (faltaba y no
+tiene cifras que se comparen). Sin modelos que falten, el bloque no sale.
 
 ## Falsos positivos que ya se han visto repetirse
 
@@ -201,13 +275,38 @@ misma respuesta donde la incumple. Pedirle que declare cumplimiento por requisit
 tasa de aciertos de conjunto, pero **esa declaración no es una señal fiable por sí sola**: verifica
 siempre contra el fichero real, no contra lo que él diga que hizo.
 
+## Cómo enterarte de la respuesta
+
+Cada respuesta de Programator a un encargo tuyo empieza, tras su `LATIDO:`, con la línea
+`Para <tu identidad>: respuesta a <lo que pediste>`. Va también cuando el encargo falla o queda
+pendiente, con el motivo. Si tu encargo lleva etiqueta, una palabra en mayúsculas con alguna cifra
+o guion justo tras los dos puntos (`Para Programator: PG-12 cuenta las líneas de a.rs`), debajo va
+`RECIBIDO <hora>: PG-12`. Si la línea trae encargos para varios
+(`Para Gemini 1: X1-A. Para Programator: PG-12 cuenta…`), la etiqueta acusada es la que sigue a los
+dos puntos de su propio `Para Programator:`, no la del primer `Para`. Nada más de su buzón te nombra: lo que cite de tu encargo lo escribe con
+«para» en minúscula.
+
+Para que te avise, después de encargar lanza en segundo plano, desde la carpeta del proyecto y con
+tu identidad (por ejemplo `Claude 2`):
+
+```
+.gestor/vigilante/gestor-vigilante --hasta-cambio --agente "<tu identidad>"
+```
+
+Termina en cuanto hay algo para ti en el canal. Lee entonces `programator.md` y vuelve a lanzarlo.
+Es el vigilante de Gestor Agentes, el mismo con Gestor y sin él: si el proyecto lo lleva Gestor
+Agentes, ya lo tienes en marcha y no hace falta otro; si no, Programator lo deja en esa carpeta al
+arrancar.
+
 ## Cómo saber si sigue vivo mientras trabaja
 
 Programator escribe su estado en `.gestor/<agente>/latido.json` en cada sondeo del canal, con tres
 valores posibles: `reposo` (sin nada que atender), `atendiendo` (generando una respuesta, con el
-encargo en curso) y `error` (algo falló, con el motivo). Vigilar la transición de `atendiendo` a
-`reposo` o `error` es la forma más rápida de saber cuándo ha terminado, sin esperar a ver algo nuevo
-en el canal.
+encargo en curso) y `error` (algo falló, con el motivo). Si tiene un modelo cargado en el motor,
+el campo `"modelo_cargado"` dice cuál; sin modelo, el campo no aparece. En cuanto publica la respuesta
+de un encargo vuelve a `reposo` (si el encargo se abortó o se pasó de plazo, se queda en `error`), sin esperar al final
+de la vuelta. Vigilar la transición de `atendiendo` a `reposo` o `error` es la forma más rápida de
+saber cuándo ha terminado, sin esperar a ver algo nuevo en el canal.
 
 ## Resumen para quien tenga prisa
 

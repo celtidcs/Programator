@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ejecucion::{carpeta_del_encargo, ConsumoAcumulado, Recogida};
 use super::ficha::Encargo;
+use super::mensajes;
 use super::resultados::DatosDeTanda;
 use super::tanda::Pasado;
 use crate::error::{Error, Resultado};
@@ -93,12 +94,11 @@ impl PasadaGuardada {
 }
 
 pub fn componer_toml(pasadas: &PasadasDeTanda) -> Resultado<String> {
-    toml::to_string(pasadas)
-        .map_err(|e| Error::Banco(format!("no se pudieron componer las pasadas: {e}")))
+    toml::to_string(pasadas).map_err(|e| Error::Banco(mensajes::pasadas_sin_componer(&e)))
 }
 
 pub fn leer_toml(texto: &str) -> Resultado<PasadasDeTanda> {
-    toml::from_str(texto).map_err(|e| Error::Banco(format!("las pasadas no se pueden leer: {e}")))
+    toml::from_str(texto).map_err(|e| Error::Banco(mensajes::pasadas_ilegibles(&e)))
 }
 
 /// Reescribe `pasadas.toml` entero. Se llama tras cada pasada: si el banco se para, queda todo lo
@@ -115,11 +115,8 @@ pub fn guardar(pasadas: &PasadasDeTanda, carpeta_de_la_tanda: &Path) -> Resultad
 pub fn cargar(carpeta_de_la_tanda: &Path) -> Resultado<PasadasDeTanda> {
     let ruta = carpeta_de_la_tanda.join(NOMBRE_PASADAS);
     if !ruta.is_file() {
-        return Err(Error::Banco(format!(
-            "no hay {} en «{}»: no es la carpeta de una tanda, o es de antes de que el banco \
-             guardara cada pasada (12/11/2026) y hay que repetirla entera",
-            NOMBRE_PASADAS,
-            carpeta_de_la_tanda.display()
+        return Err(Error::Banco(mensajes::sin_pasadas_guardadas(
+            carpeta_de_la_tanda,
         )));
     }
     leer_toml(&leer(&ruta)?)
@@ -138,26 +135,18 @@ pub fn recuperar<'a>(
             let encargo = encargos
                 .iter()
                 .find(|e| e.ficha.id == guardada.encargo)
-                .ok_or_else(|| {
-                    Error::Banco(format!(
-                        "la pasada de {} no tiene encargo en el banco: ¿se ha borrado o renombrado \
-                         su carpeta?",
-                        guardada.encargo
-                    ))
-                })?;
+                .ok_or_else(|| Error::Banco(mensajes::pasada_sin_encargo(&guardada.encargo)))?;
             let carpeta =
                 carpeta_del_encargo(carpeta_de_trabajo, &encargo.ficha.id, guardada.semilla);
             if !carpeta.is_dir() {
-                return Err(Error::Banco(format!(
-                    "falta la carpeta de trabajo «{}» de una pasada guardada",
-                    carpeta.display()
-                )));
+                return Err(Error::Banco(mensajes::falta_carpeta_de_pasada(&carpeta)));
             }
             // El fichero se puede tocar a mano: un valor imposible es un error, no un pánico.
             let duracion = Duration::try_from_secs_f64(guardada.segundos).map_err(|_| {
-                Error::Banco(format!(
-                    "la pasada de {} con la semilla {} tiene una duración imposible: {}",
-                    guardada.encargo, guardada.semilla, guardada.segundos
+                Error::Banco(mensajes::duracion_imposible(
+                    &guardada.encargo,
+                    guardada.semilla,
+                    guardada.segundos,
                 ))
             })?;
             let recogida = Recogida::de_la_carpeta(

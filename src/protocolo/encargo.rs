@@ -16,6 +16,8 @@
 //!    encabezado no puede hacer, y porque no reconocerlo costaría perder un encargo escrito así.
 //!    No debe presentarse a nadie como parte del protocolo.
 
+use super::destinatarios::{self, Identidad};
+
 /// Un bloque de texto que un agente dirige a otro.
 #[derive(Debug, Clone)]
 pub struct Encargo {
@@ -31,15 +33,16 @@ impl Encargo {
     /// Lo que se pide, sin la línea `Para …` que lo dirige: lo que va tras los dos puntos de esa
     /// línea, o, si no los lleva, lo que va debajo. Es lo que mira quien reconoce un pedido por su
     /// primera línea, como la revisión (`revisión: buscar`). En las otras formas, el texto entero.
-    pub fn cuerpo(&self) -> &str {
+    /// Los dos puntos son los del «Para» que nombra a `agente`: ni los de una hora delante
+    /// («13:00 — Para Programator: …») ni los de otro «Para» de la misma línea.
+    pub fn cuerpo(&self, agente: &str) -> &str {
         if self.forma != Forma::Linea {
             return &self.texto;
         }
         let primera = self.texto.lines().next().unwrap_or_default();
-        let desde = match primera.find(':') {
-            Some(dos_puntos) => dos_puntos + 1,
-            None => primera.len(),
-        };
+        let resto =
+            destinatarios::tras_los_dos_puntos(primera, &Identidad::de(agente)).unwrap_or_default();
+        let desde = self.texto.len().min(primera.len() - resto.len());
         // `**Para Programator:** revisión: buscar` deja la negrita de cierre delante.
         self.texto[desde..]
             .trim_start()
@@ -51,7 +54,8 @@ impl Encargo {
 /// Cómo venía escrito un encargo. Importa para lo que se hace después con el buzón de origen: la
 /// propuesta de poda trocea por `---`, como los buzones del protocolo anterior, y un buzón de Gestor
 /// Agentes no lo usa.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Forma {
     /// Una línea que empieza por `Para <agente>` (forma vigente del canal).
     Linea,
@@ -72,9 +76,12 @@ impl Forma {
 }
 
 /// Extrae los encargos dirigidos a `agente` dentro del contenido de un buzón ajeno.
+///
+/// Quién es destinatario lo decide [`destinatarios`], con las reglas de Gestor Agentes: un «Para»
+/// con mayúscula en cualquier sitio de la línea, también citado. Dónde acaba el encargo es regla
+/// propia: el modelo necesita el texto entero, también lo que va tras una línea en blanco.
 pub fn detectar(agente: &str, de: &str, contenido: &str) -> Vec<Encargo> {
-    let objetivo = agente.to_lowercase();
-    let marcador = format!("[→ {}]", objetivo);
+    let marcador = format!("[→ {}]", agente.to_lowercase());
     let mut encargos = Vec::new();
 
     let identidad = Identidad::de(agente);
@@ -92,28 +99,24 @@ pub fn detectar(agente: &str, de: &str, contenido: &str) -> Vec<Encargo> {
             abierta_por_linea = false;
         }
 
-        if seccion.is_none() {
-            if let Some(destinatarios) = destinatarios_de_una_linea_para(recortada) {
-                if identidad.esta_entre(&destinatarios) {
-                    seccion = Some(vec![recortada.to_string()]);
-                    abierta_por_linea = true;
-                    continue;
-                }
-            }
+        let es_encabezado = minusculas.starts_with("## ");
+        if seccion.is_none() && !es_encabezado && identidad.es_destinatario_de(recortada) {
+            seccion = Some(vec![recortada.to_string()]);
+            abierta_por_linea = true;
+            continue;
         }
 
-        if minusculas.starts_with("## ") {
+        if es_encabezado {
             // Un encabezado nuevo cierra la sección anterior.
             let forma = Forma::de_la_seccion(abierta_por_linea);
             abierta_por_linea = false;
             cerrar_seccion(seccion.take(), forma, de, &mut encargos);
-            if es_encabezado_para(&minusculas, &objetivo) {
-                let texto_inicial = extraer_texto_tras_dos_puntos_en_encabezado(&minusculas);
-                if let Some(t) = texto_inicial {
-                    seccion = Some(vec![t]);
-                } else {
-                    seccion = Some(Vec::new());
-                }
+            if identidad.es_destinatario_de(recortada) {
+                let texto_inicial = destinatarios::tras_los_dos_puntos(recortada, &identidad)
+                    .map(str::trim)
+                    .filter(|texto| !texto.is_empty())
+                    .map(str::to_string);
+                seccion = Some(texto_inicial.into_iter().collect());
             }
             continue;
         }
@@ -139,91 +142,23 @@ pub fn detectar(agente: &str, de: &str, contenido: &str) -> Vec<Encargo> {
     encargos
 }
 
-/// Lo que va delante de los destinatarios en una línea de encargo.
-const PARA: &str = "para ";
-/// Lo que separa a los destinatarios de quienes solo reciben copia, como escriben los agentes del
-/// canal («Para Gemini 1, con copia a Claude 2.»). Quien va en copia no tiene encargo.
-const CON_COPIA: &str = "con copia";
-/// Las conjunciones que unen destinatarios: «Para Claude 1 y Programator», «Gemini e Iris».
-const CONJUNCIONES: [&str; 2] = [" y ", " e "];
 /// La línea que separa bloques en un buzón.
 const SEPARADOR_DE_BLOQUES: &str = "---";
-/// Las marcas de énfasis de markdown que pueden envolver el principio de la línea: `**Para …**`.
+/// Las marcas de énfasis de markdown que pueden envolver lo que sigue a los dos puntos.
 const ENFASIS: [char; 2] = ['*', '_'];
 
-/// Quién es este agente para los encargos en una línea: la herramienta y el número de instancia.
-/// «Programator» es la instancia 1, igual que «Programator 1»; «Programator 2», la 2. Es como
-/// el gestor de agentes nombra a sus agentes al revisar el canal.
-struct Identidad {
-    herramienta: String,
-    instancia: u32,
-}
-
-/// La instancia que se entiende cuando el nombre no lleva número.
-const INSTANCIA_SIN_NUMERO: u32 = 1;
-
-impl Identidad {
-    fn de(agente: &str) -> Self {
-        let mut palabras = agente.split_whitespace();
-        let herramienta = palabras.next().unwrap_or_default().to_lowercase();
-        let instancia = palabras
-            .next()
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(INSTANCIA_SIN_NUMERO);
-        Self {
-            herramienta,
-            instancia,
-        }
-    }
-
-    /// Si alguno de los destinatarios es este agente. Un destinatario es lo que hay entre comas o
-    /// conjunciones; vale si su primera palabra es la herramienta y, si lleva número, es el suyo.
-    fn esta_entre(&self, destinatarios: &str) -> bool {
-        let mut trozos = vec![destinatarios.to_string()];
-        for conjuncion in CONJUNCIONES {
-            trozos = trozos
-                .iter()
-                .flat_map(|t| t.split(conjuncion).map(str::to_string).collect::<Vec<_>>())
-                .collect();
-        }
-        trozos
-            .iter()
-            .flat_map(|t| t.split(',').map(str::to_string).collect::<Vec<_>>())
-            .any(|destinatario| {
-                let mut palabras = destinatario
-                    .split_whitespace()
-                    .map(|p| p.trim_matches(|c: char| !c.is_alphanumeric()));
-                if palabras.next() != Some(self.herramienta.as_str()) {
-                    return false;
-                }
-                // Sin número detrás («Para Programator», «Para Programator haz…»), la instancia 1.
-                match palabras.next().map(str::parse::<u32>) {
-                    Some(Ok(numero)) => numero == self.instancia,
-                    _ => self.instancia == INSTANCIA_SIN_NUMERO,
-                }
-            })
-    }
-}
-
-/// Si la línea empieza por `Para`, los destinatarios, en minúsculas y sin los que van en copia.
-/// Una línea citada (`> Para …`) o una mención en medio de una frase no empiezan por `Para`.
-fn destinatarios_de_una_linea_para(recortada: &str) -> Option<String> {
-    let sin_enfasis = recortada.trim_start_matches(ENFASIS).to_lowercase();
-    let resto = sin_enfasis.strip_prefix(PARA)?;
-    let (destinatarios, _) = extraer_region_de_destinatarios(resto);
-    let sin_copia = match destinatarios.find(CON_COPIA) {
-        Some(posicion) => &destinatarios[..posicion],
-        None => destinatarios,
-    };
-    Some(sin_copia.trim().to_string())
-}
-
-/// Si la línea termina un encargo que empezó en una línea `Para …`: el siguiente latido, la
-/// siguiente línea `Para …` (sea para quien sea) o un separador de bloques.
+/// Si la línea termina un encargo que empezó en una línea `Para …`: el siguiente latido, un
+/// separador de bloques o una línea que encarga algo a otro agente, o a este otra vez, con las
+/// reglas de [`destinatarios`] (como `cierra_el_bloque` de Gestor Agentes). Para no cortar el
+/// encargo con una frase como «Para ello, lee…», un «Para» solo cierra si su primer destinatario
+/// empieza por mayúscula, como todo nombre de agente. La línea en blanco no cierra: es la regla
+/// propia del fin del bloque.
 fn cierra_un_encargo_en_linea(recortada: &str) -> bool {
     crate::protocolo::es_linea_de_latido(recortada)
         || recortada == SEPARADOR_DE_BLOQUES
-        || destinatarios_de_una_linea_para(recortada).is_some()
+        || destinatarios::destinatarios(recortada)
+            .iter()
+            .any(|destinatario| destinatario.chars().next().is_some_and(char::is_uppercase))
 }
 
 /// Si había una sección abierta con algo dentro, la cierra como encargo.
@@ -244,97 +179,6 @@ fn cerrar_seccion(
             forma,
         });
     }
-}
-
-/// Extrae la región de destinatarios acumulando caracteres válidos hasta una parada.
-/// Los caracteres válidos de destinatarios son: alfanuméricos, comas, espacios,
-/// y marcas de énfasis markdown: `*`, `_`, `` ` ``.
-/// Se para en el primer carácter que no sea válido:
-/// - Si es `:` → devuelve el cuerpo tras los dos puntos
-/// - Otro → no hay cuerpo rescatado
-///
-/// El último token acumulado queda **truncado** —y por tanto se descarta de los
-/// destinatarios— si y solo si el carácter de parada tiene un carácter alfanumérico
-/// inmediatamente antes y también inmediatamente después: es puntuación interna a una
-/// palabra (p. ej. el `-` de «Programator-bis»), no un separador entre destinatarios y
-/// el resto de la línea.
-fn extraer_region_de_destinatarios(resto_tras_para: &str) -> (&str, Option<&str>) {
-    // Se guarda el carácter de parada junto con su posición: quien lo encontró ya lo tenía en la
-    // mano, así que no hace falta volver a extraerlo del texto (y no queda ningún camino que
-    // pudiera entrar en pánico si la posición no cayera en un límite de carácter).
-    let mut parada: Option<(usize, char)> = None;
-
-    for (byte_pos, c) in resto_tras_para.char_indices() {
-        if !(c.is_alphanumeric()
-            || c == ','
-            || c.is_whitespace()
-            || c == '*'
-            || c == '_'
-            || c == '`')
-        {
-            parada = Some((byte_pos, c));
-            break;
-        }
-    }
-
-    let Some((pos, caracter_parada)) = parada else {
-        // Llegó al final de la línea
-        return (resto_tras_para.trim(), None);
-    };
-
-    let destinatarios_crudo = resto_tras_para[..pos].trim();
-
-    let alfanumerico_antes = resto_tras_para[..pos]
-        .chars()
-        .next_back()
-        .is_some_and(char::is_alphanumeric);
-    let alfanumerico_despues = resto_tras_para[pos + caracter_parada.len_utf8()..]
-        .chars()
-        .next()
-        .is_some_and(char::is_alphanumeric);
-
-    let destinatarios = if alfanumerico_antes && alfanumerico_despues {
-        match destinatarios_crudo.rfind(|c: char| c == ',' || c.is_whitespace()) {
-            Some(ultimo_separador) => destinatarios_crudo[..ultimo_separador].trim(),
-            None => "",
-        }
-    } else {
-        destinatarios_crudo
-    };
-
-    if caracter_parada == ':' {
-        let cuerpo = resto_tras_para[pos + 1..].trim();
-        return (
-            destinatarios,
-            if cuerpo.is_empty() {
-                None
-            } else {
-                Some(cuerpo)
-            },
-        );
-    }
-
-    (destinatarios, None)
-}
-
-/// Extrae el texto que va tras los dos puntos en un encabezado de la forma `## Para X: texto`
-fn extraer_texto_tras_dos_puntos_en_encabezado(encabezado: &str) -> Option<String> {
-    let sin_almohadillas = encabezado.trim_start_matches('#').trim();
-    let resto = sin_almohadillas.strip_prefix("para ")?;
-    let (_, cuerpo) = extraer_region_de_destinatarios(resto);
-    cuerpo.map(|s| s.to_string())
-}
-
-/// ¿Es `## Para X` (o `## Para X e Y`) con nuestro agente entre los destinatarios?
-fn es_encabezado_para(encabezado_en_minusculas: &str, objetivo: &str) -> bool {
-    let sin_almohadillas = encabezado_en_minusculas.trim_start_matches('#').trim();
-    let Some(resto) = sin_almohadillas.strip_prefix("para ") else {
-        return false;
-    };
-    let (destinatarios, _) = extraer_region_de_destinatarios(resto);
-    destinatarios
-        .split(|c: char| c == ',' || c.is_whitespace())
-        .any(|palabra| palabra.trim_matches(|c: char| !c.is_alphanumeric()) == objetivo)
 }
 
 #[cfg(test)]
@@ -395,10 +239,12 @@ mod pruebas {
     }
 
     #[test]
-    fn no_confunde_mayusculas() {
+    fn para_en_minuscula_no_es_encargo_como_en_gestor_agentes() {
+        // «## para programator» no cuenta: Gestor Agentes exige «Para» con mayúscula, y los dos
+        // tienen que leer igual quién es destinatario.
         let texto = "## para programator\n\nen minúsculas.\n";
 
-        assert_eq!(detectar("Programator", "codex.md", texto).len(), 1);
+        assert!(detectar("Programator", "codex.md", texto).is_empty());
     }
 
     #[test]
@@ -560,7 +406,9 @@ mod pruebas {
     fn una_linea_para_programator_es_un_encargo_hasta_la_siguiente_linea_para() {
         let encargos = detectar("Programator", "claude.md", BUZON_DE_GESTOR);
 
-        assert_eq!(encargos.len(), 1, "{encargos:?}");
+        // El segundo es «Para Programator no hay nada más hoy», a mitad de frase: con las reglas de
+        // Gestor Agentes también es un encargo (acuerdo del 22/11/2026).
+        assert_eq!(encargos.len(), 2, "{encargos:?}");
         assert_eq!(
             encargos[0].texto,
             "Para Programator: revisa src/main.rs.\nBusca números sueltos.\n\nY dime cuántos hay."
@@ -569,15 +417,23 @@ mod pruebas {
     }
 
     #[test]
-    fn la_mencion_en_medio_de_una_frase_no_es_un_encargo() {
-        let encargos = detectar(
+    fn nombrarlo_sin_para_no_es_encargo_y_para_a_mitad_de_frase_si() {
+        // «Para Programator» a mitad de frase cuenta: Gestor Agentes lo lee como encargo, y los dos
+        // tienen que leer igual quién es destinatario.
+        let sin_para = detectar(
             "Programator",
             "claude.md",
-            "LATIDO: 2026-11-13 13:41:33\n\nHablé con el Director. Para Programator no hay nada.\n\
-             Se lo diré luego a Programator.\n",
+            "LATIDO: 2026-11-13 13:41:33\n\nSe lo diré luego a Programator.\n",
         );
+        assert!(sin_para.is_empty(), "{sin_para:?}");
 
-        assert!(encargos.is_empty(), "{encargos:?}");
+        let a_mitad = detectar(
+            "Programator",
+            "claude.md",
+            "LATIDO: 2026-11-13 13:41:33\n\nHablé con el Director. Para Programator: x.\n",
+        );
+        assert_eq!(a_mitad.len(), 1, "{a_mitad:?}");
+        assert_eq!(a_mitad[0].cuerpo("Programator"), "x.");
     }
 
     #[test]
@@ -627,9 +483,11 @@ mod pruebas {
             "Para Programator 1: haz esto.",
             "Para Claude 1 y Programator: haz esto.",
             "Para Programator, Gemini 1: haz esto.",
-            "para programator: haz esto.",
             "**Para Programator:** haz esto.",
             "Para Programator haz esto.",
+            // Con las reglas de Gestor Agentes (22/11/2026), también citado o en una lista.
+            "> Para Programator: haz esto.",
+            "- Para Programator: haz esto.",
         ] {
             let encargos = detectar("Programator", "claude.md", linea);
             assert_eq!(encargos.len(), 1, "debía ser un encargo: {linea}");
@@ -637,15 +495,14 @@ mod pruebas {
     }
 
     #[test]
-    fn no_vale_otra_instancia_ni_la_copia_ni_la_cita_ni_otro_nombre() {
+    fn no_vale_otra_instancia_ni_la_copia_ni_minuscula_ni_otro_nombre() {
         for linea in [
             "Para Programator 2: haz esto.",
             "Para Gemini 1, con copia a Programator. Haz esto.",
-            "> Para Programator: haz esto.",
+            "para programator: haz esto.",
             "Para Programatorcito: haz esto.",
             "Para Programator-bis: haz esto.",
             "Parapente con Programator.",
-            "- Para Programator: haz esto.",
         ] {
             let encargos = detectar("Programator", "claude.md", linea);
             assert!(encargos.is_empty(), "no debía ser un encargo: {linea}");
@@ -673,10 +530,53 @@ mod pruebas {
     }
 
     #[test]
+    fn dos_vinetas_seguidas_son_dos_encargos_y_la_de_otro_cierra_la_primera() {
+        let dos = detectar(
+            "Programator",
+            "claude2.md",
+            "- **Para Programator (15:00): uno.**\n- **Para Programator (15:01): dos.**\n",
+        );
+        assert_eq!(dos.len(), 2, "{dos:?}");
+
+        let con_otro = detectar(
+            "Programator",
+            "claude2.md",
+            "- **Para Programator (15:00): uno.**\n- **Para Gemini 1 (15:01): dos.**\n",
+        );
+        assert_eq!(con_otro.len(), 1, "{con_otro:?}");
+        assert!(!con_otro[0].texto.contains("Gemini"), "{con_otro:?}");
+    }
+
+    #[test]
+    fn una_linea_que_empieza_por_para_en_minuscula_o_para_ello_no_corta_el_encargo() {
+        let encargos = detectar(
+            "Programator",
+            "claude.md",
+            "Para Programator: revisa src/main.rs.\npara comprobar si falta algo, mira las pruebas.\n\
+             Para ello, lee primero el README.\n",
+        );
+
+        assert_eq!(encargos.len(), 1, "{encargos:?}");
+        assert!(encargos[0].texto.contains("mira las pruebas"));
+        assert!(encargos[0].texto.contains("lee primero el README"));
+    }
+
+    #[test]
+    fn el_cuerpo_sale_del_para_que_nombra_al_agente() {
+        let encargos = detectar(
+            "Programator",
+            "claude.md",
+            "Para Gemini 1: x. Para Programator: revisión: buscar\n",
+        );
+
+        assert_eq!(encargos[0].cuerpo("Programator"), "revisión: buscar");
+    }
+
+    #[test]
     fn el_cuerpo_de_un_encargo_en_linea_no_lleva_la_linea_para() {
         let cuerpo = |texto: &str| {
             let encargos = detectar("Programator", "claude.md", texto);
-            encargos[0].cuerpo().to_string()
+            encargos[0].cuerpo("Programator").to_string()
         };
 
         assert_eq!(

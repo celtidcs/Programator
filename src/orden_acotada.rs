@@ -6,7 +6,7 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 /// Lo que rodea al proceso lanzado: qué se hace con él nada más lanzarlo y cómo se corta al
@@ -40,6 +40,12 @@ impl Contencion for SoloElHijo {
 
 /// Cada cuánto se comprueba si la orden ya terminó, mientras se espera su tiempo máximo.
 const LATIDO_ESPERA: Duration = Duration::from_millis(50);
+
+/// Cuánto se espera a los hilos que leen la salida de un hijo ya cortado. Al morir el hijo, el
+/// sistema cierra sus tuberías al momento y los lectores terminan en milisegundos; dos segundos son
+/// margen de sobra. Si pasan, es que un proceso que lanzó el hijo sigue con la tubería abierta, y
+/// ese hilo se deja: terminará cuando ese proceso la cierre.
+const PLAZO_PARA_LOS_LECTORES: Duration = Duration::from_secs(2);
 
 /// Cómo acabó una orden.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,22 +180,17 @@ fn ejecutar(
     let lector_salida = hijo.stdout.take().map(leer_en_otro_hilo);
     let lector_errores = hijo.stderr.take().map(leer_en_otro_hilo);
 
-    // Espera con tope. `Child` no sabe esperar con límite por sí solo, y una orden colgada no
-    // puede colgar un arnés pensado para vivir días.
-    let limite = Instant::now() + tiempo_maximo;
-    let estado = loop {
-        match hijo.try_wait() {
-            Ok(Some(estado)) => break estado,
-            Ok(None) => {
-                if Instant::now() >= limite {
-                    contencion.cortar(&mut hijo);
-                    let _ = hijo.wait();
-                    return DesenlaceDeOrden::Agotada;
-                }
-                contencion.mientras_espera();
-                std::thread::sleep(LATIDO_ESPERA);
-            }
-            Err(e) => return DesenlaceDeOrden::NoSePudoEsperar(e.to_string()),
+    // Sin límite si el tope no cabe en un `Instant`: sumarlo entraría en pánico.
+    let limite = Instant::now().checked_add(tiempo_maximo);
+    let estado = match esperar(|| hijo.try_wait(), limite, contencion) {
+        FinDeLaEspera::Termino(estado) => estado,
+        FinDeLaEspera::SinTerminar(interrupcion) => {
+            return cerrar_sin_terminar(
+                interrupcion,
+                &mut hijo,
+                contencion,
+                [lector_salida, lector_errores],
+            );
         }
     };
     contencion.al_terminar();
@@ -208,6 +209,85 @@ fn ejecutar(
         estado: estado.to_string(),
         salida,
         errores,
+    }
+}
+
+/// Por qué se dejó de esperar a un hijo que no había terminado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Interrupcion {
+    /// Llegó el tiempo máximo.
+    Vencio,
+    /// El sistema no dejó preguntar por el hijo; el texto es su motivo.
+    Fallo(String),
+}
+
+/// Cómo acabó la espera.
+#[derive(Debug)]
+enum FinDeLaEspera {
+    Termino(ExitStatus),
+    SinTerminar(Interrupcion),
+}
+
+/// Espera con tope. `Child` no sabe esperar con límite por sí solo, y una orden colgada no puede
+/// colgar un arnés pensado para vivir días. `consultar` es `try_wait` del hijo; `limite`, `None`
+/// para no tener límite.
+fn esperar(
+    mut consultar: impl FnMut() -> std::io::Result<Option<ExitStatus>>,
+    limite: Option<Instant>,
+    contencion: &mut dyn Contencion,
+) -> FinDeLaEspera {
+    loop {
+        match consultar() {
+            Ok(Some(estado)) => return FinDeLaEspera::Termino(estado),
+            Ok(None) if limite.is_some_and(|limite| Instant::now() >= limite) => {
+                return FinDeLaEspera::SinTerminar(Interrupcion::Vencio);
+            }
+            Ok(None) => {
+                contencion.mientras_espera();
+                std::thread::sleep(LATIDO_ESPERA);
+            }
+            Err(e) => return FinDeLaEspera::SinTerminar(Interrupcion::Fallo(e.to_string())),
+        }
+    }
+}
+
+/// Lo que se hace con un hijo al que se dejó de esperar sin que terminara, venciera el plazo o
+/// fallara la espera: se corta por la contención, se recoge y se recogen sus lectores. Así,
+/// aunque falle la espera, no queda el hijo vivo ni los lectores sueltos.
+fn cerrar_sin_terminar(
+    interrupcion: Interrupcion,
+    hijo: &mut Child,
+    contencion: &mut dyn Contencion,
+    lectores: [Option<Lector>; 2],
+) -> DesenlaceDeOrden {
+    contencion.cortar(hijo);
+    let _ = hijo.wait();
+    // Lo que no se recoja en el plazo es de un nieto que sigue con la tubería abierta: ese hilo
+    // termina solo cuando el nieto la cierre, y esperarlo colgaría a quien llamó.
+    let _ = recoger_con_plazo(lectores, PLAZO_PARA_LOS_LECTORES);
+    match interrupcion {
+        Interrupcion::Vencio => DesenlaceDeOrden::Agotada,
+        Interrupcion::Fallo(motivo) => DesenlaceDeOrden::NoSePudoEsperar(motivo),
+    }
+}
+
+/// Espera a que terminen los lectores, como mucho `plazo` entre todos, y recoge los que hayan
+/// terminado. Devuelve cuántos quedaron sin recoger.
+fn recoger_con_plazo(lectores: [Option<Lector>; 2], plazo: Duration) -> usize {
+    let limite = Instant::now().checked_add(plazo);
+    let mut pendientes: Vec<Lector> = lectores.into_iter().flatten().collect();
+    loop {
+        let (terminados, siguen): (Vec<Lector>, Vec<Lector>) = pendientes
+            .into_iter()
+            .partition(|lector| lector.is_finished());
+        for lector in terminados {
+            let _ = lector.join();
+        }
+        pendientes = siguen;
+        if pendientes.is_empty() || limite.is_some_and(|limite| Instant::now() >= limite) {
+            return pendientes.len();
+        }
+        std::thread::sleep(LATIDO_ESPERA);
     }
 }
 
@@ -257,6 +337,19 @@ mod pruebas {
 
     fn ejecutar(orden: &[String], directorio: &Path, tope: Duration) -> DesenlaceDeOrden {
         ejecutar_con_tope(&orden[0], &orden[1..], directorio, tope)
+    }
+
+    /// Un tope enorme no hace entrar en pánico la suma con `Instant::now()`.
+    #[test]
+    fn con_un_tope_enorme_la_orden_termina_sin_panico() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let desenlace = ejecutar(&eco_y_codigo("hola", 0), dir.path(), Duration::MAX);
+
+        assert!(
+            matches!(desenlace, DesenlaceDeOrden::Terminada { exito: true, .. }),
+            "{desenlace:?}"
+        );
     }
 
     #[test]
@@ -407,6 +500,103 @@ mod pruebas {
         assert_eq!((contencion.cortes, contencion.terminadas), (1, 0));
         // 300 ms de espera con latidos de 50 dan varios; basta con que se avise mientras espera.
         assert!(contencion.latidos > 0);
+    }
+
+    /// Si no se puede esperar al hijo, no se devuelve el error dejándolo vivo: se corta y se
+    /// recoge.
+    #[test]
+    fn si_no_se_puede_esperar_al_hijo_se_corta_y_se_recoge() {
+        let dir = tempfile::tempdir().unwrap();
+        let orden = crate::plataforma::ordenes_de_prueba::tardar_mucho();
+        let mut hijo = Command::new(&orden[0])
+            .args(&orden[1..])
+            .current_dir(dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut contencion = ContencionDePrueba::default();
+        // Un lector que tarda un poco en terminar, como el de una tubería que se está cerrando:
+        // al volver, cerrar_sin_terminar tiene que haberlo esperado. Sin esta parte, soltar los
+        // lectores sin esperarlos pasaría la suite.
+        let leido = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marca = std::sync::Arc::clone(&leido);
+        let lector: Lector = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            marca.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Vec::new())
+        });
+
+        let desenlace = cerrar_sin_terminar(
+            Interrupcion::Fallo("sin respuesta".into()),
+            &mut hijo,
+            &mut contencion,
+            [Some(lector), None],
+        );
+        let lector_recogido = leido.load(std::sync::atomic::Ordering::SeqCst);
+        let sigue_vivo = matches!(hijo.try_wait(), Ok(None));
+        if sigue_vivo {
+            let _ = hijo.kill();
+            let _ = hijo.wait();
+        }
+
+        assert_eq!(
+            desenlace,
+            DesenlaceDeOrden::NoSePudoEsperar("sin respuesta".into())
+        );
+        assert_eq!(contencion.cortes, 1);
+        assert!(!sigue_vivo, "el hijo quedó vivo");
+        assert!(lector_recogido, "volvió sin esperar al lector");
+    }
+
+    #[test]
+    fn la_espera_que_falla_lo_dice_con_su_motivo() {
+        let mut contencion = ContencionDePrueba::default();
+
+        let fin = esperar(
+            || Err(std::io::Error::other("sin respuesta")),
+            None,
+            &mut contencion,
+        );
+
+        assert!(
+            matches!(&fin, FinDeLaEspera::SinTerminar(Interrupcion::Fallo(m)) if m == "sin respuesta"),
+            "{fin:?}"
+        );
+    }
+
+    /// Un lector que termina se recoge; uno que sigue bloqueado (un nieto que sostiene la tubería)
+    /// se deja al pasar el plazo, sin colgar a quien espera.
+    #[test]
+    fn los_lectores_se_recogen_con_plazo_y_sin_colgarse() {
+        let terminado: Lector = std::thread::spawn(|| Ok(Vec::new()));
+        let (suelta, espera) = std::sync::mpsc::channel::<()>();
+        let bloqueado: Lector = std::thread::spawn(move || {
+            let _ = espera.recv();
+            Ok(Vec::new())
+        });
+        let plazo = Duration::from_millis(300);
+        let inicio = Instant::now();
+
+        let abandonados = recoger_con_plazo([Some(terminado), Some(bloqueado)], plazo);
+        let tardo = inicio.elapsed();
+        drop(suelta);
+
+        assert_eq!(abandonados, 1);
+        assert!(tardo >= plazo, "no esperó el plazo: {tardo:?}");
+        assert!(tardo < Duration::from_secs(5), "se colgó: {tardo:?}");
+    }
+
+    #[test]
+    fn sin_lectores_pendientes_no_se_espera_el_plazo() {
+        let terminado: Lector = std::thread::spawn(|| Ok(Vec::new()));
+        let inicio = Instant::now();
+
+        let abandonados = recoger_con_plazo([Some(terminado), None], Duration::from_secs(30));
+
+        assert_eq!(abandonados, 0);
+        assert!(inicio.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

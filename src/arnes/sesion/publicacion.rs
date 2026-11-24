@@ -7,6 +7,34 @@
 
 use crate::protocolo::ResumenLeido;
 
+/// El verbo con el que el modelo deja un fichero. Un encargo que no lo nombra no pide ningún
+/// fichero.
+const VERBO_DE_PROPUESTA: &str = crate::arnes::ficha::verbo::ESCRIBIR_PROPUESTA;
+
+/// Si el encargo pide dejar un fichero: nombra el verbo de las propuestas.
+pub(super) fn entrega_pedida(texto_del_encargo: &str) -> EntregaPedida {
+    if texto_del_encargo.contains(VERBO_DE_PROPUESTA) {
+        EntregaPedida::Fichero
+    } else {
+        EntregaPedida::Libre
+    }
+}
+
+/// Qué entrega pide un encargo. Es un tipo propio y no un `bool`, para que cada caso tenga nombre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EntregaPedida {
+    /// Nombra `escribir_propuesta`: una respuesta en texto no basta.
+    Fichero,
+    /// No pide nada concreto: si el modelo responde en texto, esa es la entrega.
+    Libre,
+}
+
+/// Si un encargo que terminó sin herramientas de entrega merece el aviso: cuando pedía un fichero
+/// o cuando el modelo no dijo nada. Si no pedía fichero y respondió en texto, esa es su entrega.
+pub(super) fn avisa_sin_entrega(pedida: EntregaPedida, texto: &str) -> bool {
+    pedida == EntregaPedida::Fichero || texto.trim().is_empty()
+}
+
 /// El aviso en la terminal de un encargo que terminó sin invocar ninguna herramienta de entrega.
 pub(super) fn aviso_sin_entrega_en_la_terminal(de: &str) -> String {
     format!(
@@ -16,11 +44,18 @@ pub(super) fn aviso_sin_entrega_en_la_terminal(de: &str) -> String {
 
 /// Obtiene el texto base del cuerpo según el desenlace del encargo.
 ///
-/// Si el desenlace es `SinEntrega`, antepone un aviso visible y explícito
-/// advirtiendo de que no se invocó ninguna herramienta de entrega (`publicar` o `escribir_propuesta`).
-pub(super) fn cuerpo_base_desenlace(desenlace: &crate::arnes::ciclo::Desenlace) -> String {
+/// Si el desenlace es `SinEntrega` y el aviso toca ([`avisa_sin_entrega`]), antepone un aviso
+/// visible de que no se invocó ninguna herramienta de entrega (`publicar` o `escribir_propuesta`).
+/// Si no toca, el texto del modelo es la entrega.
+pub(super) fn cuerpo_base_desenlace(
+    desenlace: &crate::arnes::ciclo::Desenlace,
+    pedida: EntregaPedida,
+) -> String {
     match desenlace {
         crate::arnes::ciclo::Desenlace::Publicado(cuerpo) => cuerpo.clone(),
+        crate::arnes::ciclo::Desenlace::SinEntrega(texto) if !avisa_sin_entrega(pedida, texto) => {
+            texto.clone()
+        }
         crate::arnes::ciclo::Desenlace::SinEntrega(texto) => {
             let aviso = "⚠️ Programator no invocó herramientas de entrega («publicar» o «escribir_propuesta»).";
             if texto.trim().is_empty() {
@@ -56,11 +91,7 @@ pub(super) fn aviso_cortado(propuestas: &[String]) -> String {
     let entregado = if propuestas.is_empty() {
         "No llegó a entregar nada en este encargo.".to_string()
     } else {
-        let lista = propuestas
-            .iter()
-            .map(|p| format!("«{p}»"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let lista = crate::arnes::ciclo::lista_entre_comillas(propuestas);
         format!("Lo que sí quedó en disco: {lista}.")
     };
     format!(
@@ -72,11 +103,7 @@ pub(super) fn aviso_cortado(propuestas: &[String]) -> String {
 /// El aviso de un encargo que escribió propuestas y cerró sin llamar a `publicar`. Nombra lo que
 /// sí quedó en disco: el arnés no niega una entrega que hizo.
 pub(super) fn aviso_sin_publicar(propuestas: &[String]) -> String {
-    let lista = propuestas
-        .iter()
-        .map(|p| format!("«{p}»"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let lista = crate::arnes::ciclo::lista_entre_comillas(propuestas);
     let (sujeto, verbo) = if propuestas.len() == 1 {
         ("la propuesta", "quedó")
     } else {
@@ -156,8 +183,8 @@ pub(super) fn mensaje_fallo_publicar_desenlace(
     format!(
         "⚠️ No se pudo publicar el desenlace del encargo de «{solicitante}» en el canal: {fallo}.\n\
          Consecuencia: las propuestas generadas SÍ quedan a salvo en disco en la carpeta de candidatos, \
-         pero «{solicitante}» no recibirá la notificación en su buzón. El registro no avanzará y el \
-         encargo volverá a atenderse en el próximo ciclo.\n\
+         pero «{solicitante}» no recibirá la notificación en su buzón. El encargo queda en la cola \
+         de pendientes y volverá a atenderse en el próximo ciclo.\n\
          Qué hacer: comprueba que el archivo del canal y el buzón no estén bloqueados por otro proceso \
          o protegidos contra escritura."
     )
@@ -222,6 +249,142 @@ pub(super) fn mensaje_fallo_liberar_reserva(linea: &str, fallo: &crate::error::E
     )
 }
 
+/// El aviso en la entrega cuando el encargo pedía una clase y el motor que responde no es de
+/// Programator: no se ha podido cambiar de modelo.
+pub(super) fn aviso_servidor_ajeno() -> String {
+    "⚠️ El llama-server que responde en el puerto no lo arrancó Programator, así que no se ha \
+     podido cargar el modelo de la clase pedida: este encargo se ha atendido con el modelo que \
+     tenía ese servidor."
+        .to_string()
+}
+
+/// Por qué queda pendiente un encargo cuyo modelo no terminó de cargar a tiempo.
+pub(super) fn motivo_carga_agotada(modelo: Option<&str>) -> String {
+    match modelo {
+        Some(modelo) => format!("el modelo «{modelo}» no terminó de cargar a tiempo"),
+        None => "el motor no terminó de cargar a tiempo".to_string(),
+    }
+}
+
+/// Por qué queda pendiente un encargo cuyo motor no se pudo preparar.
+pub(super) fn motivo_motor_sin_preparar(fallo: &crate::error::Error) -> String {
+    format!("no se pudo preparar el motor: {fallo}")
+}
+
+/// Por qué queda pendiente un encargo cuya respuesta no se pudo publicar.
+pub(super) fn motivo_sin_publicar(fallo: &crate::error::Error) -> String {
+    format!("no se pudo publicar la respuesta: {fallo}")
+}
+
+/// La línea de la terminal cuando un encargo pasa a la cola de pendientes.
+pub(super) fn mensaje_encargo_queda_pendiente(de: &str, motivo: &str) -> String {
+    format!(
+        "⏳ El encargo de «{de}» queda en la cola de pendientes ({motivo}). Se volverá a atender \
+         en la próxima vuelta, antes que los nuevos."
+    )
+}
+
+/// El aviso que se publica en el canal, una sola vez, cuando un encargo lleva varios intentos
+/// fallidos y sigue en la cola.
+pub(super) fn aviso_encargo_cerrado(intentos: u32, motivo: &str) -> String {
+    format!(
+        "⚠️ No he podido atender este encargo tras {intentos} intentos. El último falló porque \
+         {motivo}. Queda cerrado y fuera de la cola de pendientes: revisa la causa y vuelve a \
+         pedirlo."
+    )
+}
+
+/// La línea de la terminal cuando un encargo se cierra tras agotar sus intentos.
+pub(super) fn mensaje_encargo_cerrado(de: &str, motivo: &str) -> String {
+    format!(
+        "⛔ El encargo de «{de}» queda cerrado tras agotar sus intentos ({motivo}). Se le ha \
+         respondido con el motivo."
+    )
+}
+
+/// La respuesta a un encargo para el que no hay modelo con el que trabajar.
+pub(super) fn aviso_sin_modelo(motivo: &str) -> String {
+    format!(
+        "⚠️ No he atendido este encargo: {motivo}. Programator no descarga nada por su cuenta. \
+         La revisión de modelos busca los que caben en esta tarjeta, los descarga y los prueba en \
+         el banco; se hace en la carpeta donde está instalado Programator, con Programator y tu \
+         agente abiertos allí, con un encargo «{}». Este encargo queda cerrado: cuando haya un \
+         modelo, vuelve a pedirlo.",
+        crate::arranque::disponibles::PEDIDO_DE_BUSQUEDA
+    )
+}
+
+/// La línea de la terminal cuando un encargo se cierra porque no hay modelo con el que trabajar.
+pub(super) fn mensaje_encargo_sin_modelo(de: &str, motivo: &str) -> String {
+    format!(
+        "⛔ El encargo de «{de}» no se atiende: {motivo}. Se le ha respondido que pida «{}» en la \
+         carpeta donde está instalado Programator.",
+        crate::arranque::disponibles::PEDIDO_DE_BUSQUEDA
+    )
+}
+
+/// La línea de la terminal cuando el aviso de un pendiente no se pudo publicar.
+pub(super) fn mensaje_fallo_publicar_aviso_pendiente(fallo: &crate::error::Error) -> String {
+    format!("⚠️ No se pudo publicar en el canal el aviso de un encargo pendiente: {fallo}.")
+}
+
+/// La línea de la terminal cuando la cola de pendientes no se pudo guardar: el registro de
+/// lectura no avanza, para que los encargos nuevos se vuelvan a detectar.
+pub(super) fn mensaje_cola_sin_guardar(fallo: &crate::error::Error) -> String {
+    format!(
+        "⚠️ No se pudo guardar la cola de encargos pendientes: {fallo}.\n\
+         Consecuencia: el registro de lectura no avanza, así que los encargos de esta vuelta se \
+         volverán a detectar; alguno puede recibir dos respuestas.\n\
+         Qué hacer: comprueba los permisos de la carpeta del agente en `.gestor/`."
+    )
+}
+
+/// La respuesta con el aviso, al final, de que su buzón no dice quién lo escribe.
+pub(super) fn con_aviso_sin_identidad(cuerpo: &str, buzon: &str) -> String {
+    format!(
+        "{cuerpo}\n\n{}",
+        crate::protocolo::respuesta::aviso_sin_identidad(buzon)
+    )
+}
+
+/// [`aviso_sin_publicar`] en la terminal, con quién hizo el encargo.
+pub(super) fn aviso_sin_publicar_en_la_terminal(propuestas: &[String], de: &str) -> String {
+    format!("{} (encargo de «{de}»)", aviso_sin_publicar(propuestas))
+}
+
+/// [`aviso_cortado`] en la terminal, con quién hizo el encargo.
+pub(super) fn aviso_cortado_en_la_terminal(propuestas: &[String], de: &str) -> String {
+    format!("{} (encargo de «{de}»)", aviso_cortado(propuestas))
+}
+
+/// Lo que se dice en la terminal cuando un encargo llega de un buzón que no dice quién lo escribe.
+pub(super) fn mensaje_sin_identidad(buzon: &str) -> String {
+    format!(
+        "⚠️ El buzón «{buzon}» no empieza por «{}<identidad>»: la respuesta se publica, pero no \
+         avisará a quien encargó.",
+        crate::protocolo::respuesta::CABECERA_DE_BANDEJA
+    )
+}
+
+/// El aviso, al pie de la respuesta, de que se dejó una propuesta de poda para `agente`, con las
+/// rutas donde se escribió.
+pub(super) fn propuesta_de_poda_publicada(agente: &str, podado: &str, archivo: &str) -> String {
+    format!(
+        "\n\n---\n\n**Propuesta de poda para {agente}:** He dejado una versión limpia de tu buzón en \
+         `{podado}` y la tarea cerrada en `{archivo}`. Puedes revisarla y aplicarla a tu buzón cuando \
+         gustes."
+    )
+}
+
+/// `ruta` relativa a `carpeta`, con barras normales, para citarla en el canal; tal cual si no
+/// cuelga de ella.
+pub(super) fn relativa_a(carpeta: &std::path::Path, ruta: &std::path::Path) -> String {
+    ruta.strip_prefix(carpeta)
+        .unwrap_or(ruta)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -283,11 +446,11 @@ mod pruebas {
 
     #[test]
     fn mensaje_fallo_publicar_desenlace_explica_fallo_consecuencia_y_accion() {
-        let err = crate::error::Error::Escritura {
+        let fallo = crate::error::Error::Escritura {
             ruta: std::path::PathBuf::from(".gestor/canal/programator.md"),
             causa: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "bloqueado"),
         };
-        let texto = mensaje_fallo_publicar_desenlace("claude.md", &err);
+        let texto = mensaje_fallo_publicar_desenlace("claude.md", &fallo);
         assert!(texto.starts_with("⚠️ No se pudo publicar el desenlace"));
         assert!(texto.contains("«claude.md»"));
         assert!(texto.contains("Consecuencia:"));
@@ -296,20 +459,52 @@ mod pruebas {
     }
 
     #[test]
+    fn sin_pedir_fichero_la_respuesta_en_texto_es_la_entrega() {
+        let desenlace = crate::arnes::ciclo::Desenlace::SinEntrega("Son 42 líneas.".to_string());
+        assert_eq!(
+            cuerpo_base_desenlace(&desenlace, EntregaPedida::Libre),
+            "Son 42 líneas."
+        );
+
+        let vacio = crate::arnes::ciclo::Desenlace::SinEntrega("  ".to_string());
+        assert!(
+            cuerpo_base_desenlace(&vacio, EntregaPedida::Libre).contains("no invocó herramientas")
+        );
+    }
+
+    #[test]
+    fn el_encargo_pide_fichero_si_nombra_escribir_propuesta() {
+        assert_eq!(
+            entrega_pedida("Para Programator: usa escribir_propuesta para a.rs"),
+            EntregaPedida::Fichero
+        );
+        assert_eq!(
+            entrega_pedida("Para Programator: ¿cuántas líneas tiene a.rs?"),
+            EntregaPedida::Libre
+        );
+        assert!(avisa_sin_entrega(EntregaPedida::Fichero, "texto"));
+        assert!(avisa_sin_entrega(EntregaPedida::Libre, " "));
+        assert!(!avisa_sin_entrega(EntregaPedida::Libre, "texto"));
+    }
+
+    #[test]
     fn cuerpo_base_desenlace_publicado_devuelve_cuerpo_tal_cual() {
         let desenlace = crate::arnes::ciclo::Desenlace::Publicado("Solución lista.".to_string());
-        assert_eq!(cuerpo_base_desenlace(&desenlace), "Solución lista.");
+        assert_eq!(
+            cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero),
+            "Solución lista."
+        );
     }
 
     #[test]
     fn cuerpo_base_desenlace_sin_entrega_antepone_aviso_visible() {
         let desenlace = crate::arnes::ciclo::Desenlace::SinEntrega("Texto directo".to_string());
-        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        let cuerpo = cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero);
         assert!(cuerpo.starts_with("⚠️ Programator no invocó herramientas de entrega"));
         assert!(cuerpo.contains("Respuesta directa del modelo:\n\nTexto directo"));
 
         let desenlace_vacio = crate::arnes::ciclo::Desenlace::SinEntrega(String::new());
-        let cuerpo_vacio = cuerpo_base_desenlace(&desenlace_vacio);
+        let cuerpo_vacio = cuerpo_base_desenlace(&desenlace_vacio, EntregaPedida::Fichero);
         assert!(cuerpo_vacio.contains("sin producir texto ni invocar herramientas"));
     }
 
@@ -319,7 +514,7 @@ mod pruebas {
             texto: "Ya está.".to_string(),
             propuestas: vec!["cola.lua".to_string()],
         };
-        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        let cuerpo = cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero);
         assert!(cuerpo.contains("«cola.lua»"), "{cuerpo}");
         assert!(cuerpo.contains("sin llamar a «publicar»"), "{cuerpo}");
         assert!(!cuerpo.contains("no invocó herramientas"), "{cuerpo}");
@@ -332,7 +527,7 @@ mod pruebas {
             texto: String::new(),
             propuestas: Vec::new(),
         };
-        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        let cuerpo = cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero);
         assert!(cuerpo.contains("El motor cortó la respuesta"), "{cuerpo}");
         assert!(cuerpo.contains("se acabó el contexto"), "{cuerpo}");
         assert!(cuerpo.contains("No llegó a entregar nada"), "{cuerpo}");
@@ -345,7 +540,7 @@ mod pruebas {
             texto: "Ahora repaso".to_string(),
             propuestas: vec!["cola.lua".to_string()],
         };
-        let cuerpo = cuerpo_base_desenlace(&desenlace);
+        let cuerpo = cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero);
         assert!(
             cuerpo.contains("Lo que sí quedó en disco: «cola.lua»."),
             "{cuerpo}"
@@ -358,6 +553,13 @@ mod pruebas {
 
     #[test]
     fn el_aviso_sin_publicar_con_varias_propuestas_las_nombra_todas() {
+        let en_la_terminal = aviso_sin_publicar_en_la_terminal(&["a.rs".to_string()], "Claude");
+        assert!(
+            en_la_terminal.ends_with(" (encargo de «Claude»)"),
+            "{en_la_terminal}"
+        );
+        let cortado = aviso_cortado_en_la_terminal(&["a.rs".to_string()], "Claude");
+        assert!(cortado.ends_with(" (encargo de «Claude»)"), "{cortado}");
         let aviso = aviso_sin_publicar(&["a.rs".to_string(), "a-002.rs".to_string()]);
         assert!(
             aviso.contains("las propuestas «a.rs», «a-002.rs»"),
@@ -383,11 +585,11 @@ mod pruebas {
 
     #[test]
     fn mensaje_fallo_publicar_cierre_con_entrega_ya_registrada_explica_que_no_se_pierde_nada() {
-        let err = crate::error::Error::Escritura {
+        let fallo = crate::error::Error::Escritura {
             ruta: std::path::PathBuf::from(".gestor/canal/programator.md"),
             causa: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "bloqueado"),
         };
-        let texto = mensaje_fallo_publicar_cierre_con_entrega_ya_registrada("claude.md", &err);
+        let texto = mensaje_fallo_publicar_cierre_con_entrega_ya_registrada("claude.md", &fallo);
         assert!(texto.contains("«claude.md»"));
         assert!(texto.contains("no se pierde trabajo"));
         assert!(texto.contains("no se reatenderá"));
@@ -398,6 +600,17 @@ mod pruebas {
     fn cuerpo_base_desenlace_abortado_devuelve_motivo() {
         let desenlace =
             crate::arnes::ciclo::Desenlace::Abortado("🔴 Abortado por límite".to_string());
-        assert_eq!(cuerpo_base_desenlace(&desenlace), "🔴 Abortado por límite");
+        assert_eq!(
+            cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero),
+            "🔴 Abortado por límite"
+        );
+    }
+
+    #[test]
+    fn el_aviso_sin_identidad_de_la_terminal_nombra_el_buzon_y_la_cabecera() {
+        let mensaje = mensaje_sin_identidad("claude-1.md");
+
+        assert!(mensaje.contains("«claude-1.md»"), "{mensaje}");
+        assert!(mensaje.contains("«# Bandeja de <identidad>»"), "{mensaje}");
     }
 }

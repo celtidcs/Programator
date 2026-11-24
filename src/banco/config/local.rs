@@ -107,6 +107,13 @@ const VARIABLES_DE_LA_PLATAFORMA: [(&str, &str); 2] =
 #[cfg(windows)]
 const VARIABLES_DE_LA_PLATAFORMA: [(&str, &str); 0] = [];
 
+/// El proxy al que se manda la red del encargo: la trampa, en el bucle local. `{proxy}` es su
+/// puerto, que se elige al abrirla.
+const PROXY_TRAMPA: &str = "http://127.0.0.1:{proxy}";
+
+/// Lo que nunca pasa por el proxy: este mismo equipo, por nombre y por dirección.
+const LOCALES_SIN_PROXY: &str = "127.0.0.1,localhost,::1";
+
 /// Las variables que cortan las descargas: el código del modelo no tiene nada que bajar, y un
 /// intento de hacerlo es lo que el detector de red quiere ver.
 const VARIABLES_DE_RED_POR_DEFECTO: [(&str, &str); 11] = [
@@ -116,17 +123,17 @@ const VARIABLES_DE_RED_POR_DEFECTO: [(&str, &str); 11] = [
     ("npm_config_offline", "true"),
     // Y lo que respete el proxy va a la trampa, que anota el destino y corta. curl solo lee
     // `http_proxy` en minúsculas; en Windows da igual, porque las variables no distinguen.
-    ("HTTP_PROXY", "http://127.0.0.1:{proxy}"),
-    ("HTTPS_PROXY", "http://127.0.0.1:{proxy}"),
-    ("ALL_PROXY", "http://127.0.0.1:{proxy}"),
-    ("http_proxy", "http://127.0.0.1:{proxy}"),
-    ("https_proxy", "http://127.0.0.1:{proxy}"),
-    ("all_proxy", "http://127.0.0.1:{proxy}"),
+    ("HTTP_PROXY", PROXY_TRAMPA),
+    ("HTTPS_PROXY", PROXY_TRAMPA),
+    ("ALL_PROXY", PROXY_TRAMPA),
+    ("http_proxy", PROXY_TRAMPA),
+    ("https_proxy", PROXY_TRAMPA),
+    ("all_proxy", PROXY_TRAMPA),
     // Lo de este mismo equipo no va al proxy: las pruebas de un encargo con red levantan su
     // servidor en 127.0.0.1, y con el proxy puesto su cliente acababa en la trampa
     // (máquina Linux de pruebas, 12/11/2026, que tuvo que saltárselo a mano).
-    ("NO_PROXY", "127.0.0.1,localhost,::1"),
-    ("no_proxy", "127.0.0.1,localhost,::1"),
+    ("NO_PROXY", LOCALES_SIN_PROXY),
+    ("no_proxy", LOCALES_SIN_PROXY),
 ];
 
 /// Donde escriben esas herramientas cuando nadie las redirige, para mirar si quedó rastro.
@@ -164,6 +171,16 @@ pub enum Aislamiento {
 }
 
 impl Aislamiento {
+    /// Todas las maneras, para reconocer un nombre guardado.
+    const TODOS: [Self; 3] = [Self::IntegridadBaja, Self::EspacioDeNombres, Self::Ninguno];
+
+    /// La manera que se guardó con `nombre`, o `None` si es otra cosa.
+    pub fn desde_nombre(nombre: &str) -> Option<Self> {
+        Self::TODOS
+            .into_iter()
+            .find(|manera| manera.nombre() == nombre)
+    }
+
     /// Como se escribe en `banco.toml` y se guarda en la tanda.
     pub fn nombre(self) -> &'static str {
         match self {
@@ -538,6 +555,13 @@ fn temporales_del_sistema_por_defecto() -> Vec<String> {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn el_proxy_trampa_escucha_donde_se_abre_la_trampa() {
+        let local = std::net::Ipv4Addr::LOCALHOST.to_string();
+        assert!(PROXY_TRAMPA.starts_with(&format!("http://{local}:")));
+        assert!(LOCALES_SIN_PROXY.split(',').any(|d| d == local));
+    }
 
     fn leer(texto: &str) -> ComprobacionLocal {
         toml::from_str(texto).unwrap()

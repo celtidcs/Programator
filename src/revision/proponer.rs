@@ -1,5 +1,5 @@
 //! `--revision-proponer`: lee lo que hay en la carpeta de modelos, decide con `propuesta` y deja
-//! `propuesta.md` y `propuesta.toml` en la carpeta del mes (especificación, §6).
+//! `propuesta.md` y `propuesta.toml` en la carpeta del mes.
 
 use std::path::{Path, PathBuf};
 
@@ -9,11 +9,10 @@ use super::mensajes;
 use super::mes;
 use super::propuesta::{proponer, Entrada, Propuesta};
 use super::redaccion::{self, NOMBRE_DE_LAS_RETIRADAS, NOMBRE_DE_LA_PROPUESTA};
+use super::FORMATO_DEL_DIA;
 use crate::error::{Error, Resultado};
 use crate::ficheros;
 use crate::registro::modelo::Registro;
-
-const FORMATO_DEL_DIA: &str = "%Y-%m-%d";
 
 /// Lo que la orden necesita del mundo.
 pub struct Entorno<'a> {
@@ -46,7 +45,7 @@ pub fn proponer_y_escribir(entorno: &Entorno) -> Resultado<PropuestaHecha> {
     let tarjeta = entorno
         .tarjeta
         .as_deref()
-        .ok_or_else(|| Error::Revision(mensajes::SIN_TARJETA_PARA_PROPONER.to_string()))?;
+        .ok_or_else(|| Error::Revision(mensajes::sin_tarjeta_para_proponer()))?;
     let en_modelos = ficheros_con_tamano(&entorno.carpeta_de_modelos)?;
     let propuesta = proponer(&Entrada {
         registro: entorno.registro,
@@ -79,7 +78,7 @@ pub fn proponer_y_escribir(entorno: &Entorno) -> Resultado<PropuestaHecha> {
 }
 
 /// Los ficheros de la carpeta de modelos con su tamaño. Sin carpeta, ninguno.
-fn ficheros_con_tamano(carpeta: &Path) -> Resultado<Vec<(String, u64)>> {
+pub fn ficheros_con_tamano(carpeta: &Path) -> Resultado<Vec<(String, u64)>> {
     if !carpeta.is_dir() {
         return Ok(Vec::new());
     }
@@ -127,8 +126,11 @@ mod pruebas {
         let modelos = raiz.path().join("modelos");
         ficheros::crear_carpeta(&modelos).unwrap();
         ficheros::escribir(&modelos.join("nuevo.gguf"), "x").unwrap();
+        // El modelo del registro, con su fichero: sin él no contaría (defecto (f)).
+        let medido = entrada_de_ejemplo();
+        ficheros::escribir(&modelos.join(format!("{}.gguf", medido.nombre)), "x").unwrap();
         let registro = Registro {
-            modelo: vec![entrada_de_ejemplo()],
+            modelo: vec![medido],
         };
         let hecha = proponer_y_escribir(&entorno(&registro, raiz.path(), 9)).unwrap();
         let mes = raiz.path().join("revisiones").join("2026-11");

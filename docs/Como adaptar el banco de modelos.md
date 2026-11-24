@@ -443,3 +443,14 @@ Cada tanda deja una carpeta en resultados/ con cinco cosas. El fichero informe.m
 ¿Se puede comprobar la configuración sin cargar el modelo?
 
 No hay una orden que solo compruebe. Pero --banco lee banco.toml y todas las fichas antes de cargar el modelo, y se para en el primer problema diciendo cuál: una clave mal escrita, una ficha a la que le falta algo, un lenguaje sin orden. Un error de configuración sale en segundos.
+
+
+Apartado 11. Pedirle encargos nuevos al agente de pago
+
+No hace falta escribir los encargos a mano. El agente de pago que dirige a Programator (Claude, Codex, Gemini u otro) puede escribirlos por ti siguiendo el mismo formato que los del banco, y es la forma más cómoda de medir un modelo en un área que el banco no cubre: otro lenguaje, otra clase de trabajo o los problemas típicos de tu proyecto.
+
+Basta con abrirlo en la carpeta donde está instalado Programator y pedírselo en lenguaje normal. Por ejemplo: «Lee docs/Como adaptar el banco de modelos.md (junto al ejecutable, Como adaptar el banco de modelos.md) y los encargos que ya hay en evaluacion/banco/encargos/. Escribe tres encargos nuevos de PHP que midan si un modelo sabe validar formularios, con el mismo formato que los existentes: su ficha.toml, su enunciado.md, su rúbrica, sus pruebas ocultas y una solución de referencia. Si hace falta, declara el lenguaje en banco.toml. Después comprueba cada encargo con su referencia, como dice el apartado 9, y dime qué has creado.»
+
+Conviene pedirle tres cosas. La primera, que tome como modelo un encargo de la misma familia que el que quieres, de oficio, de criterio o de auditoría, porque cada familia lleva ficheros distintos. La segunda, que escriba también la solución de referencia y compruebe con ella las pruebas ocultas: un encargo con pruebas que ni la solución buena pasa mide mal a todos los modelos. La tercera, que te diga qué lenguajes necesitan los encargos nuevos, para que sepas si tienes que instalar algo en el equipo.
+
+Revisa lo que te entregue antes de fiarte de las notas. Lo que el agente escribe son ficheros de texto en la carpeta del banco, los mismos que escribirías tú, así que puedes leerlos, cambiarlos o borrarlos. El modelo local nunca ve las pruebas ocultas ni la referencia, solo el enunciado, de modo que da igual quién las haya escrito. Con los encargos nuevos en encargos/, la siguiente tanda los pasa junto con los demás.

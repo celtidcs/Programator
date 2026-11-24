@@ -1,31 +1,51 @@
-//! Todo lo que la revisión de modelos dice por pantalla o deja escrito para el Director.
+//! Todo lo que la revisión de modelos dice por pantalla o deja escrito para el usuario.
 
 use std::path::Path;
 
-use super::buscar::BusquedaHecha;
+use super::ausentes::Util;
+use super::buscar::{BusquedaHecha, CARPETA_DE_RESPUESTAS, NOMBRE_DEL_INFORME};
 use super::candidatos::MotivoDeDescarte;
-use super::descarga::{Aviso, Descargado};
+use super::descarga::{Aviso, Descargado, SUFIJO_PARCIAL};
+use super::donde::Donde;
 use super::encargo::CandidatoPedido;
+use super::lista::NOMBRE_DE_LA_LISTA;
+use super::probados::NOMBRE_DE_LO_PROBADO;
 use super::proponer::PropuestaHecha;
 use super::propuesta::{Categoria, Excluida, ParaRetirar};
+use super::redaccion::NOMBRE_DE_LAS_RETIRADAS;
+use super::reponer::{AvisoDeReposicion, MotivoSinReponer, Reposicion};
 use super::retirada::Retirada;
 use super::DECIMALES_DE_LA_NOTA;
+use crate::argumentos::{
+    OPCION_BANCO, OPCION_DIAGNOSTICO, OPCION_MODELO, OPCION_RETIRAR_MODELO, OPCION_REVISION_BUSCAR,
+};
+use crate::arranque::disponibles::PEDIDO_DE_BUSQUEDA;
 use crate::banco::resultados::{decimal, nombre_de_familia};
-use crate::config::Config;
+use crate::concordancia::{cantidad, juntar_con_y, segun};
+use crate::config::{Config, NOMBRE_DEL_FICHERO_DE_CONFIGURACION};
 use crate::error::Error;
 use crate::informe::en_gib;
+use crate::motor::fichero_de_modelo::con_extension;
+use crate::plataforma::NOMBRE_DEL_EJECUTABLE;
 use crate::registro::modelo::CodigoPuntuadoCon;
 
-/// Sin la VRAM no se puede descartar nada con criterio (especificación, §3.2, punto 1).
-pub const SIN_TARJETA: &str = "no se encontró la tarjeta gráfica, y sin saber su memoria no se \
-                               puede decir qué modelos caben. Comprueba que el controlador está \
-                               instalado con «programator --diagnostico»";
+/// Sin la VRAM no se puede descartar nada con criterio.
+pub fn sin_tarjeta() -> String {
+    format!(
+        "no se encontró la tarjeta gráfica, y sin saber su memoria no se puede decir qué modelos \
+         caben. Comprueba que el controlador está instalado con «{NOMBRE_DEL_EJECUTABLE} \
+         {OPCION_DIAGNOSTICO}»"
+    )
+}
 
 /// Las cifras del registro son de una tarjeta: sin saber cuál es esta, no se sabe cuáles valen.
-pub const SIN_TARJETA_PARA_PROPONER: &str = "no se encontró la tarjeta gráfica, y las cifras del \
-                                             registro valen solo para la tarjeta en que se \
-                                             midieron. Comprueba que el controlador está \
-                                             instalado con «programator --diagnostico»";
+pub fn sin_tarjeta_para_proponer() -> String {
+    format!(
+        "no se encontró la tarjeta gráfica, y las cifras del registro valen solo para la tarjeta \
+         en que se midieron. Comprueba que el controlador está instalado con \
+         «{NOMBRE_DEL_EJECUTABLE} {OPCION_DIAGNOSTICO}»"
+    )
+}
 
 /// Lo que dejó `--revision-proponer`, y lo que toca después.
 pub fn propuesta_hecha(hecha: &PropuestaHecha) -> String {
@@ -34,7 +54,8 @@ pub fn propuesta_hecha(hecha: &PropuestaHecha) -> String {
     });
     format!(
         "✅ Propuesta hecha: se quedan {}, se propone retirar {} y hay {} sin medir.\n\
-         Está en «{}». La propuesta no retira nada: lo retira «--retirar-modelo» o, en la revisión \
+         Está en «{}». La propuesta no retira nada: lo retira «{OPCION_RETIRAR_MODELO}» o, en la \
+         revisión \
          por el canal, «revisión: cerrar».{anterior}",
         hecha.se_quedan,
         hecha.para_retirar,
@@ -49,9 +70,10 @@ pub fn busqueda_hecha(hecha: &BusquedaHecha) -> String {
         format!("\nLa búsqueda anterior de este mes se ha guardado como «{nombre}».")
     });
     format!(
-        "✅ Búsqueda hecha: {} candidatos, {} ya descargados sin medir y {} descartados.\n\
-         Está todo en «{}»: «candidatos.md» para leerlo, «candidatos.toml» para descargar y \
-         «respuestas/» con lo que contestó Hugging Face.{anterior}",
+        "{}✅ Búsqueda hecha: {} candidatos, {} ya descargados sin medir y {} descartados.\n\
+         Está todo en «{}»: «{NOMBRE_DEL_INFORME}» para leerlo, «{NOMBRE_DE_LA_LISTA}» para \
+         descargar y «{CARPETA_DE_RESPUESTAS}/» con lo que contestó Hugging Face.{anterior}",
+        lo_que_faltaba(&hecha.reposicion),
         hecha.candidatos,
         hecha.ya_descargados,
         hecha.descartados,
@@ -59,11 +81,33 @@ pub fn busqueda_hecha(hecha: &BusquedaHecha) -> String {
     )
 }
 
-/// Por qué no se pudo hacer una orden de la revisión.
+/// Una frase con las cuentas de la reposición, para la terminal. Sin ausentes, nada.
+fn lo_que_faltaba(reposicion: &Reposicion) -> String {
+    if !reposicion.hubo_ausentes() {
+        return String::new();
+    }
+    format!(
+        "📦 De los modelos del registro que faltaban en «modelos»: {} repuestos, {} sin poder \
+         reponer, {} fuera del registro y {} sin decidir. «{NOMBRE_DEL_INFORME}» dice cuáles y \
+         por qué.\n",
+        reposicion.repuestos.len(),
+        reposicion.sin_reponer.len(),
+        reposicion.fuera_del_registro.len(),
+        reposicion.sin_decidir.len()
+    )
+}
+
+/// Por qué no se pudo hacer una orden de la revisión. No dice que no se tocó nada: la búsqueda
+/// repone y retira antes de buscar, el cierre retira y anota, y una descarga deja su `.parcial`,
+/// así que un fallo puede llegar con parte del trabajo hecho. Lo que es cierto siempre es que no
+/// se deshace.
 pub fn fallo(fallo: &Error) -> String {
     format!(
-        "🔴 {fallo}.\nNo se ha tocado ningún modelo ni el registro. Si es la red, vuelve a \
-         intentarlo; si es la configuración, revisa la sección [revision] de «programator.toml»."
+        "🔴 {fallo}.\nLo hecho antes del fallo no se deshace: los modelos que ya se habían bajado \
+         o repuesto siguen en la carpeta de modelos, lo anotado en el registro sigue anotado y \
+         una descarga a medias queda como «{SUFIJO_PARCIAL}» para reanudarla. Si es la red, vuelve \
+         a intentarlo; si es la configuración, revisa la sección [revision] de \
+         «{NOMBRE_DEL_FICHERO_DE_CONFIGURACION}»."
     )
 }
 
@@ -98,7 +142,8 @@ pub fn descarga_hecha(descargado: &Descargado) -> String {
     let ruta = descargado.ruta.display();
     format!(
         "✅ Descargado y comprobado: «{ruta}».\n\
-         Lo siguiente es pasarle el banco: «programator --banco banco --modelo \"{ruta}\"»."
+         Lo siguiente es pasarle el banco: «{NOMBRE_DEL_EJECUTABLE} {OPCION_BANCO} banco \
+         {OPCION_MODELO} \"{ruta}\"»."
     )
 }
 
@@ -114,7 +159,7 @@ pub fn ya_estaba(ruta: &Path) -> String {
 pub fn sin_revision(carpeta: &Path) -> String {
     format!(
         "no hay ninguna búsqueda guardada en «{}»: primero hay que buscar con \
-         «programator --revision-buscar»",
+         «{NOMBRE_DEL_EJECUTABLE} {OPCION_REVISION_BUSCAR}»",
         carpeta.display()
     )
 }
@@ -123,7 +168,7 @@ pub fn sin_revision(carpeta: &Path) -> String {
 pub fn no_esta_en_la_lista(repositorio: &str, fichero: &str, lista: &Path) -> String {
     format!(
         "«{fichero}» de «{repositorio}» no está entre los candidatos de «{}». Solo se descarga \
-         lo que encontró la búsqueda más reciente: mira los nombres exactos en «candidatos.md», \
+         lo que encontró la búsqueda más reciente: mira los nombres exactos en «{NOMBRE_DEL_INFORME}», \
          en la misma carpeta",
         lista.display()
     )
@@ -162,7 +207,7 @@ pub fn huella_distinta(esperada: &str, obtenida: &str) -> String {
     format!(
         "el fichero bajado no es el que encontró la búsqueda: su huella es {obtenida} y tenía que \
          ser {esperada}. Se ha borrado. Si vuelve a pasar, el repositorio ha cambiado: busca otra \
-         vez con «--revision-buscar»"
+         vez con «{OPCION_REVISION_BUSCAR}»"
     )
 }
 
@@ -177,8 +222,10 @@ pub fn sin_espacio(necesita: u64, libre: u64, carpeta: &Path) -> String {
     )
 }
 
-/// El motivo de una retirada que la propuesta más reciente no proponía.
-pub const RETIRADO_POR_ORDEN: &str = "retirado por orden del Director";
+/// El motivo de una retirada que la propuesta más reciente no proponía: la pidió quien usa
+/// Programator con `--retirar-modelo`. Se guarda en el registro; las retiradas de antes de la
+/// 1.1.0 conservan el texto que tenían.
+pub const RETIRADO_POR_ORDEN: &str = "retirado a mano: la propuesta no lo pedía";
 
 pub fn retirar_solo_un_nombre(fichero: &str) -> String {
     format!(
@@ -193,8 +240,8 @@ pub fn retirar_solo_gguf(fichero: &str) -> String {
 
 pub fn retirar_el_modelo_en_uso(fichero: &str) -> String {
     format!(
-        "«{fichero}» es el modelo de «programator.toml» y no se retira. Si el Director quiere \
-         retirarlo, primero hay que cambiar «[motor] modelo»"
+        "«{fichero}» es el modelo de «programator.toml» y no se retira. Para retirarlo, \
+         primero hay que cambiar «[motor] modelo»"
     )
 }
 
@@ -205,8 +252,9 @@ pub fn retirar_lo_que_no_esta(fichero: &str) -> String {
 /// El registro ya anota la retirada, pero el fichero no se dejó borrar.
 pub fn retirada_sin_borrar(ruta: &Path, anotadas: usize, causa: &std::io::Error) -> String {
     format!(
-        "la retirada ya consta en el registro ({anotadas} entradas), pero «{}» no se pudo borrar: \
-         {causa}. Bórralo a mano cuando no lo use nada",
+        "la retirada ya consta en el registro ({}), pero «{}» no se pudo borrar: {causa}. Bórralo \
+         a mano cuando no lo use nada",
+        cantidad(anotadas, "entrada", "entradas"),
         ruta.display()
     )
 }
@@ -223,10 +271,18 @@ pub fn retirada_hecha(retirada: &Retirada) -> String {
         "No tenía cifras en el registro, así que no había nada que anotar.".to_string()
     } else {
         format!(
-            "Anotado en el registro, en {} entradas, con sus cifras intactas: «{}».",
-            retirada.anotadas, retirada.motivo
+            "Anotado en el registro, en {}, con sus cifras intactas: «{}».",
+            cantidad(retirada.anotadas, "entrada", "entradas"),
+            retirada.motivo
         )
     };
+    if retirada.sin_fichero {
+        return format!(
+            "🗑️ Retirado «{}» del registro: su fichero ya no estaba en la carpeta de modelos, así \
+             que no se ha borrado nada.\n{registro}",
+            retirada.ruta.display()
+        );
+    }
     format!(
         "🗑️ Retirado «{}»: se han liberado {}.\n{registro}",
         retirada.ruta.display(),
@@ -320,6 +376,10 @@ pub fn motivo_de_descarte(motivo: &MotivoDeDescarte) -> String {
         MotivoDeDescarte::YaRegistrado => {
             "ya está en el registro: su huella es la de un modelo medido".into()
         }
+        MotivoDeDescarte::RegistradoSinFichero => "está en el registro pero falta su fichero en \
+                                                   «modelos»: mira el apartado de los modelos del \
+                                                   registro que faltaban"
+            .into(),
         MotivoDeDescarte::Partido { partes } => format!(
             "partido en {partes} ficheros: el motor y el lector GGUF trabajan hoy con uno solo"
         ),
@@ -335,14 +395,20 @@ const FORMAS_DEL_PEDIDO: &str =
                                  («<repositorio> <fichero>») o «revisión: cerrar»";
 
 /// Un `revisión: probar` sin líneas debajo.
-pub const PROBAR_SIN_CANDIDATOS: &str = "«revisión: probar» no trae ningún candidato: va uno por \
-                                         línea debajo, «<repositorio> <fichero>», con los nombres \
-                                         exactos de «candidatos.toml»";
+pub fn probar_sin_candidatos() -> String {
+    format!(
+        "«revisión: probar» no trae ningún candidato: va uno por línea debajo, «<repositorio> \
+         <fichero>», con los nombres exactos de «{NOMBRE_DE_LA_LISTA}»"
+    )
+}
 
 /// Nadie puede pedir una revisión en este equipo.
-pub const REVISION_DESHABILITADA: &str = "la revisión por encargo no está habilitada en este \
-                                          equipo: «[revision] buzones_que_ordenan» está vacía en \
-                                          «programator.toml»";
+pub fn revision_deshabilitada() -> String {
+    format!(
+        "la revisión por encargo no está habilitada en este equipo: «[revision] \
+         identidades_que_ordenan» está vacía en «{NOMBRE_DEL_FICHERO_DE_CONFIGURACION}»"
+    )
+}
 
 /// Lo que sigue a «revisión:» no es ninguno de los tres pedidos.
 pub fn pedido_desconocido(palabra: &str) -> String {
@@ -355,7 +421,7 @@ pub fn pedido_desconocido(palabra: &str) -> String {
 pub fn linea_de_candidato_mal_escrita(linea: &str) -> String {
     format!(
         "la línea «{linea}» no es un candidato: cada uno va como «<repositorio> <fichero>», \
-         separados por un espacio y con los nombres exactos de «candidatos.toml»"
+         separados por un espacio y con los nombres exactos de «{NOMBRE_DE_LA_LISTA}»"
     )
 }
 
@@ -394,22 +460,520 @@ pub fn motor_ajeno(puerto: u16) -> String {
     )
 }
 
-/// Un buzón que no está entre los que pueden pedir una revisión.
-pub fn buzon_sin_permiso(buzon: &str, permitidos: &[String]) -> String {
+/// Un pedido de revisión desde una carpeta que no es la de instalación.
+pub fn revision_fuera_de_la_instalacion(instalacion: &Path) -> String {
     format!(
-        "«{buzon}» no puede pedir una revisión: solo pueden {}, según «[revision] \
-         buzones_que_ordenan»",
-        permitidos
-            .iter()
-            .map(|p| format!("«{p}»"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        "la revisión de modelos se hace en la carpeta donde está instalado Programator, «{}», y \
+         esta no es: cierra Programator, ábrelo junto con el agente que la vaya a llevar en esa \
+         carpeta y pídela allí. Allí están los modelos, el banco y las revisiones que tendrás que \
+         leer",
+        instalacion.display()
     )
+}
+
+/// Qué hacer cuando no hay modelos o ninguno cabe, según dónde se esté y si alguien tiene permiso
+/// para pedir la revisión.
+pub fn que_hacer_sin_modelos(
+    donde: &Donde,
+    configuracion: &Path,
+    carpeta_de_modelos: &str,
+    hay_identidades: bool,
+) -> String {
+    let como = como_pedir_la_revision(donde, configuracion, hay_identidades);
+    let o_a_mano =
+        format!("También puedes dejar tú un modelo que quepa en «{carpeta_de_modelos}».");
+    match donde {
+        Donde::Fuera { .. } => format!(
+            "Programator no descarga nada por su cuenta. La revisión de modelos, que busca, \
+             descarga y prueba los que caben, se hace en la carpeta donde está instalado \
+             Programator: {como}.
+
+{o_a_mano}"
+        ),
+        Donde::EnLaInstalacion if !hay_identidades => format!(
+            "Programator no descarga nada por su cuenta. Para buscar, descargar y probar modelos \
+             que quepan, {como}.
+
+{o_a_mano}"
+        ),
+        Donde::EnLaInstalacion => format!(
+            "Programator no descarga nada por su cuenta: {como}, que busca, descarga y prueba los \
+             modelos que caben.
+
+{o_a_mano}"
+        ),
+    }
+}
+
+/// Dónde y a quién se pide la revisión, en minúscula y sin punto final: fuera de la instalación,
+/// que se abra allí; sin nadie con permiso, cómo darlo; con permiso, solo el pedido.
+pub fn como_pedir_la_revision(
+    donde: &Donde,
+    configuracion: &Path,
+    hay_identidades: bool,
+) -> String {
+    let permiso = format!(
+        "dale permiso al agente que la lleve con «identidades_que_ordenan = [\"<su identidad>\"]» \
+         en la sección [revision] de «{}»",
+        configuracion.display()
+    );
+    match donde {
+        Donde::Fuera { instalacion } => format!(
+            "cierra este Programator, ábrelo junto con el agente que quieras que la lleve en \
+             «{}», {permiso} y pídele allí «{PEDIDO_DE_BUSQUEDA}»",
+            instalacion.display()
+        ),
+        Donde::EnLaInstalacion if !hay_identidades => {
+            format!("{permiso} y pídele «{PEDIDO_DE_BUSQUEDA}»")
+        }
+        Donde::EnLaInstalacion => format!("pide «{PEDIDO_DE_BUSQUEDA}»"),
+    }
+}
+
+/// El aviso del arranque cuando faltan en la carpeta de modelos modelos del registro que siguen
+/// haciendo falta. `None` si no falta ninguno.
+/// `como_pedir` es [`como_pedir_la_revision`]. Párrafos separados por una línea en blanco.
+pub fn aviso_de_los_que_faltan(
+    utiles: &[Util],
+    como_pedir: &str,
+    carpeta_de_modelos: &str,
+) -> Option<String> {
+    if utiles.is_empty() {
+        return None;
+    }
+    let n = utiles.len();
+    let todos_ganan = utiles.iter().all(|u| !u.gana.is_empty());
+    let por_que = match (n, todos_ganan) {
+        (1, true) => "es el mejor en algo",
+        (_, true) => "son los mejores en algo",
+        (1, false) => "sigue haciendo falta",
+        (_, false) => "siguen haciendo falta",
+    };
+    let cuales = juntar_con_y(utiles.iter().map(describir_el_que_falta).collect());
+    let mut primero = if n == 1 {
+        format!(
+            "⚠️ Falta en «{carpeta_de_modelos}» un modelo que, según lo medido en esta tarjeta, \
+             {por_que}: {cuales}."
+        )
+    } else {
+        format!(
+            "⚠️ Faltan en «{carpeta_de_modelos}» {n} modelos que, según lo medido en esta \
+             tarjeta, {por_que}: {cuales}."
+        )
+    };
+    if utiles.iter().any(|u| !u.gana.is_empty()) {
+        primero += &format!(
+            " Mientras {}, esos encargos los atiende el mejor de los modelos que sí están.",
+            segun(n, "falte", "falten")
+        );
+    }
+    let segundo = format!(
+        "Programator no {lo} descarga por su cuenta. {Lo} repone la revisión de modelos, que {lo} \
+         baja de nuevo de Hugging Face y comprueba que es el mismo fichero que se midió: \
+         {como_pedir}.",
+        lo = segun(n, "lo", "los"),
+        Lo = segun(n, "Lo", "Los"),
+    );
+    let mut parrafos = vec![primero, segundo];
+    parrafos.extend(
+        utiles
+            .iter()
+            .filter(|u| u.origen.is_none())
+            .map(|u| sin_origen_al_arrancar(&u.nombre, carpeta_de_modelos)),
+    );
+    Some(parrafos.join("\n\n"))
+}
+
+/// ««A», el mejor en «Diagnosticar la causa de un fallo», que es el modelo por defecto de
+/// programator.toml».
+fn describir_el_que_falta(util: &Util) -> String {
+    let mut texto = format!("«{}»", util.nombre);
+    if !util.gana.is_empty() {
+        let categorias = util
+            .gana
+            .iter()
+            .map(|c| format!("«{}»", nombre_de_categoria(*c)))
+            .collect();
+        texto += &format!(", el mejor en {}", juntar_con_y(categorias));
+    }
+    if util.en_uso {
+        texto +=
+            &format!(", que es el modelo por defecto de {NOMBRE_DEL_FICHERO_DE_CONFIGURACION}");
+    }
+    texto
+}
+
+/// Un útil que falta y del que no se sabe de dónde salió: qué puede hacer la persona.
+fn sin_origen_al_arrancar(nombre: &str, carpeta_de_modelos: &str) -> String {
+    let fichero = con_extension(nombre);
+    format!(
+        "De «{nombre}» no se sabe de qué repositorio salió, así que la revisión no puede bajarlo: \
+         si lo tienes, déjalo en «{carpeta_de_modelos}» con el nombre «{fichero}», o retíralo del \
+         registro con «{NOMBRE_DEL_EJECUTABLE} {OPCION_RETIRAR_MODELO} {fichero}»."
+    )
+}
+
+/// Quien pide la revisión no está en la lista.
+pub fn identidad_sin_permiso(quien: &str, permitidas: &[String]) -> String {
+    format!(
+        "«{quien}» no puede pedir una revisión: solo pueden {}, según «[revision] \
+         identidades_que_ordenan»",
+        lista_entre_comillas(permitidas)
+    )
+}
+
+/// El buzón de quien pide la revisión no dice quién es.
+pub fn revision_sin_identidad(permitidas: &[String]) -> String {
+    format!(
+        "no sé quién pide esta revisión: la primera línea de tu buzón tiene que ser «# Bandeja de \
+         <tu identidad>». Solo pueden pedirla {}",
+        lista_entre_comillas(permitidas)
+    )
+}
+
+/// El motivo que se anota en el registro a un modelo que faltaba y no gana nada.
+pub fn motivo_de_retirada_por_ausencia(retirar: &ParaRetirar) -> String {
+    format!(
+        "Faltaba su fichero en «modelos». {}.",
+        con_mayuscula(&motivo_de_retirada(retirar))
+    )
+}
+
+/// Por qué no se pudo reponer un modelo útil que falta, dicho en una frase.
+pub fn motivo_sin_reponer(motivo: &MotivoSinReponer) -> String {
+    match motivo {
+        MotivoSinReponer::SinOrigen => "no se sabe de dónde salió: no está en ninguna búsqueda \
+                                        guardada ni en la de ahora"
+            .into(),
+        MotivoSinReponer::FalloAlConsultar(causa) => {
+            format!("Hugging Face no contestó por su repositorio: {causa}")
+        }
+        MotivoSinReponer::YaNoEstaEnElSitio => "su fichero ya no está en su repositorio".into(),
+        MotivoSinReponer::HuellaCambiada => {
+            "el fichero de su repositorio ya no es el que se midió: su huella es otra".into()
+        }
+        MotivoSinReponer::SinTamano => {
+            "Hugging Face no da el tamaño de su fichero, y sin él no se puede descargar".into()
+        }
+        MotivoSinReponer::HayOtroFichero => "en «modelos» ya hay un fichero con su nombre y otra \
+                                             huella, y no se pisa"
+            .into(),
+        MotivoSinReponer::FalloAlDescargar(causa) => format!("falló la descarga: {causa}"),
+    }
+}
+
+/// Lo que va pasando al reponer.
+pub fn aviso_de_reposicion(aviso: &AvisoDeReposicion) -> String {
+    match aviso {
+        AvisoDeReposicion::Empieza {
+            nombre,
+            repositorio,
+            bytes,
+        } => format!(
+            "📥 Reponiendo «{}» desde «{repositorio}» ({}).",
+            con_extension(nombre),
+            en_gib(*bytes)
+        ),
+        AvisoDeReposicion::Descarga(aviso) => aviso_de_descarga(aviso),
+    }
+}
+
+/// La primera letra en mayúscula, para empezar una frase con un texto que va en minúscula.
+fn con_mayuscula(texto: &str) -> String {
+    let mut letras = texto.chars();
+    match letras.next() {
+        Some(primera) => primera.to_uppercase().chain(letras).collect(),
+        None => String::new(),
+    }
+}
+
+fn lista_entre_comillas(elementos: &[String]) -> String {
+    elementos
+        .iter()
+        .map(|e| format!("«{e}»"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Una consulta a Hugging Face falló y la revisión no dejó nada escrito.
+pub(crate) fn consulta_fallida_sin_escribir(cual: &str, causa: &str) -> String {
+    format!("{cual} falló, y no se ha escrito nada: {causa}")
+}
+
+/// Hugging Face no contestó a una petición.
+pub(crate) fn hugging_face_no_contesto(url: &str, causa: &dyn std::fmt::Display) -> String {
+    format!("Hugging Face no contestó a {url}: {causa}")
+}
+
+/// La respuesta de Hugging Face llegó pero no se pudo leer entera.
+pub(crate) fn respuesta_sin_leer(url: &str, causa: &dyn std::fmt::Display) -> String {
+    format!("la respuesta de {url} no se pudo leer: {causa}")
+}
+
+/// La respuesta de una búsqueda en Hugging Face no se deja interpretar.
+pub(crate) fn busqueda_que_no_se_entiende(causa: &dyn std::fmt::Display) -> String {
+    format!("la búsqueda no se entiende: {causa}")
+}
+
+/// El detalle de un repositorio de Hugging Face no se deja interpretar.
+pub(crate) fn detalle_que_no_se_entiende(causa: &dyn std::fmt::Display) -> String {
+    format!("el detalle no se entiende: {causa}")
+}
+
+/// Una descarga se cortó por un fallo al escribir o leer; añade la causa.
+pub(crate) fn descarga_cortada_por(
+    llevados: u64,
+    total: u64,
+    parcial: &Path,
+    causa: &dyn std::fmt::Display,
+) -> String {
+    format!("{}: {causa}", descarga_cortada(llevados, total, parcial))
+}
+
+/// La petición de descarga de un fichero falló.
+pub(crate) fn descarga_sin_empezar(url: &str, causa: &dyn std::fmt::Display) -> String {
+    format!("no se pudo descargar «{url}»: {causa}")
+}
+
+/// La lista de candidatos no se pudo pasar a TOML.
+pub(crate) fn lista_sin_componer(causa: &dyn std::fmt::Display) -> String {
+    format!("la lista de candidatos no se compone: {causa}")
+}
+
+/// El fichero de la lista de candidatos no se deja interpretar.
+pub(crate) fn lista_que_no_se_entiende(causa: &dyn std::fmt::Display) -> String {
+    format!("«{NOMBRE_DE_LA_LISTA}» no se entiende: {causa}")
+}
+
+/// Lo probado en un mes no se pudo pasar a TOML.
+pub(crate) fn probados_sin_componer(causa: &dyn std::fmt::Display) -> String {
+    format!("lo probado no se compone: {causa}")
+}
+
+/// El fichero de lo probado en un mes no se deja interpretar.
+pub(crate) fn probados_que_no_se_entienden(causa: &dyn std::fmt::Display) -> String {
+    format!("«{NOMBRE_DE_LO_PROBADO}» no se entiende: {causa}")
+}
+
+/// Las retiradas propuestas no se pudieron pasar a TOML.
+pub(crate) fn retiradas_sin_componer(causa: &dyn std::fmt::Display) -> String {
+    format!("las retiradas propuestas no se componen: {causa}")
+}
+
+/// El fichero de las retiradas propuestas no se deja interpretar.
+pub(crate) fn retiradas_que_no_se_entienden(causa: &dyn std::fmt::Display) -> String {
+    format!("«{NOMBRE_DE_LAS_RETIRADAS}» no se entiende: {causa}")
 }
 
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// La alternativa de dejar un modelo a mano va en su propio párrafo, detrás de una línea en
+    /// blanco.
+    #[test]
+    fn dejar_un_modelo_a_mano_va_en_su_propio_parrafo() {
+        let texto = que_hacer_sin_modelos(
+            &Donde::EnLaInstalacion,
+            Path::new("programator.toml"),
+            "modelos",
+            false,
+        );
+
+        assert!(
+            texto.contains(
+                ".
+
+También puedes dejar tú un modelo"
+            ),
+            "{texto}"
+        );
+    }
+
+    fn util(nombre: &str, gana: Vec<Categoria>, en_uso: bool, con_origen: bool) -> Util {
+        Util {
+            nombre: nombre.into(),
+            gana,
+            en_uso,
+            huella: "h".into(),
+            origen: con_origen.then(|| crate::registro::modelo::Origen {
+                repositorio: "r/m".into(),
+                fichero: "m.gguf".into(),
+                tamano: None,
+            }),
+        }
+    }
+
+    fn diagnostico() -> Categoria {
+        Categoria::Clase(crate::banco::resultados::FilaDeDesempeno::Diagnostico)
+    }
+
+    fn fichero_limpio() -> Categoria {
+        Categoria::Clase(crate::banco::resultados::FilaDeDesempeno::FicheroLimpio)
+    }
+
+    const PIDE: &str = "pide «revisión: buscar»";
+
+    #[test]
+    fn el_aviso_con_un_modelo_dice_cual_y_en_que_es_el_mejor() {
+        let texto = aviso_de_los_que_faltan(
+            &[util("JackOD", vec![diagnostico()], false, true)],
+            PIDE,
+            "modelos",
+        )
+        .unwrap();
+        assert_eq!(
+            texto,
+            "⚠️ Falta en «modelos» un modelo que, según lo medido en esta tarjeta, es el mejor en \
+             algo: «JackOD», el mejor en «Diagnosticar la causa de un fallo». Mientras falte, esos \
+             encargos los atiende el mejor de los modelos que sí están.\n\nProgramator no lo \
+             descarga por su cuenta. Lo repone la revisión de modelos, que lo baja de nuevo de \
+             Hugging Face y comprueba que es el mismo fichero que se midió: pide «revisión: \
+             buscar»."
+        );
+    }
+
+    #[test]
+    fn el_aviso_con_varios_los_enumera() {
+        let texto = aviso_de_los_que_faltan(
+            &[
+                util("A", vec![diagnostico()], false, true),
+                util("B", vec![fichero_limpio(), diagnostico()], false, true),
+                util("C", vec![fichero_limpio()], false, true),
+            ],
+            PIDE,
+            "modelos",
+        )
+        .unwrap();
+        assert!(
+            texto.starts_with(
+                "⚠️ Faltan en «modelos» 3 modelos que, según lo medido en esta tarjeta, son los \
+                 mejores en algo: «A», el mejor en «Diagnosticar la causa de un fallo», «B», el \
+                 mejor en «Auditar un fichero que crees limpio, para confirmarlo» y \
+                 «Diagnosticar la causa de un fallo» y «C», el mejor en"
+            ),
+            "{texto}"
+        );
+        assert!(texto.contains("Mientras falten,"), "{texto}");
+        assert!(texto.contains("Programator no los descarga"), "{texto}");
+        assert!(texto.contains("Los repone"), "{texto}");
+    }
+
+    #[test]
+    fn el_aviso_dice_si_es_el_modelo_por_defecto() {
+        let solo =
+            aviso_de_los_que_faltan(&[util("devstral", vec![], true, true)], PIDE, "modelos")
+                .unwrap();
+        assert!(
+            solo.starts_with(
+                "⚠️ Falta en «modelos» un modelo que, según lo medido en esta tarjeta, sigue \
+                 haciendo falta: «devstral», que es el modelo por defecto de programator.toml.\n\n"
+            ),
+            "{solo}"
+        );
+        assert!(!solo.contains("Mientras"), "{solo}");
+        let ganando =
+            aviso_de_los_que_faltan(&[util("d", vec![diagnostico()], true, true)], PIDE, "m")
+                .unwrap();
+        assert!(
+            ganando.contains(
+                "«d», el mejor en «Diagnosticar la causa de un fallo», que es el modelo por \
+                 defecto de programator.toml. Mientras falte"
+            ),
+            "{ganando}"
+        );
+    }
+
+    #[test]
+    fn el_aviso_explica_que_hacer_con_uno_sin_origen() {
+        let texto = aviso_de_los_que_faltan(
+            &[
+                util("con", vec![diagnostico()], false, true),
+                util("sin", vec![diagnostico()], false, false),
+            ],
+            PIDE,
+            "modelos",
+        )
+        .unwrap();
+        let parrafos: Vec<&str> = texto.split("\n\n").collect();
+        assert_eq!(parrafos.len(), 3, "{texto}");
+        assert_eq!(
+            parrafos[2],
+            format!(
+                "De «sin» no se sabe de qué repositorio salió, así que la revisión no puede \
+                 bajarlo: si lo tienes, déjalo en «modelos» con el nombre «sin.gguf», o retíralo \
+                 del registro con «{NOMBRE_DEL_EJECUTABLE} --retirar-modelo sin.gguf»."
+            )
+        );
+    }
+
+    #[test]
+    fn fuera_de_la_instalacion_dice_donde_pedir_la_revision() {
+        let fuera = Donde::Fuera {
+            instalacion: PathBuf::from("C:/programator"),
+        };
+        let como =
+            como_pedir_la_revision(&fuera, Path::new("C:/programator/programator.toml"), true);
+        let texto =
+            aviso_de_los_que_faltan(&[util("a", vec![diagnostico()], false, true)], &como, "m")
+                .unwrap();
+        assert!(
+            texto.contains(
+                "que se midió: cierra este Programator, ábrelo junto con el agente que quieras que \
+                 la lleve en «C:/programator»"
+            ),
+            "{texto}"
+        );
+        assert!(
+            texto.ends_with("y pídele allí «revisión: buscar»."),
+            "{texto}"
+        );
+    }
+
+    #[test]
+    fn sin_utiles_que_falten_no_hay_aviso() {
+        assert_eq!(aviso_de_los_que_faltan(&[], PIDE, "modelos"), None);
+    }
+
+    /// Qué se le dice a quien no tiene modelos, según dónde esté.
+    #[test]
+    fn sin_modelos_se_dice_adonde_ir_y_como_dar_permiso() {
+        let configuracion = Path::new("inst/programator.toml");
+        let fuera = Donde::Fuera {
+            instalacion: "inst".into(),
+        };
+
+        let desde_fuera = que_hacer_sin_modelos(&fuera, configuracion, "inst/modelos", true);
+        assert!(
+            desde_fuera.contains("ábrelo junto con el agente"),
+            "{desde_fuera}"
+        );
+        assert!(desde_fuera.contains("«inst»"), "{desde_fuera}");
+        assert!(
+            desde_fuera.contains("identidades_que_ordenan"),
+            "{desde_fuera}"
+        );
+
+        let sin_permiso = que_hacer_sin_modelos(
+            &Donde::EnLaInstalacion,
+            configuracion,
+            "inst/modelos",
+            false,
+        );
+        assert!(!sin_permiso.contains("ábrelo"), "{sin_permiso}");
+        assert!(
+            sin_permiso.contains("identidades_que_ordenan"),
+            "{sin_permiso}"
+        );
+
+        let con_permiso =
+            que_hacer_sin_modelos(&Donde::EnLaInstalacion, configuracion, "inst/modelos", true);
+        assert!(
+            !con_permiso.contains("identidades_que_ordenan"),
+            "{con_permiso}"
+        );
+        assert!(con_permiso.contains("«revisión: buscar»"), "{con_permiso}");
+    }
     use std::path::PathBuf;
 
     fn hecha(anterior: Option<&str>) -> BusquedaHecha {
@@ -419,7 +983,25 @@ mod pruebas {
             ya_descargados: 1,
             descartados: 40,
             anterior: anterior.map(str::to_string),
+            reposicion: Reposicion::default(),
         }
+    }
+
+    #[test]
+    fn la_busqueda_hecha_cuenta_lo_que_faltaba_solo_si_faltaba_algo() {
+        assert!(!busqueda_hecha(&hecha(None)).contains("faltaban"));
+        let mut con_ausentes = hecha(None);
+        con_ausentes.reposicion.fuera_del_registro = vec!["viejo".into()];
+        con_ausentes.reposicion.sin_decidir = vec!["dudoso".into()];
+        let texto = busqueda_hecha(&con_ausentes);
+        assert!(
+            texto.starts_with(
+                "📦 De los modelos del registro que faltaban en «modelos»: 0 repuestos, 0 sin \
+                 poder reponer, 1 fuera del registro y 1 sin decidir."
+            ),
+            "{texto}"
+        );
+        assert!(texto.contains("✅ Búsqueda hecha"), "{texto}");
     }
 
     #[test]
@@ -461,6 +1043,69 @@ mod pruebas {
     }
 
     #[test]
+    fn cada_motivo_sin_reponer_dice_el_suyo() {
+        let casos = [
+            (MotivoSinReponer::SinOrigen, "de dónde salió"),
+            (
+                MotivoSinReponer::FalloAlConsultar("sin red".into()),
+                "no contestó por su repositorio: sin red",
+            ),
+            (MotivoSinReponer::YaNoEstaEnElSitio, "ya no está"),
+            (MotivoSinReponer::HuellaCambiada, "su huella es otra"),
+            (MotivoSinReponer::SinTamano, "tamaño"),
+            (MotivoSinReponer::HayOtroFichero, "no se pisa"),
+            (
+                MotivoSinReponer::FalloAlDescargar("se cortó".into()),
+                "falló la descarga: se cortó",
+            ),
+        ];
+        for (motivo, clave) in casos {
+            let texto = motivo_sin_reponer(&motivo);
+            assert!(texto.contains(clave), "{motivo:?}: {texto}");
+        }
+    }
+
+    #[test]
+    fn la_reposicion_dice_que_fichero_baja_de_donde_y_cuanto_pesa() {
+        let texto = aviso_de_reposicion(&AvisoDeReposicion::Empieza {
+            nombre: "m-Q4_K_M".into(),
+            repositorio: "alguien/M-GGUF".into(),
+            bytes: 2 * 1024 * 1024 * 1024,
+        });
+        assert!(
+            texto.contains("«m-Q4_K_M.gguf» desde «alguien/M-GGUF» (2,0 GiB)"),
+            "{texto}"
+        );
+        let avance = AvisoDeReposicion::Descarga(Aviso::CompruebaLaHuella);
+        assert_eq!(
+            aviso_de_reposicion(&avance),
+            aviso_de_descarga(&Aviso::CompruebaLaHuella)
+        );
+    }
+
+    #[test]
+    fn la_retirada_por_ausencia_empieza_por_lo_que_faltaba_y_sigue_en_mayuscula() {
+        let retirar = ParaRetirar {
+            nombre: "b".into(),
+            mejor_nota: 2.0,
+            en: Categoria::Familia(crate::banco::ficha::Familia::Uso),
+            le_gana: crate::revision::propuesta::Vencedor {
+                nombre: "a".into(),
+                nota: 4.0,
+            },
+        };
+        assert_eq!(
+            motivo_de_retirada_por_ausencia(&retirar),
+            format!(
+                "Faltaba su fichero en «modelos». N{}.",
+                &motivo_de_retirada(&retirar)[1..]
+            )
+        );
+        assert_eq!(con_mayuscula("ñandú"), "Ñandú");
+        assert_eq!(con_mayuscula(""), "");
+    }
+
+    #[test]
     fn la_descarga_hecha_dice_como_pasarle_el_banco() {
         let texto = descarga_hecha(&Descargado {
             ruta: PathBuf::from("modelos/m-Q4_K_M.gguf"),
@@ -468,6 +1113,12 @@ mod pruebas {
         });
         assert!(
             texto.contains("--modelo \"modelos/m-Q4_K_M.gguf\""),
+            "{texto}"
+        );
+        // La orden lleva el nombre del ejecutable de este sistema, no
+        // «programator» escrito a mano (en Windows es «programator.exe»).
+        assert!(
+            texto.contains(&format!("«{NOMBRE_DEL_EJECUTABLE} --banco banco --modelo")),
             "{texto}"
         );
     }
@@ -527,6 +1178,7 @@ mod pruebas {
             anotadas: 2,
             motivo: "no gana nada".into(),
             liberados: 14 * gib,
+            sin_fichero: false,
         });
         assert!(
             con.contains("14,0 GiB") && con.contains("en 2 entradas"),
@@ -538,17 +1190,60 @@ mod pruebas {
             anotadas: 0,
             motivo: RETIRADO_POR_ORDEN.into(),
             liberados: gib,
+            sin_fichero: false,
         });
         assert!(sin.contains("No tenía cifras en el registro"), "{sin}");
+        assert!(!RETIRADO_POR_ORDEN.contains("Director"));
+        assert!(!retirar_el_modelo_en_uso("m.gguf").contains("Director"));
+        // Con una sola, en singular.
+        let una = retirada_hecha(&Retirada {
+            ruta: PathBuf::from("modelos/m.gguf"),
+            anotadas: 1,
+            motivo: "no gana nada".into(),
+            liberados: gib,
+            sin_fichero: false,
+        });
+        assert!(una.contains("en 1 entrada,"), "{una}");
+        let sin_fichero = retirada_hecha(&Retirada {
+            ruta: PathBuf::from("modelos/m.gguf"),
+            anotadas: 1,
+            motivo: "no gana nada".into(),
+            liberados: 0,
+            sin_fichero: true,
+        });
+        assert!(
+            sin_fichero.starts_with(
+                "🗑️ Retirado «modelos/m.gguf» del registro: su fichero ya no estaba en la carpeta \
+                 de modelos, así que no se ha borrado nada.\nAnotado en el registro, en 1 entrada"
+            ),
+            "{sin_fichero}"
+        );
+        let sin_borrar = retirada_sin_borrar(
+            Path::new("modelos/m.gguf"),
+            1,
+            &std::io::Error::other("en uso"),
+        );
+        assert!(sin_borrar.contains("(1 entrada)"), "{sin_borrar}");
     }
 
     #[test]
-    fn el_fallo_dice_que_no_se_toco_nada() {
+    fn el_fallo_dice_que_lo_hecho_no_se_deshace_y_no_que_no_se_toco_nada() {
         let texto = fallo(&Error::Revision("sin red".into()));
         assert!(
-            texto.contains("sin red") && texto.contains("No se ha tocado"),
+            texto.starts_with(&format!("🔴 {}.\n", Error::Revision("sin red".into()))),
             "{texto}"
         );
+        assert!(
+            texto.contains(
+                "Lo hecho antes del fallo no se deshace: los modelos que ya se habían bajado o \
+                 repuesto siguen en la carpeta de modelos, lo anotado en el registro sigue anotado \
+                 y una descarga a medias queda como «.parcial» para reanudarla."
+            ),
+            "{texto}"
+        );
+        // Tras reponer o retirar, decir que no se tocó el registro sería falso.
+        assert!(!texto.contains("No se ha tocado"), "{texto}");
+        assert!(texto.ends_with("de «programator.toml»."), "{texto}");
     }
 
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -576,6 +1271,7 @@ mod pruebas {
                 ultima_modificacion: None,
             },
             MotivoDeDescarte::YaRegistrado,
+            MotivoDeDescarte::RegistradoSinFichero,
             MotivoDeDescarte::Partido { partes: 3 },
             MotivoDeDescarte::SinCuantizacion,
         ];
@@ -584,6 +1280,7 @@ mod pruebas {
             "2026-01-01",
             "fecha",
             "registro",
+            "falta su fichero",
             "3 ficheros",
             "cuantizaciones",
         ];

@@ -8,6 +8,8 @@
 //!
 //! `decidir` es pura y no toca disco: quien llama le pasa la carpeta recordada **ya comprobada**.
 
+use crate::argumentos::OPCION_RUTA;
+use crate::terminal::Terminal;
 use std::path::{Path, PathBuf};
 
 /// El fichero de una línea donde se recuerda la última carpeta buena.
@@ -50,11 +52,32 @@ impl Origen {
 /// escribe `ruta` en el TOML ha dicho a qué carpeta quiere ir, y preguntárselo encima sería no
 /// escucharle. Así quien automatiza sigue pudiendo arrancar sin intervención, ponga lo que ponga
 /// esta bandera.
+/// Si la carpeta recordada decide o se pregunta igual. Con nombre, y no un `bool` suelto detrás de
+/// tres opciones. En el TOML sigue siendo `preguntar_siempre`, verdadero o falso.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Memoria {
+    /// La última carpeta usada vale si sigue existiendo.
+    SeUsa,
+    /// Se pregunta aunque haya una recordada.
+    SePregunta,
+}
+
+impl Memoria {
+    /// Lo que dice `[carpeta] preguntar_siempre`.
+    pub fn segun(preguntar_siempre: bool) -> Self {
+        if preguntar_siempre {
+            Self::SePregunta
+        } else {
+            Self::SeUsa
+        }
+    }
+}
+
 pub fn decidir(
     de_la_linea: Option<&str>,
     de_la_config: Option<&str>,
     recordada: Option<&Path>,
-    preguntar_siempre: bool,
+    memoria: Memoria,
 ) -> Option<(PathBuf, Origen)> {
     if let Some(ruta) = de_la_linea {
         return Some((PathBuf::from(ruta), Origen::LineaDeOrdenes));
@@ -62,7 +85,7 @@ pub fn decidir(
     if let Some(ruta) = de_la_config {
         return Some((PathBuf::from(ruta), Origen::Configuracion));
     }
-    if preguntar_siempre {
+    if memoria == Memoria::SePregunta {
         return None;
     }
     recordada.map(|ruta| (ruta.to_path_buf(), Origen::Recordada))
@@ -85,10 +108,10 @@ pub fn recordada(junto_a: &Path) -> Option<PathBuf> {
 ///
 /// **No devuelve error a propósito.** Que no se pueda escribir la memoria —una carpeta de solo
 /// lectura, un antivirus— no es motivo para no trabajar: se avisa y se sigue.
-pub fn recordar(junto_a: &Path, carpeta: &Path) {
+pub fn recordar(junto_a: &Path, carpeta: &Path, terminal: &dyn Terminal) {
     let destino = junto_a.join(NOMBRE_DE_LA_MEMORIA);
     if let Err(causa) = std::fs::write(&destino, carpeta.display().to_string()) {
-        eprintln!("{}", advertencia_fallo_recordar(&destino, &causa));
+        terminal.avisar(&advertencia_fallo_recordar(&destino, &causa));
     }
 }
 
@@ -102,9 +125,10 @@ pub fn advertencia_fallo_recordar(destino: &Path, causa: &std::io::Error) -> Str
     format!(
         "⚠️ No se pudo guardar la memoria de la carpeta de trabajo en «{}»: {causa}.\n\
          Consecuencia: el ciclo actual continuará con normalidad, pero en el próximo arranque \
-         habrá que volver a seleccionar la carpeta de trabajo o pasarla con «--ruta».\n\
+         habrá que volver a seleccionar la carpeta de trabajo o pasarla con «{OPCION_RUTA}».\n\
          Qué hacer: si deseas que se recuerde automáticamente, comprueba los permisos de escritura \
-         en ese directorio o fija la ruta en «programator.toml» o con «--ruta <DIRECTORIO>».",
+         en ese directorio o fija la ruta en «programator.toml» o con «{OPCION_RUTA} \
+         <DIRECTORIO>».",
         destino.display()
     )
 }
@@ -116,8 +140,8 @@ mod pruebas {
     #[test]
     fn advertencia_fallo_recordar_explica_fallo_consecuencia_y_accion() {
         let ruta = Path::new("/invalido/memoria.txt");
-        let err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denegado");
-        let aviso = advertencia_fallo_recordar(ruta, &err);
+        let fallo = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denegado");
+        let aviso = advertencia_fallo_recordar(ruta, &fallo);
         assert!(aviso.starts_with("⚠️ No se pudo guardar la memoria"));
         assert!(aviso.contains("Consecuencia:"));
         assert!(aviso.contains("el ciclo actual continuará con normalidad"));
@@ -130,7 +154,7 @@ mod pruebas {
             Some("/linea"),
             Some("/config"),
             Some(Path::new("/memoria")),
-            false,
+            Memoria::SeUsa,
         );
         assert_eq!(
             decidida,
@@ -140,7 +164,12 @@ mod pruebas {
 
     #[test]
     fn sin_linea_manda_la_configuracion() {
-        let decidida = decidir(None, Some("/config"), Some(Path::new("/memoria")), false);
+        let decidida = decidir(
+            None,
+            Some("/config"),
+            Some(Path::new("/memoria")),
+            Memoria::SeUsa,
+        );
         assert_eq!(
             decidida,
             Some((PathBuf::from("/config"), Origen::Configuracion))
@@ -149,7 +178,7 @@ mod pruebas {
 
     #[test]
     fn sin_linea_ni_configuracion_manda_la_recordada() {
-        let decidida = decidir(None, None, Some(Path::new("/memoria")), false);
+        let decidida = decidir(None, None, Some(Path::new("/memoria")), Memoria::SeUsa);
         assert_eq!(
             decidida,
             Some((PathBuf::from("/memoria"), Origen::Recordada))
@@ -159,20 +188,25 @@ mod pruebas {
     #[test]
     fn sin_ninguna_fuente_no_se_decide_nada() {
         // Es el único caso en que se abre el diálogo.
-        assert_eq!(decidir(None, None, None, false), None);
+        assert_eq!(decidir(None, None, None, Memoria::SeUsa), None);
     }
 
     #[test]
     fn preguntar_siempre_deja_sin_valor_la_carpeta_recordada() {
         // La memoria existe y es válida, pero el usuario ha pedido que se le pregunte.
-        let decidida = decidir(None, None, Some(Path::new("/memoria")), true);
+        let decidida = decidir(None, None, Some(Path::new("/memoria")), Memoria::SePregunta);
         assert_eq!(decidida, None);
     }
 
     #[test]
     fn preguntar_siempre_no_estorba_a_la_linea_de_ordenes() {
         // Quien arranca con «--ruta» ya ha dicho a dónde va: preguntárselo sería no escucharle.
-        let decidida = decidir(Some("/linea"), None, Some(Path::new("/memoria")), true);
+        let decidida = decidir(
+            Some("/linea"),
+            None,
+            Some(Path::new("/memoria")),
+            Memoria::SePregunta,
+        );
         assert_eq!(
             decidida,
             Some((PathBuf::from("/linea"), Origen::LineaDeOrdenes))
@@ -182,7 +216,12 @@ mod pruebas {
     #[test]
     fn preguntar_siempre_no_estorba_a_la_configuracion() {
         // Igual con «ruta» en el TOML: es una elección explícita, no una memoria heredada.
-        let decidida = decidir(None, Some("/config"), Some(Path::new("/memoria")), true);
+        let decidida = decidir(
+            None,
+            Some("/config"),
+            Some(Path::new("/memoria")),
+            Memoria::SePregunta,
+        );
         assert_eq!(
             decidida,
             Some((PathBuf::from("/config"), Origen::Configuracion))
@@ -194,7 +233,11 @@ mod pruebas {
         let junto_a = tempfile::tempdir().unwrap();
         let trabajo = tempfile::tempdir().unwrap();
 
-        recordar(junto_a.path(), trabajo.path());
+        recordar(
+            junto_a.path(),
+            trabajo.path(),
+            &crate::terminal::TerminalDeMentira::default(),
+        );
 
         assert_eq!(
             recordada(junto_a.path()),
@@ -207,7 +250,11 @@ mod pruebas {
         let junto_a = tempfile::tempdir().unwrap();
         let efimera = tempfile::tempdir().unwrap();
         let ruta = efimera.path().to_path_buf();
-        recordar(junto_a.path(), &ruta);
+        recordar(
+            junto_a.path(),
+            &ruta,
+            &crate::terminal::TerminalDeMentira::default(),
+        );
         drop(efimera);
 
         assert_eq!(recordada(junto_a.path()), None);

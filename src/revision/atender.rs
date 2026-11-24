@@ -1,25 +1,29 @@
 //! Atender un pedido de revisión que llega por el canal: reconocerlo, ver si quien lo pide puede,
-//! hacerlo y redactar lo que se publica (especificación de la revisión autónoma, §4).
+//! hacerlo y redactar lo que se publica.
 //!
 //! [`atender`] decide y se prueba con una revisión falsa; [`RevisorReal`] la monta con el mundo de
 //! verdad para el ciclo de `main`.
 
+use crate::protocolo::destinatarios::Identidad;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use super::cerrar::cerrar;
 use super::config::ConfigRevision;
+use super::donde::{donde, Donde};
 use super::encargo::{puede_pedirla, reconocer, CandidatoPedido, Pedido, Reconocido};
+use super::mensajes;
 use super::mes;
 use super::mundo::{rubricas_sin_puntuar, AvisoEnElLatido, Mundo};
 use super::ordenes;
 use super::probados::{self, Estado, NOMBRE_DE_LO_PROBADO};
-use super::probar::probar;
+use super::probar::{probar, Taller};
 use super::publicacion::{self, Pendientes};
 use crate::arnes::sesion::Revisor;
 use crate::config::Config;
 use crate::error::Resultado;
 use crate::motor::proceso::ServidorLocal;
+use crate::terminal::Terminal;
 
 /// Lo que hace cada pedido. Devuelve el cuerpo que se publica.
 pub trait Revision {
@@ -28,19 +32,23 @@ pub trait Revision {
     fn cerrar(&mut self) -> Resultado<String>;
 }
 
-/// Atiende el texto de un encargo de `de`. Si no es de revisión, no hace nada y devuelve `None`.
+/// Atiende el texto de un encargo de `quien` (la identidad de la cabecera de su buzón). Si no es de revisión, no hace nada y devuelve `None`.
 pub fn atender(
-    de: &str,
+    quien: Option<&Identidad>,
+    donde: &Donde,
     texto: &str,
     config: &ConfigRevision,
     revision: &mut dyn Revision,
 ) -> Option<String> {
     let pedido = match reconocer(texto) {
         Reconocido::NoEsDeRevision => return None,
+        _ if *donde != Donde::EnLaInstalacion => {
+            return Some(publicacion::rechazado(&fuera_de_la_instalacion(donde)))
+        }
         Reconocido::MalEscrito(motivo) => return Some(publicacion::rechazado(&motivo)),
         Reconocido::Pedido(pedido) => pedido,
     };
-    if let Err(motivo) = puede_pedirla(de, config) {
+    if let Err(motivo) = puede_pedirla(quien, config) {
         return Some(publicacion::rechazado(&motivo));
     }
     let (nombre, hecho) = match &pedido {
@@ -51,29 +59,52 @@ pub fn atender(
     Some(hecho.unwrap_or_else(|fallo| publicacion::fallido(nombre, &fallo)))
 }
 
+fn fuera_de_la_instalacion(donde: &Donde) -> String {
+    match donde {
+        Donde::Fuera { instalacion } => mensajes::revision_fuera_de_la_instalacion(instalacion),
+        Donde::EnLaInstalacion => String::new(),
+    }
+}
+
 /// El revisor del ciclo: lee la configuración en cada pedido y trabaja con el servidor propio, que
 /// comparte con el motor del ciclo.
+///
+/// Los campos son privados: se construye con `nuevo` y lo único que cambia
+/// por fuera es la ruta del latido, cuando se relee la configuración.
 pub struct RevisorReal<'a> {
-    pub ruta_de_la_configuracion: PathBuf,
-    pub ruta_del_latido: PathBuf,
-    pub servidor: &'a RefCell<Option<ServidorLocal>>,
-    pub version: &'a str,
+    ruta_de_la_configuracion: PathBuf,
+    /// La carpeta de trabajo: la revisión solo se hace si es la de instalación.
+    carpeta_de_trabajo: PathBuf,
+    ruta_del_latido: PathBuf,
+    servidor: &'a RefCell<Option<ServidorLocal>>,
+    version: &'a str,
     cambio_el_modelo: bool,
+    /// Por dónde cuenta la revisión lo que va haciendo.
+    terminal: &'a dyn Terminal,
 }
 
 impl<'a> RevisorReal<'a> {
+    /// La ruta del latido sale de la configuración: al releerla, puede cambiar.
+    pub fn cambiar_la_ruta_del_latido(&mut self, ruta: PathBuf) {
+        self.ruta_del_latido = ruta;
+    }
+
     pub fn nuevo(
         ruta_de_la_configuracion: PathBuf,
+        carpeta_de_trabajo: PathBuf,
         ruta_del_latido: PathBuf,
         servidor: &'a RefCell<Option<ServidorLocal>>,
         version: &'a str,
+        terminal: &'a dyn Terminal,
     ) -> Self {
         Self {
             ruta_de_la_configuracion,
+            carpeta_de_trabajo,
             ruta_del_latido,
             servidor,
             version,
             cambio_el_modelo: false,
+            terminal,
         }
     }
 
@@ -89,12 +120,13 @@ impl Revisor for RevisorReal<'_> {
         reconocer(texto) != Reconocido::NoEsDeRevision
     }
 
-    fn atender(&mut self, de: &str, texto: &str) -> String {
+    fn atender(&mut self, de: &str, quien: Option<&Identidad>, texto: &str) -> String {
         let config = match Config::cargar(&self.ruta_de_la_configuracion) {
             Ok(config) => config,
             Err(fallo) => return publicacion::fallido("lectura de la configuración", &fallo),
         };
         let ajustes = config.revision.clone();
+        let donde = donde(&self.carpeta_de_trabajo, config.carpeta_de_instalacion());
         let latido = AvisoEnElLatido {
             ruta: self.ruta_del_latido.clone(),
             intervalo_segundos: config.ciclo.intervalo_segundos,
@@ -112,9 +144,10 @@ impl Revisor for RevisorReal<'_> {
                 version: self.version,
                 cambio_el_modelo: false,
                 latido,
+                terminal: self.terminal,
             },
         };
-        let cuerpo = atender(de, texto, &ajustes, &mut en_el_mundo).unwrap_or_default();
+        let cuerpo = atender(quien, &donde, texto, &ajustes, &mut en_el_mundo).unwrap_or_default();
         self.cambio_el_modelo |= en_el_mundo.mundo.cambio_el_modelo;
         cuerpo
     }
@@ -127,7 +160,13 @@ struct EnElMundo<'a> {
 
 impl Revision for EnElMundo<'_> {
     fn buscar(&mut self) -> Resultado<String> {
-        ordenes::buscar(&self.mundo.config).map(|hecha| publicacion::busqueda(&hecha))
+        // Cada aviso de la reposición va a la terminal y al latido, como en «revisión: probar».
+        let config = self.mundo.config.clone();
+        let mundo = &mut self.mundo;
+        ordenes::buscar(&config, &mut |aviso| {
+            mundo.avisar(&mensajes::aviso_de_reposicion(&aviso))
+        })
+        .map(|hecha| publicacion::busqueda(&hecha))
     }
 
     fn probar(&mut self, candidatos: &[CandidatoPedido]) -> Resultado<String> {
@@ -220,7 +259,7 @@ mod pruebas {
 
     fn con_permiso() -> ConfigRevision {
         ConfigRevision {
-            buzones_que_ordenan: vec!["claude".into()],
+            identidades_que_ordenan: vec!["Claude 1".into()],
             ..ConfigRevision::default()
         }
     }
@@ -231,18 +270,64 @@ mod pruebas {
         let config = con_permiso();
 
         assert_eq!(
-            atender("claude.md", "revisión: buscar", &config, &mut revision).as_deref(),
+            atender(
+                Identidad::leer("Claude 1").as_ref(),
+                &Donde::EnLaInstalacion,
+                "revisión: buscar",
+                &config,
+                &mut revision
+            )
+            .as_deref(),
             Some("buscado")
         );
         atender(
-            "claude.md",
+            Identidad::leer("Claude 1").as_ref(),
+            &Donde::EnLaInstalacion,
             "revisión: probar\na/b c.gguf\nd/e f.gguf",
             &config,
             &mut revision,
         );
-        atender("claude.md", "revisión: cerrar", &config, &mut revision);
+        atender(
+            Identidad::leer("Claude 1").as_ref(),
+            &Donde::EnLaInstalacion,
+            "revisión: cerrar",
+            &config,
+            &mut revision,
+        );
 
         assert_eq!(revision.pedidos, ["buscar", "probar 2", "cerrar"]);
+    }
+
+    /// Fuera de la carpeta de instalación no se hace nada, aunque haya permiso.
+    #[test]
+    fn fuera_de_la_instalacion_no_se_hace_nada_y_se_dice_adonde_ir() {
+        let mut revision = RevisionFalsa::default();
+        let fuera = Donde::Fuera {
+            instalacion: "C:/Programator".into(),
+        };
+
+        for pedido in ["revisión: buscar", "revisión: cerrar", "revisión: probar"] {
+            let respuesta = atender(
+                Identidad::leer("Claude 1").as_ref(),
+                &fuera,
+                pedido,
+                &con_permiso(),
+                &mut revision,
+            )
+            .unwrap();
+            assert!(respuesta.contains("«C:/Programator»"), "{respuesta}");
+        }
+        assert!(revision.pedidos.is_empty(), "{:?}", revision.pedidos);
+        assert_eq!(
+            atender(
+                Identidad::leer("Claude 1").as_ref(),
+                &fuera,
+                "Escribe una función.",
+                &con_permiso(),
+                &mut revision
+            ),
+            None
+        );
     }
 
     #[test]
@@ -250,7 +335,8 @@ mod pruebas {
         let mut revision = RevisionFalsa::default();
         assert_eq!(
             atender(
-                "claude.md",
+                Identidad::leer("Claude 1").as_ref(),
+                &Donde::EnLaInstalacion,
                 "Escribe una función.",
                 &con_permiso(),
                 &mut revision
@@ -265,30 +351,33 @@ mod pruebas {
         let mut revision = RevisionFalsa::default();
 
         let sin_permiso = atender(
-            "gemini.md",
+            Identidad::leer("Gemini 1").as_ref(),
+            &Donde::EnLaInstalacion,
             "revisión: buscar",
             &con_permiso(),
             &mut revision,
         )
         .unwrap();
         let deshabilitada = atender(
-            "claude.md",
+            Identidad::leer("Claude 1").as_ref(),
+            &Donde::EnLaInstalacion,
             "revisión: buscar",
             &ConfigRevision::default(),
             &mut revision,
         )
         .unwrap();
         let mal_escrito = atender(
-            "claude.md",
+            Identidad::leer("Claude 1").as_ref(),
+            &Donde::EnLaInstalacion,
             "revisión: probar",
             &con_permiso(),
             &mut revision,
         )
         .unwrap();
 
-        assert!(sin_permiso.contains("«gemini»"), "{sin_permiso}");
+        assert!(sin_permiso.contains("«Gemini 1»"), "{sin_permiso}");
         assert!(
-            deshabilitada.contains("buzones_que_ordenan"),
+            deshabilitada.contains("identidades_que_ordenan"),
             "{deshabilitada}"
         );
         assert!(mal_escrito.contains("ningún candidato"), "{mal_escrito}");
@@ -302,7 +391,8 @@ mod pruebas {
             ..RevisionFalsa::default()
         };
         let texto = atender(
-            "claude.md",
+            Identidad::leer("Claude 1").as_ref(),
+            &Donde::EnLaInstalacion,
             "revisión: buscar",
             &con_permiso(),
             &mut revision,

@@ -7,6 +7,7 @@
 //! Este módulo recuerda las llamadas concedidas previas y devuelve el resultado anterior
 //! sin re-ejecutar ni consumir cupo, advirtiendo al modelo para que rectifique.
 
+use crate::arnes::ficha::verbo;
 use crate::motor::SolicitudHerramienta;
 
 /// Historial acotado de solicitudes concedidas durante un encargo.
@@ -84,22 +85,23 @@ impl HistorialRepeticiones {
 
 /// Determina si un verbo es una operación pura de lectura cuyos resultados dependen del estado del disco.
 fn es_lectura(nombre: &str) -> bool {
-    matches!(nombre, "leer_fichero" | "listar")
+    matches!(nombre, verbo::LEER_FICHERO | verbo::LISTAR)
 }
 
-/// Determina si un verbo introduce cambios en el disco que invaliden lecturas previas.
+/// Determina si un verbo introduce cambios en el disco que invaliden lecturas previas. `reservar`
+/// escribe en `estado.md`.
 fn es_mutacion(nombre: &str) -> bool {
-    matches!(nombre, "escribir_propuesta")
+    matches!(nombre, verbo::ESCRIBIR_PROPUESTA | verbo::RESERVAR)
 }
 
 #[cfg(test)]
 mod pruebas {
     use super::*;
 
-    fn solicitud(nombre: &str, args: serde_json::Value) -> SolicitudHerramienta {
+    fn solicitud(nombre: &str, argumentos: serde_json::Value) -> SolicitudHerramienta {
         SolicitudHerramienta {
             nombre: nombre.to_string(),
-            argumentos: args,
+            argumentos,
         }
     }
 
@@ -204,5 +206,23 @@ mod pruebas {
         let s = solicitud("leer_fichero", serde_json::json!({"ruta": "a.txt"}));
         historial.registrar(&s, "a".to_string());
         assert_eq!(historial.buscar_repeticion(&s), None);
+    }
+
+    /// `reservar` escribe en `estado.md`, así que invalida las lecturas previas.
+    #[test]
+    fn reservar_invalida_la_cache_de_lecturas_previas() {
+        let mut historial = HistorialRepeticiones::nuevo(10);
+        let leer = solicitud(
+            "leer_fichero",
+            serde_json::json!({"ruta": ".gestor/canal/estado.md"}),
+        );
+        historial.registrar(&leer, "sin reservas".to_string());
+
+        historial.registrar(
+            &solicitud("reservar", serde_json::json!({"ruta": "src/a.rs"})),
+            "reservado".to_string(),
+        );
+
+        assert_eq!(historial.buscar_repeticion(&leer), None);
     }
 }

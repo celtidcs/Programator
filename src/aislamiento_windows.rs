@@ -63,8 +63,6 @@ const SID_DE_INTEGRIDAD_BAJA: &str = "S-1-16-4096";
 /// (`OICI`), que impide escribir a quien esté por debajo (`NW`) del nivel bajo (`LW`). Con ella,
 /// un proceso de integridad baja puede escribir dentro.
 const ETIQUETA_DE_INTEGRIDAD_BAJA: &str = "S:(ML;OICI;NW;;;LW)";
-/// Bytes en un MiB, para pasar `memoria_maxima_mib` al Job.
-const BYTES_POR_MIB: usize = 1024 * 1024;
 /// El código de salida con que terminan los procesos del Job al cortarlo. Cualquiera distinto de
 /// cero: lo que importa es que no parezca un éxito.
 const CODIGO_AL_CORTAR: u32 = 1;
@@ -86,7 +84,10 @@ const BYTES_POR_PALABRA_DEL_USUARIO: usize = std::mem::size_of::<u64>();
 
 /// El fallo de la última llamada a Windows, con su nombre.
 fn fallo_de(llamada: &str) -> Error {
-    Error::Aislamiento(format!("{llamada}: {}", std::io::Error::last_os_error()))
+    Error::Aislamiento(mensaje_fallo_de_llamada(
+        llamada,
+        &std::io::Error::last_os_error(),
+    ))
 }
 
 /// Un texto en UTF-16 terminado en cero, como lo piden las funciones `…W`.
@@ -121,10 +122,10 @@ fn sobre_la_carpeta(codigo: WIN32_ERROR, llamada: &str, carpeta: &Path) -> Resul
     if codigo == ERROR_SUCCESS {
         return Ok(());
     }
-    Err(Error::Aislamiento(format!(
-        "{llamada} sobre «{}»: {}",
-        carpeta.display(),
-        std::io::Error::from_raw_os_error(codigo as i32)
+    Err(Error::Aislamiento(mensaje_fallo_sobre_la_carpeta(
+        llamada,
+        carpeta,
+        &std::io::Error::from_raw_os_error(codigo as i32),
     )))
 }
 
@@ -346,12 +347,8 @@ impl Trabajo {
     pub fn nuevo(procesos_maximos: u32, memoria_maxima_mib: u64) -> Resultado<Self> {
         let memoria = usize::try_from(memoria_maxima_mib)
             .ok()
-            .and_then(|mib| mib.checked_mul(BYTES_POR_MIB))
-            .ok_or_else(|| {
-                Error::Aislamiento(format!(
-                    "memoria_maxima_mib = {memoria_maxima_mib} no cabe en este sistema"
-                ))
-            })?;
+            .and_then(|mib| mib.checked_mul(crate::unidades::BYTES_POR_MIB_USIZE))
+            .ok_or_else(|| Error::Aislamiento(mensaje_memoria_que_no_cabe(memoria_maxima_mib)))?;
         // SAFETY: sin atributos ni nombre, los dos nulos, como permite la función.
         let asa = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
         if asa.is_null() {
@@ -417,7 +414,7 @@ impl Trabajo {
                 self.asa.0,
                 JobObjectBasicProcessIdList,
                 lista.as_mut_ptr().cast(),
-                (huecos * palabra) as u32,
+                bytes_para_windows(huecos, palabra)?,
                 ptr::null_mut(),
             )
         };
@@ -489,10 +486,24 @@ pub fn nombre_del_proceso(proceso: u32) -> Option<String> {
     if leida == 0 {
         return None;
     }
-    let ruta = String::from_utf16_lossy(&ruta[..largo as usize]);
+    let ruta = String::from_utf16_lossy(ruta.get(..largo as usize)?);
     Path::new(&ruta)
         .file_name()
         .map(|nombre| nombre.to_string_lossy().into_owned())
+}
+
+/// El tamaño en bytes de `palabras` palabras de `bytes_por_palabra`, como lo piden las funciones
+/// de Windows.
+fn bytes_para_windows(palabras: usize, bytes_por_palabra: usize) -> Resultado<u32> {
+    palabras
+        .checked_mul(bytes_por_palabra)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .ok_or_else(|| Error::Aislamiento(mensaje_de_tamano_excesivo(palabras)))
+}
+
+/// Lo que se dice si un búfer no se puede describir a Windows.
+fn mensaje_de_tamano_excesivo(palabras: usize) -> String {
+    format!("un búfer de {palabras} palabras no cabe en el tamaño que admite Windows")
 }
 
 /// El puerto de una fila de la tabla: los dos primeros bytes, en el orden de la red.
@@ -506,7 +517,7 @@ fn tabla_tcp(familia: u16) -> Resultado<Vec<u32>> {
     let mut bytes: u32 = 0;
     for _ in 0..INTENTOS_DE_LEER_LA_TABLA {
         let mut palabras = vec![0u32; (bytes as usize).div_ceil(BYTES_POR_PALABRA).max(1)];
-        let mut disponibles = (palabras.len() * BYTES_POR_PALABRA) as u32;
+        let mut disponibles = bytes_para_windows(palabras.len(), BYTES_POR_PALABRA)?;
         // SAFETY: `palabras` tiene `disponibles` bytes, alineados a `u32` como las filas; la
         // función escribe dentro de ellos o dice cuántos hacen falta en `disponibles`.
         let codigo = unsafe {
@@ -523,9 +534,9 @@ fn tabla_tcp(familia: u16) -> Resultado<Vec<u32>> {
             ERROR_SUCCESS => return Ok(palabras),
             ERROR_INSUFFICIENT_BUFFER => bytes = disponibles,
             otro => {
-                return Err(Error::Aislamiento(format!(
-                    "GetExtendedTcpTable: {}",
-                    std::io::Error::from_raw_os_error(otro as i32)
+                return Err(Error::Aislamiento(mensaje_fallo_de_llamada(
+                    "GetExtendedTcpTable",
+                    &std::io::Error::from_raw_os_error(otro as i32),
                 )))
             }
         }
@@ -552,9 +563,33 @@ fn filas<T: Copy>(tabla: &[u32]) -> Vec<T> {
         .collect()
 }
 
+/// El fallo de una llamada a Windows: su nombre y lo que dijo el sistema.
+fn mensaje_fallo_de_llamada(llamada: &str, causa: &std::io::Error) -> String {
+    format!("{llamada}: {causa}")
+}
+
+/// El fallo de una función de seguridad sobre una carpeta: cuál, sobre qué carpeta y por qué.
+fn mensaje_fallo_sobre_la_carpeta(llamada: &str, carpeta: &Path, causa: &std::io::Error) -> String {
+    format!("{llamada} sobre «{}»: {causa}", carpeta.display())
+}
+
+/// El tope de memoria del Job no cabe en el tamaño de este sistema.
+fn mensaje_memoria_que_no_cabe(memoria_maxima_mib: u64) -> String {
+    format!("memoria_maxima_mib = {memoria_maxima_mib} no cabe en este sistema")
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// El tamaño en bytes que se pasa a Windows no se trunca con `as u32` si no cabe: es un
+    /// error.
+    #[test]
+    fn un_tamano_que_no_cabe_en_u32_es_un_error_y_no_se_trunca() {
+        assert_eq!(bytes_para_windows(3, 4).unwrap(), 12);
+        assert!(bytes_para_windows(usize::MAX, 2).is_err());
+        assert!(bytes_para_windows(u32::MAX as usize + 1, 1).is_err());
+    }
 
     #[test]
     fn el_nombre_de_un_proceso_es_el_de_su_ejecutable() {

@@ -22,6 +22,15 @@ pub const NOMBRE_DEL_EJECUTABLE: &str = "programator.exe";
 #[cfg(not(windows))]
 pub const NOMBRE_DEL_EJECUTABLE: &str = "programator";
 
+/// El vigilante del canal de Gestor Agentes, que el paquete lleva junto a Programator
+/// (`src/arranque/vigilante.rs`).
+#[cfg(windows)]
+pub const NOMBRE_DEL_VIGILANTE: &str = "gestor-vigilante.exe";
+
+/// El vigilante del canal fuera de Windows.
+#[cfg(not(windows))]
+pub const NOMBRE_DEL_VIGILANTE: &str = "gestor-vigilante";
+
 /// Una ruta de ejemplo con la forma que tienen las rutas en este sistema.
 ///
 /// Sale en los mensajes que enseñan a usar «--ruta». Un ejemplo con letra de unidad en Linux, o
