@@ -518,6 +518,15 @@ pub fn como_pedir_la_revision(
         configuracion.display()
     );
     match donde {
+        // Con alguien ya en la lista no se pide darle permiso: en el banco de pruebas se leía como
+        // si faltara, con la lista ya puesta.
+        Donde::Fuera { instalacion } if hay_identidades => format!(
+            "cierra este Programator, ábrelo en «{}» junto con uno de los agentes que nombra \
+             «identidades_que_ordenan» en la sección [revision] de «{}» y pídele allí \
+             «{PEDIDO_DE_BUSQUEDA}»",
+            instalacion.display(),
+            configuracion.display()
+        ),
         Donde::Fuera { instalacion } => format!(
             "cierra este Programator, ábrelo junto con el agente que quieras que la lleve en \
              «{}», {permiso} y pídele allí «{PEDIDO_DE_BUSQUEDA}»",
@@ -919,8 +928,8 @@ También puedes dejar tú un modelo"
                 .unwrap();
         assert!(
             texto.contains(
-                "que se midió: cierra este Programator, ábrelo junto con el agente que quieras que \
-                 la lleve en «C:/programator»"
+                "que se midió: cierra este Programator, ábrelo en «C:/programator» junto con uno \
+                 de los agentes que nombra «identidades_que_ordenan»"
             ),
             "{texto}"
         );
@@ -945,13 +954,24 @@ También puedes dejar tú un modelo"
 
         let desde_fuera = que_hacer_sin_modelos(&fuera, configuracion, "inst/modelos", true);
         assert!(
-            desde_fuera.contains("ábrelo junto con el agente"),
+            desde_fuera.contains("ábrelo en «inst» junto con uno de los agentes"),
             "{desde_fuera}"
         );
         assert!(desde_fuera.contains("«inst»"), "{desde_fuera}");
         assert!(
             desde_fuera.contains("identidades_que_ordenan"),
             "{desde_fuera}"
+        );
+        assert!(!desde_fuera.contains("dale permiso"), "{desde_fuera}");
+
+        let fuera_sin_nadie = que_hacer_sin_modelos(&fuera, configuracion, "inst/modelos", false);
+        assert!(
+            fuera_sin_nadie.contains("ábrelo junto con el agente"),
+            "{fuera_sin_nadie}"
+        );
+        assert!(
+            fuera_sin_nadie.contains("dale permiso"),
+            "{fuera_sin_nadie}"
         );
 
         let sin_permiso = que_hacer_sin_modelos(

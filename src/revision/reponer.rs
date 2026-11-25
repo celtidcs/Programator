@@ -63,6 +63,8 @@ impl Reposicion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repuesto {
     pub nombre: String,
+    /// El repositorio de Hugging Face del que se bajó.
+    pub repositorio: String,
     /// Lo que pesa el fichero.
     pub bytes: u64,
 }
@@ -162,6 +164,7 @@ fn reponer_uno(
     let bytes = en_el_sitio.tamano.ok_or(MotivoSinReponer::SinTamano)?;
     let repuesto = Repuesto {
         nombre: util.nombre.clone(),
+        repositorio: origen.repositorio.clone(),
         bytes,
     };
     let destino = entorno
@@ -468,6 +471,7 @@ mod pruebas {
             hecho.reposicion.repuestos,
             [Repuesto {
                 nombre: "b".into(),
+                repositorio: "r/b".into(),
                 bytes: CONTENIDO.len() as u64,
             }]
         );
@@ -769,6 +773,7 @@ mod pruebas {
             hecho.reposicion.repuestos,
             [Repuesto {
                 nombre: "b".into(),
+                repositorio: "r/b".into(),
                 bytes: CONTENIDO.len() as u64,
             }]
         );

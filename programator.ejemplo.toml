@@ -237,7 +237,9 @@ maximo_salida_al_modelo = 1200
 #     que va aquí es la comprobación de UN fichero suelto.
 #
 # Descomenta las que tengas instaladas y adáptalas a tu máquina; una orden que no exista no rompe
-# nada, se dice que no se pudo verificar. Estos son ejemplos, no configuraciones probadas aquí.
+# nada, se dice que no se pudo verificar. Son ejemplos: la de «rs» está probada en Windows con el
+# rustc de rustup (acepta un fichero bueno y rechaza uno con un error de tipos, sin dejar restos);
+# las demás no se han probado aquí.
 #
 # Ojo con los comprobadores que dejan restos: «py_compile» escribe el bytecode en un «__pycache__»
 # JUNTO AL FICHERO, no en la carpeta donde se ejecuta. Esta variante solo analiza la

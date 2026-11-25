@@ -78,9 +78,55 @@ impl Veredicto {
             ),
             Veredicto::NoSePudo { .. } => format!("`{nombre}`: no se pudo verificar"),
             Veredicto::Pasa { .. } => format!("`{nombre}`: ✅ pasa la comprobación"),
-            Veredicto::NoPasa { .. } => format!("`{nombre}`: ❌ NO pasa la comprobación"),
+            // Con el motivo: en una prueba de uso real la línea solo decía que no
+            // pasaba, y quien encargó tuvo que recompilar para saber por qué.
+            Veredicto::NoPasa { salida, .. } => format!(
+                "`{nombre}`: ❌ NO pasa la comprobación — {}",
+                motivo_en_una_linea(salida)
+            ),
         }
     }
+}
+
+/// Lo más largo que se copia al canal del motivo de un rechazo o de una denegación. Es una línea
+/// para personas, no el texto entero: ese ya lo recibe el modelo.
+pub(crate) const MAXIMO_EN_UNA_LINEA_DEL_CANAL: usize = 160;
+
+/// `linea` tal como va en una línea del canal: recortada a [`MAXIMO_EN_UNA_LINEA_DEL_CANAL`]
+/// caracteres y sin saltos. La usan el motivo de un rechazo y el de una denegación.
+pub(crate) fn en_una_linea_del_canal(linea: &str) -> String {
+    recortar(linea, MAXIMO_EN_UNA_LINEA_DEL_CANAL).replace('\n', " ")
+}
+
+/// Cómo termina la palabra con que empieza la línea del error en los comprobadores habituales:
+/// `rustc` escribe «error[E0308]: …», `cargo` antepone líneas «Compiling …» y Python termina con
+/// «SyntaxError: …» tras varias de contexto.
+const SENAL_DE_ERROR: &str = "error";
+
+/// Lo que cierra esa primera palabra: «error[E0308]» o «SyntaxError:».
+const TRAS_LA_SENAL: [char; 2] = ['[', ':'];
+
+/// La línea de la salida que mejor dice por qué se rechazó: la primera que empieza por una
+/// palabra terminada en «error» seguida de «[» o «:», o si ninguna, la primera que no está vacía.
+/// Recortada, para que no se coma el canal. Buscar «error» en cualquier sitio de la línea
+/// confundía un `File "error_handler.py"` de Python con el error.
+fn motivo_en_una_linea(salida: &str) -> String {
+    let lineas = || salida.lines().map(str::trim).filter(|l| !l.is_empty());
+    let linea = lineas()
+        .find(|l| empieza_por_un_error(l))
+        .or_else(|| lineas().next())
+        .unwrap_or_default();
+    en_una_linea_del_canal(linea)
+}
+
+/// Si `linea` empieza por una palabra terminada en «error» (en cualquier mayúscula) seguida de
+/// «[» o «:».
+fn empieza_por_un_error(linea: &str) -> bool {
+    linea
+        .split_once(TRAS_LA_SENAL)
+        .map(|(palabra, _)| palabra)
+        .filter(|palabra| !palabra.contains(char::is_whitespace))
+        .is_some_and(|palabra| palabra.to_lowercase().ends_with(SENAL_DE_ERROR))
 }
 
 /// Los comprobadores configurados: extensión (sin punto, en minúsculas) → orden a ejecutar.
@@ -226,6 +272,66 @@ mod pruebas {
         assert!(
             !linea.contains("sin verificar"),
             "el texto viejo sigue ahí: {linea}"
+        );
+    }
+
+    fn no_pasa(salida: &str) -> Veredicto {
+        Veredicto::NoPasa {
+            orden: "rustc".to_string(),
+            salida: salida.to_string(),
+        }
+    }
+
+    #[test]
+    fn un_rechazo_dice_en_el_canal_la_linea_del_error() {
+        // Lo que dijo rustc de verdad en una prueba de uso real, con el aviso que a veces lo precede.
+        let salida = "warning: unused variable\nerror[E0308]: mismatched types\n --> roto.rs:1:21";
+        let linea = no_pasa(salida).para_el_canal("roto.rs");
+
+        assert_eq!(
+            linea,
+            "`roto.rs`: ❌ NO pasa la comprobación — error[E0308]: mismatched types"
+        );
+    }
+
+    #[test]
+    fn de_python_coge_la_linea_del_error_y_no_la_del_fichero() {
+        let salida =
+            "  File \"x.py\", line 1\n    print(\n         ^\nSyntaxError: '(' was never closed";
+        let linea = no_pasa(salida).para_el_canal("x.py");
+
+        assert!(
+            linea.ends_with("— SyntaxError: '(' was never closed"),
+            "{linea}"
+        );
+    }
+
+    #[test]
+    fn un_fichero_con_error_en_el_nombre_no_es_la_linea_del_error() {
+        let salida =
+            "  File \"error_handler.py\", line 1\n    def f(:\n          ^\nSyntaxError: invalid syntax";
+        let linea = no_pasa(salida).para_el_canal("error_handler.py");
+
+        assert!(linea.ends_with("— SyntaxError: invalid syntax"), "{linea}");
+    }
+
+    #[test]
+    fn sin_linea_de_error_se_dice_la_primera_que_haya() {
+        let linea = no_pasa("\n  algo salió mal\notra cosa").para_el_canal("a.lua");
+
+        assert!(linea.ends_with("— algo salió mal"), "{linea}");
+    }
+
+    #[test]
+    fn el_motivo_del_canal_es_una_sola_linea_corta() {
+        let larga = format!("error: {}", "x".repeat(MAXIMO_EN_UNA_LINEA_DEL_CANAL * 2));
+        let linea = no_pasa(&larga).para_el_canal("a.rs");
+
+        assert!(!linea.contains('\n'), "{linea}");
+        assert!(linea.contains("[…recortado]"), "{linea}");
+        assert!(
+            linea.chars().count() < MAXIMO_EN_UNA_LINEA_DEL_CANAL + 80,
+            "{linea}"
         );
     }
 

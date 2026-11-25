@@ -1,11 +1,13 @@
 //! El aviso del arranque de que faltan en la carpeta de modelos modelos del registro que siguen
-//! haciendo falta. Solo en la terminal, sin red, sin leer ningún GGUF y sin calcular huellas.
+//! haciendo falta. Solo en la terminal, sin red, sin leer ningún GGUF y sin calcular huellas: de
+//! dónde salió cada uno lo dicen el registro y las listas de búsquedas anteriores, como en la
+//! reposición.
 
 use super::guia_del_equipo::LoMedido;
 use super::ninguno_cabe::identidades_que_ordenan;
 use programator::arranque;
 use programator::config::{Config, NOMBRE_DEL_FICHERO_DE_CONFIGURACION};
-use programator::revision::{ausentes, donde, mensajes, proponer::ficheros_con_tamano};
+use programator::revision::{donde, mensajes, origenes, proponer::ficheros_con_tamano};
 use std::path::Path;
 
 /// Si faltan modelos útiles, se dice en la terminal. Sin tarjeta medida no se sabe qué cifras
@@ -20,8 +22,9 @@ pub(super) fn avisar_de_los_que_faltan(carpeta: &Path, config: &Config, medido: 
         return;
     };
     let modelo_en_uso = config.motor.nombre_del_modelo();
-    let faltan = ausentes::clasificar(
+    let faltan = origenes::ausentes_al_arrancar(
         medido.registro,
+        &config.resolver(&config.revision.carpeta),
         tarjeta,
         &en_modelos,
         modelo_en_uso.as_deref(),

@@ -53,9 +53,9 @@ fn seccion_de_la_reposicion(reposicion: &Reposicion) -> String {
     }
     for repuesto in &reposicion.repuestos {
         texto += &format!(
-            "- `{}`: repuesto desde su repositorio ({}), con la huella del registro \
-             comprobada.\n",
+            "- `{}`: repuesto desde «{}» ({}), con la huella del registro comprobada.\n",
             con_extension(&repuesto.nombre),
+            repuesto.repositorio,
             en_gib(repuesto.bytes)
         );
     }
@@ -221,6 +221,26 @@ mod pruebas {
             },
             SITIO,
         )
+    }
+
+    #[test]
+    fn el_repuesto_dice_de_que_repositorio_se_bajo() {
+        let reposicion = Reposicion {
+            repuestos: vec![super::super::reponer::Repuesto {
+                nombre: "Modelo-Q4_K_M".into(),
+                repositorio: "autor/Modelo-GGUF".into(),
+                bytes: 4 * GIB,
+            }],
+            ..Reposicion::default()
+        };
+        let texto = seccion_de_la_reposicion(&reposicion);
+        assert!(
+            texto.contains(
+                "- `Modelo-Q4_K_M.gguf`: repuesto desde «autor/Modelo-GGUF» (4,0 GiB), con la \
+                 huella del registro comprobada."
+            ),
+            "{texto}"
+        );
     }
 
     fn lista(candidatos: Vec<EntradaDeLaLista>) -> ListaDeCandidatos {

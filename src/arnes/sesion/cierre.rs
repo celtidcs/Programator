@@ -98,7 +98,14 @@ pub(super) fn publicar_el_desenlace(
     } = *atendido;
     let terminal = pasada.ajustes.terminal;
     // Decisión 6: el desenlace sale al canal únicamente por `Canal::publicar`.
-    match responder(pasada.canal, cuerpo, pasada.leido, encargo, terminal) {
+    match responder(
+        pasada.canal,
+        cuerpo,
+        pasada.leido,
+        encargo,
+        pasada.recibido_a,
+        terminal,
+    ) {
         Ok(()) => {
             resumen.atendidos += 1;
             cola.quitar(encargo);

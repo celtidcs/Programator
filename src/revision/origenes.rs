@@ -108,6 +108,32 @@ pub fn completar_origenes(registro: &mut Registro, conocidos: &[FicheroConocido]
     completadas
 }
 
+/// El registro con los orígenes que le faltan completados con las listas de búsquedas
+/// anteriores: lo que la reposición sabrá de él antes de buscar, sin red. Si la carpeta de
+/// revisiones no se deja leer, el registro tal cual; las listas ilegibles se saltan.
+pub fn con_los_de_las_listas(registro: &Registro, carpeta_de_revisiones: &Path) -> Registro {
+    let mut completo = registro.clone();
+    if let Ok(listas) = de_las_listas(carpeta_de_revisiones) {
+        completar_origenes(&mut completo, &listas.conocidos);
+    }
+    completo
+}
+
+/// Los modelos del registro que faltan en la carpeta de modelos, con lo que se sabe de su origen
+/// sin red: el registro completado con las listas de `carpeta_de_revisiones` y clasificado como
+/// en [`super::ausentes::clasificar`]. Es lo que cuenta el arranque; sin las listas decía «no se
+/// sabe de qué repositorio salió» de un modelo que una búsqueda anterior sí conocía.
+pub fn ausentes_al_arrancar(
+    registro: &Registro,
+    carpeta_de_revisiones: &Path,
+    tarjeta: &str,
+    en_modelos: &[(String, u64)],
+    modelo_en_uso: Option<&str>,
+) -> super::ausentes::Ausentes {
+    let completo = con_los_de_las_listas(registro, carpeta_de_revisiones);
+    super::ausentes::clasificar(&completo, tarjeta, en_modelos, modelo_en_uso)
+}
+
 /// Anota una tanda en el registro y, si se anotó, completa los orígenes que falten con las listas
 /// de búsquedas guardadas: el candidato que se probó sale de una, con su huella y su tamaño. El
 /// registro solo se vuelve a escribir si se completó alguno. Las listas que no se pueden leer se
@@ -368,6 +394,64 @@ mod pruebas {
             leidas.ilegibles[0].causa.contains(NOMBRE_DE_LA_LISTA),
             "{:?}",
             leidas.ilegibles[0]
+        );
+    }
+
+    #[test]
+    fn el_registro_sabe_el_origen_que_dice_una_lista_anterior() {
+        let raiz = tempfile::tempdir().unwrap();
+        escribir_lista(
+            &raiz.path().join("2026-11"),
+            NOMBRE_DE_LA_LISTA,
+            vec![candidato("de-la-lista/M-GGUF", Some("abcdef"))],
+            vec![],
+        );
+        let registro = Registro {
+            modelo: vec![entrada("abcdef"), entrada("otra")],
+        };
+        let completo = con_los_de_las_listas(&registro, raiz.path());
+        let origenes: Vec<Option<&str>> = completo
+            .modelo
+            .iter()
+            .map(|e| e.origen.as_ref().map(|o| o.repositorio.as_str()))
+            .collect();
+        assert_eq!(origenes, [Some("de-la-lista/M-GGUF"), None]);
+    }
+
+    #[test]
+    fn al_arrancar_el_modelo_que_falta_sabe_el_origen_que_dice_una_lista() {
+        let raiz = tempfile::tempdir().unwrap();
+        escribir_lista(
+            &raiz.path().join("2026-11"),
+            NOMBRE_DE_LA_LISTA,
+            vec![candidato("de-la-lista/M-GGUF", Some("abcdef"))],
+            vec![],
+        );
+        let falta = entrada("abcdef");
+        let (nombre, tarjeta) = (falta.nombre.clone(), falta.tarjeta.clone());
+        let registro = Registro {
+            modelo: vec![falta],
+        };
+
+        let ausentes = ausentes_al_arrancar(&registro, raiz.path(), &tarjeta, &[], Some(&nombre));
+
+        let origenes: Vec<Option<&str>> = ausentes
+            .utiles
+            .iter()
+            .map(|u| u.origen.as_ref().map(|o| o.repositorio.as_str()))
+            .collect();
+        assert_eq!(origenes, [Some("de-la-lista/M-GGUF")]);
+    }
+
+    #[test]
+    fn sin_listas_el_registro_queda_como_estaba() {
+        let raiz = tempfile::tempdir().unwrap();
+        let registro = Registro {
+            modelo: vec![entrada("abcdef")],
+        };
+        assert_eq!(
+            con_los_de_las_listas(&registro, &raiz.path().join("no-esta")),
+            registro
         );
     }
 

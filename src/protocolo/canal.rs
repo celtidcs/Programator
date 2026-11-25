@@ -181,7 +181,7 @@ impl Canal {
     /// El `cuerpo` lo aporta el modelo. El encabezado, el `LATIDO:` y el `LEÍDO:` los aporta este
     /// método, siempre, aunque el modelo los haya omitido o inventado.
     pub fn publicar(&self, cuerpo: &str, leido: &ResumenLeido, ahora: &str) -> Resultado<()> {
-        self.publicar_respuesta(cuerpo, leido, ahora, None)
+        self.publicar_respuesta(cuerpo, leido, ahora, None, ahora)
     }
 
     /// La cabecera de la respuesta a `encargo`, con la identidad de quien lo escribió leída de la
@@ -209,14 +209,19 @@ impl Canal {
     /// (`Para <identidad>: respuesta a …` y el acuse), que despierta a quien encargó. Todo lo demás
     /// se publica con cada «Para» en minúscula, para que no despierte a nadie (por compatibilidad
     /// con Gestor Agentes).
+    ///
+    /// El `LATIDO:` lleva `ahora`, la hora de la publicación; el acuse lleva `recibido_a`, la marca
+    /// de cuando se leyó el encargo, porque `RECIBIDO` dice cuándo llegó, no cuándo se contestó
+    /// (en una prueba de uso real salían iguales aunque entre una y otra pasaron 65 s).
     pub fn publicar_respuesta(
         &self,
         cuerpo: &str,
         leido: &ResumenLeido,
         ahora: &str,
         cabecera: Option<&Cabecera>,
+        recibido_a: &str,
     ) -> Resultado<()> {
-        let lineas = cabecera.map(|cabecera| cabecera.lineas(hora_de(ahora)));
+        let lineas = cabecera.map(|cabecera| cabecera.lineas(hora_de(recibido_a)));
         self.escribir_intervencion(cuerpo, leido, ahora, lineas)
     }
 

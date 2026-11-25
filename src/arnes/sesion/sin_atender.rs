@@ -28,6 +28,7 @@ pub(super) fn cerrar_sin_modelo(
         &publicacion::aviso_sin_modelo(motivo),
         pasada.leido,
         encargo,
+        pasada.recibido_a,
         terminal,
     ) {
         Ok(()) => {
@@ -68,7 +69,14 @@ pub(super) fn dejar_pendiente(
         ));
         return;
     };
-    match responder(pasada.canal, &cierre, pasada.leido, encargo, terminal) {
+    match responder(
+        pasada.canal,
+        &cierre,
+        pasada.leido,
+        encargo,
+        pasada.recibido_a,
+        terminal,
+    ) {
         Ok(()) => {
             cola.quitar(encargo);
             terminal.avisar(&publicacion::mensaje_encargo_cerrado(&encargo.de, motivo));

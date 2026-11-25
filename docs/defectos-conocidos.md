@@ -81,7 +81,7 @@ Consecuencia para el usuario: si se publica un encargo erróneo, el modelo consu
 
 Cómo mitigarlo: verificar cuidadosamente los requisitos y el alcance de cada encargo antes de publicarlo en el buzón.
 
-Un caso concreto de esta limitación: si en la misma vuelta hay encargos para el modelo y una petición de revisión, y el modelo todavía está cargando, la revisión también espera a que termine la carga, aunque no lo necesita. La pasada se corta sin dar por leído el canal para no perder ningún encargo, y contestar la revisión en ese momento haría que se contestara dos veces. La espera es la de la carga del modelo, de unos segundos a un par de minutos. Queda para la 1.1.0.
+Un caso concreto de esta limitación: si en la misma vuelta hay encargos para el modelo y una petición de revisión, y el modelo todavía está cargando, la revisión también espera a que termine la carga, aunque no lo necesita. La pasada se corta sin dar por leído el canal para no perder ningún encargo, y contestar la revisión en ese momento haría que se contestara dos veces. La espera es la de la carga del modelo, de unos segundos a un par de minutos. Queda para una versión posterior.
 
 
 Limitación 3: falta de catálogo persistente de entregas previas

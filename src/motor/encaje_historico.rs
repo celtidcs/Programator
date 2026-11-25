@@ -111,7 +111,12 @@ pub fn linea_de_memoria(memoria: &Memoria) -> String {
             .map(|mib| format!("{mib} MiB"))
             .unwrap_or_else(|| SIN_MEDIR.to_string())
     };
+    // El motor cuenta la capa de salida como una más: con todo el modelo en la tarjeta pide
+    // `total + 1` capas (o 99, por «todas»), y «34 de 33» parecería un error.
     let capas = match memoria.capas_totales {
+        Some(total) if memoria.capas > total => {
+            format!("las {total} capas y la de salida en la tarjeta")
+        }
         Some(total) => format!("{} de {total} capas en la tarjeta", memoria.capas),
         None => format!("{} capas en la tarjeta", memoria.capas),
     };
@@ -276,10 +281,48 @@ mod pruebas {
         let linea = linea_de_memoria(&memoria());
         assert_eq!(
             linea,
-            "Memoria: devstral · 41 de 40 capas en la tarjeta · libre antes de cargar: 15000 MiB · \
+            "Memoria: devstral · las 40 capas y la de salida en la tarjeta · libre antes de \
+             cargar: 15000 MiB · \
              ocupa el motor: 13763 MiB · libre al terminar: 1200 MiB"
         );
         assert!(!linea.contains('|'));
+    }
+
+    #[test]
+    fn con_parte_del_modelo_en_la_tarjeta_dice_cuantas_de_cuantas() {
+        let linea = linea_de_memoria(&Memoria {
+            capas: 32,
+            ..memoria()
+        });
+        assert!(
+            linea.contains("· 32 de 40 capas en la tarjeta ·"),
+            "{linea}"
+        );
+    }
+
+    #[test]
+    fn con_tantas_capas_como_el_total_dice_cuantas_de_cuantas() {
+        // Sin la de salida, el modelo no está entero en la tarjeta: «las 40 capas y la de salida»
+        // sería mentira.
+        let linea = linea_de_memoria(&Memoria {
+            capas: 40,
+            ..memoria()
+        });
+        assert!(
+            linea.contains("· 40 de 40 capas en la tarjeta ·"),
+            "{linea}"
+        );
+    }
+
+    #[test]
+    fn con_todo_el_modelo_en_la_tarjeta_no_dice_mas_capas_que_el_total() {
+        for capas in [41, 99] {
+            let linea = linea_de_memoria(&Memoria { capas, ..memoria() });
+            assert!(
+                linea.contains("· las 40 capas y la de salida en la tarjeta ·"),
+                "{linea}"
+            );
+        }
     }
 
     #[test]

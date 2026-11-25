@@ -410,6 +410,9 @@ fn mensaje_fallo_arranque_explica_fallo_consecuencia_y_accion_segun_error() {
         Error::ConfiguracionDeLaCarpeta("la carpeta de trabajo no existe".to_string());
     let texto_2 = mensaje_fallo_arranque(&fallo_carpeta);
     assert!(texto_2.contains("--ruta <DIRECTORIO>"));
+    assert!(texto_2.contains("[carpeta]"), "{texto_2}");
+    // El consejo de la carpeta no manda a mirar el motor.
+    assert!(!texto_2.contains("[motor]"), "{texto_2}");
 
     // Caso 3: configuración con problema de motor
     let fallo_motor =

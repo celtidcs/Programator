@@ -11,6 +11,15 @@ use crate::protocolo::ResumenLeido;
 /// fichero.
 const VERBO_DE_PROPUESTA: &str = crate::arnes::ficha::verbo::ESCRIBIR_PROPUESTA;
 
+/// Las herramientas con que el modelo entrega, como se nombran en los avisos: «publicar» o
+/// «escribir_propuesta», sacadas de sus constantes para que el texto no se quede atrás si cambian.
+fn herramientas_de_entrega() -> String {
+    format!(
+        "«{}» o «{VERBO_DE_PROPUESTA}»",
+        crate::arnes::ficha::verbo::PUBLICAR
+    )
+}
+
 /// Si el encargo pide dejar un fichero: nombra el verbo de las propuestas.
 pub(super) fn entrega_pedida(texto_del_encargo: &str) -> EntregaPedida {
     if texto_del_encargo.contains(VERBO_DE_PROPUESTA) {
@@ -38,7 +47,8 @@ pub(super) fn avisa_sin_entrega(pedida: EntregaPedida, texto: &str) -> bool {
 /// El aviso en la terminal de un encargo que terminó sin invocar ninguna herramienta de entrega.
 pub(super) fn aviso_sin_entrega_en_la_terminal(de: &str) -> String {
     format!(
-        "⚠️ Programator procesó el encargo de «{de}» pero no invocó herramientas de entrega («publicar» o «escribir_propuesta»). Se publica la respuesta directa en el canal."
+        "⚠️ Programator procesó el encargo de «{de}» pero no invocó herramientas de entrega ({}). Se publica la respuesta directa en el canal.",
+        herramientas_de_entrega()
     )
 }
 
@@ -57,7 +67,10 @@ pub(super) fn cuerpo_base_desenlace(
             texto.clone()
         }
         crate::arnes::ciclo::Desenlace::SinEntrega(texto) => {
-            let aviso = "⚠️ Programator no invocó herramientas de entrega («publicar» o «escribir_propuesta»).";
+            let aviso = format!(
+                "⚠️ Programator no invocó herramientas de entrega ({}).",
+                herramientas_de_entrega()
+            );
             if texto.trim().is_empty() {
                 format!("{aviso}\n\nEl modelo terminó la generación sin producir texto ni invocar herramientas.")
             } else {
@@ -111,7 +124,8 @@ pub(super) fn aviso_sin_publicar(propuestas: &[String]) -> String {
     };
     format!(
         "⚠️ Programator escribió {sujeto} {lista}, que {verbo} en disco, pero cerró el encargo \
-         sin llamar a «publicar»."
+         sin llamar a «{}».",
+        crate::arnes::ficha::verbo::PUBLICAR
     )
 }
 
@@ -134,6 +148,21 @@ pub(super) fn con_veredictos(cuerpo: &str, veredictos: &[String]) -> String {
     format!(
         "{cuerpo}\n\n**Comprobación de las propuestas** (la hace el arnés, no el modelo):\n{lista}"
     )
+}
+
+/// Añade al cuerpo lo que el arnés denegó al modelo en este encargo. Como los veredictos, lo
+/// escribe el arnés: el modelo puede reintentar con otro nombre y no contarlo. Sin denegaciones no
+/// se añade nada.
+pub(super) fn con_denegaciones(cuerpo: &str, denegadas: &[String]) -> String {
+    if denegadas.is_empty() {
+        return cuerpo.to_string();
+    }
+    let lista = denegadas
+        .iter()
+        .map(|d| format!("- {d}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{cuerpo}\n\n**Denegado por el arnés** (lo pidió el modelo y no se concedió):\n{lista}")
 }
 
 /// Concatena avisos del arnés (como advertencias de ocupación de contexto) al cuerpo final.

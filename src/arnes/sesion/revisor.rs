@@ -66,7 +66,14 @@ pub(super) fn atender_con_el_revisor(
             quien.as_ref().map(|cabecera| cabecera.identidad()),
             encargo.cuerpo(pasada.agente),
         );
-        match responder(pasada.canal, &cuerpo, pasada.leido, &encargo, terminal) {
+        match responder(
+            pasada.canal,
+            &cuerpo,
+            pasada.leido,
+            &encargo,
+            pasada.recibido_a,
+            terminal,
+        ) {
             Ok(()) => {
                 resumen.atendidos += 1;
                 // Como tras un encargo del modelo: publicada, ya no se está atendiendo.

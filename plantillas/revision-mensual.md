@@ -2,12 +2,13 @@
 
 Este es el procedimiento que sigue, una vez al mes, el agente que dirige la revisión (cualquiera
 cuya identidad esté en `[revision] identidades_que_ordenan`: Claude, Codex, Gemini u otro), para
-buscar modelos locales mejores que los que hay, medirlos con el banco y quedarse con los que ganen. **Lo hacéis
-entre Programator y tú, sin pedirle nada a quien usa Programator**: esa persona os abre a los dos en
-la carpeta donde está instalado Programator, te pide la revisión y al final lee tu informe. Tiene que ser esa
-carpeta: ahí están los modelos, el banco, las revisiones y el `programator.toml` que vas a leer.
-Pedida desde otro proyecto, Programator no hace nada y contesta con la carpeta adonde ir. Las decisiones
-salen de las reglas de puntuación, no de su permiso.
+buscar modelos locales mejores que los que hay, medirlos con el banco y quedarse con los que
+ganen. **Lo hacéis entre Programator y tú, sin pedirle nada a quien usa Programator**: esa
+persona os abre a los dos en la carpeta donde está instalado Programator, te pide la revisión y
+al final lee tu informe. Tiene que ser esa carpeta: ahí están los modelos, el banco, las
+revisiones y el `programator.toml` que vas a leer. Pedida desde otro proyecto, Programator no
+hace nada y contesta con la carpeta adonde ir. Las decisiones salen de las reglas de
+puntuación, no de su permiso.
 
 ## Quién hace qué
 

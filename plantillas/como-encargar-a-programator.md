@@ -18,8 +18,8 @@ rápido, y con más contexto, más lento.
 **Repetir un encargo da lo mismo.** El mismo encargo, sobre la misma carpeta y con la misma
 configuración, da la misma respuesta: la semilla va fija y cada encargo empieza sin la caché del
 motor. Si la respuesta no vale, mandarlo otra vez tal cual no sirve de nada. Cambia el encargo
-(más acotado, con el fragmento pegado y numerado) o pide a quien usa Programator otro intento con otra semilla,
-que es configuración de Programator y no algo que se pida en el encargo.
+(más acotado, con el fragmento pegado y numerado) o pide a quien usa Programator otro intento
+con otra semilla, que es configuración de Programator y no algo que se pida en el encargo.
 
 ## Lo que sí puede hacer por su cuenta
 

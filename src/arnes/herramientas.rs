@@ -120,6 +120,10 @@ pub struct Repertorio<'t> {
     /// tiene que llevar la respuesta del encargo. Es una lista y no un contador: con un contador,
     /// si fallaba el primero y salía el segundo, se daría por pendiente el segundo.
     sin_publicar: Vec<String>,
+    /// Lo que el arnés denegó en el encargo en curso, una línea por denegación distinta, para la
+    /// respuesta: en una prueba de uso real el arnés denegó una propuesta que salía de su
+    /// carpeta, el modelo reintentó con otro nombre y quien encargó no se enteró.
+    denegadas: Vec<String>,
     /// Las líneas de reserva que el modelo anotó en `estado.md` y siguen puestas. Se quitan al
     /// cerrar el encargo, publique o no (las reservas del canal se
     /// borran al terminar la tarea).
@@ -148,6 +152,7 @@ impl<'t> Repertorio<'t> {
             tope_lectura: TOPE_LECTURA_POR_DEFECTO,
             leido: ResumenLeido::vacio(),
             sin_publicar: Vec::new(),
+            denegadas: Vec::new(),
             reservas: Vec::new(),
             terminal,
         }
@@ -211,10 +216,17 @@ impl<'t> Repertorio<'t> {
         &self.sin_publicar
     }
 
+    /// Lo que el arnés denegó en el encargo en curso, para contarlo en su respuesta.
+    pub fn denegadas_del_encargo(&self) -> &[String] {
+        &self.denegadas
+    }
+
     /// Al cerrar un encargo, salga como salga: sus veredictos sin publicar ya fueron en su
-    /// respuesta, o el encargo se repetirá, o se cerró; no pasan al siguiente.
+    /// respuesta, o el encargo se repetirá, o se cerró; no pasan al siguiente. Sus denegaciones
+    /// tampoco.
     pub fn cerrar_los_veredictos_del_encargo(&mut self) {
         self.sin_publicar.clear();
+        self.denegadas.clear();
     }
 
     /// Los nombres reales de los ficheros de propuesta escritos en disco durante esta pasada.
@@ -260,6 +272,18 @@ impl<'t> Repertorio<'t> {
     /// `ficha::Estado`: un verbo que se deniega siempre se deniega con el motivo de su ficha, sin
     /// nombrarlo aquí, y solo los concedibles y los pendientes llegan a su verbo.
     pub fn atender(&mut self, solicitud: &SolicitudHerramienta) -> Decision {
+        let decision = self.decidir(solicitud);
+        if let Decision::Denegada(motivo) = &decision {
+            let linea = mensajes::denegada_para_el_canal(&solicitud.nombre, motivo);
+            if !self.denegadas.contains(&linea) {
+                self.denegadas.push(linea);
+            }
+        }
+        decision
+    }
+
+    /// Lo que se decide para `solicitud`, sin apuntar nada.
+    fn decidir(&mut self, solicitud: &SolicitudHerramienta) -> Decision {
         let Some(ficha) = ficha::buscar(&solicitud.nombre) else {
             return Decision::Denegada(mensajes::fuera_del_repertorio(
                 &solicitud.nombre,

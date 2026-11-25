@@ -301,10 +301,49 @@ fn con_etiqueta_la_respuesta_acusa_el_encargo_como_lo_lee_gestor() {
     let buzon = buzon_propio(&carpeta);
     let todas = intervenciones(&buzon);
     assert_eq!(todas[0].1[0], "Para Claude 2: respuesta a contar líneas");
-    let hora = todas[0].0.split_whitespace().last().unwrap();
-    assert_eq!(todas[0].1[1], format!("RECIBIDO {hora}: PG-A"), "{buzon}");
+    let acuse = &todas[0].1[1];
+    let hora = acuse
+        .strip_prefix("RECIBIDO ")
+        .and_then(|resto| resto.strip_suffix(": PG-A"))
+        .unwrap_or_else(|| panic!("{buzon}"));
+    assert!(
+        chrono::NaiveTime::parse_from_str(hora, "%H:%M:%S").is_ok(),
+        "{buzon}"
+    );
     assert!(acusado("PG-A", "2026-11-22 15:00:00", &buzon), "{buzon}");
     assert!(!acusado("PG-B", "2026-11-22 15:00:00", &buzon), "{buzon}");
+}
+
+#[test]
+fn el_acuse_lleva_la_hora_en_que_se_leyo_y_no_la_de_la_respuesta() {
+    // En una prueba de uso real el RECIBIDO salía con la hora de la respuesta, 65 s después
+    // de leer el encargo. Aquí, cambiar de modelo tarda algo más de un segundo.
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude2.md",
+        "LATIDO: 2026-11-22 15:00:00\n\nPara Programator: PG-A contar líneas\n",
+    );
+    let mut motores = MotoresDeMentira {
+        cargado: Some("otro".to_string()),
+        al_cambiar: Some(Box::new(|| {
+            std::thread::sleep(std::time::Duration::from_millis(1_100))
+        })),
+        ..MotoresDeMentira::default()
+    };
+
+    pasar(&carpeta, &mut motores);
+
+    let buzon = buzon_propio(&carpeta);
+    let todas = intervenciones(&buzon);
+    let publicada = todas[0].0.split_whitespace().last().unwrap();
+    let acuse = &todas[0].1[1];
+    assert!(acuse.starts_with("RECIBIDO "), "{buzon}");
+    assert!(
+        !acuse.contains(&format!(" {publicada}:")),
+        "el acuse lleva la hora de la respuesta: {buzon}"
+    );
 }
 
 #[test]

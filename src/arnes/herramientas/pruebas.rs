@@ -130,6 +130,24 @@ fn deniega_la_lectura_de_un_fichero_fuera_del_ambito() {
     assert!(matches!(decision, Decision::Denegada(_)));
 }
 
+/// Si el modelo repite la misma petición denegada, la respuesta la cuenta una sola vez: no es
+/// otra cosa que se le negó, es la misma.
+#[test]
+fn una_denegacion_repetida_se_cuenta_una_sola_vez() {
+    let (_dir, mut r) = repertorio_de_prueba();
+    let fuera = || solicitar("leer_fichero", serde_json::json!({"ruta": "../fuera.txt"}));
+
+    r.atender(&fuera());
+    r.atender(&fuera());
+
+    assert_eq!(
+        r.denegadas_del_encargo().len(),
+        1,
+        "{:?}",
+        r.denegadas_del_encargo()
+    );
+}
+
 #[test]
 fn deniega_una_verificacion_que_no_esta_en_la_lista_blanca() {
     let (_dir, mut r) = repertorio_de_prueba();

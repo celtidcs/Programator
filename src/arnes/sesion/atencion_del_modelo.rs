@@ -5,7 +5,7 @@
 use super::cierre::{liberar_el_encargo, proponer_la_poda, publicar_el_desenlace, Atendido};
 use super::instrucciones::leer_instrucciones;
 use super::pasada::Pasada;
-use super::publicacion::{self, con_avisos, con_veredictos, EntregaPedida};
+use super::publicacion::{self, con_avisos, con_denegaciones, con_veredictos, EntregaPedida};
 use super::{Ajustes, ModeloPedido, Motores, ResumenPasada};
 use crate::arnes::ciclo::{atender_encargo, Desenlace};
 use crate::arnes::contexto::componer_contexto;
@@ -165,6 +165,7 @@ impl<'a, 'p> Atencion<'a, 'p> {
             &desenlace,
             pedida,
             self.repertorio.veredictos_no_publicados(),
+            self.repertorio.denegadas_del_encargo(),
             &avisos_del_encargo,
         );
         if let Some(poda) =
@@ -282,11 +283,12 @@ fn contar_el_desenlace(
 }
 
 /// La respuesta a un encargo, antes de la poda: el desenlace, los veredictos que quedaron sin
-/// publicar y los avisos del encargo.
+/// publicar, lo que el arnés denegó y los avisos del encargo.
 fn componer_la_respuesta(
     desenlace: &Desenlace,
     pedida: EntregaPedida,
     veredictos_no_publicados: &[String],
+    denegadas: &[String],
     avisos: &[String],
 ) -> String {
     // Los tres desenlaces se publican, no solo el bueno. El protocolo exige registrar la
@@ -298,5 +300,6 @@ fn componer_la_respuesta(
     // publican de inmediato en el buzón al entregarse (visto en uso real). Al cierre del
     // encargo sólo se adjuntan veredictos si quedó alguno sin publicar por un fallo previo.
     let cuerpo = con_veredictos(&cuerpo_base, veredictos_no_publicados);
+    let cuerpo = con_denegaciones(&cuerpo, denegadas);
     con_avisos(&cuerpo, avisos)
 }

@@ -1630,3 +1630,110 @@ fn el_modelo_recibe_el_nombre_configurado_del_agente() {
     assert!(sistema.contains("Eres Cobalto,"), "{sistema}");
     assert!(!sistema.contains("Eres Programator"), "{sistema}");
 }
+
+/// En una prueba de uso real el arnés denegó una propuesta que salía de su carpeta, el modelo
+/// reintentó con otro nombre y la respuesta no lo contaba: quien encargó no se enteró. Ahora la
+/// respuesta lo dice, y solo la de ese encargo.
+#[test]
+fn la_respuesta_cuenta_lo_que_el_arnes_denego_y_solo_en_su_encargo() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nEscribe fuera.py.\n\n## Para Programator\n\nCuenta hasta tres.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "../../fuera.py", "contenido": "x = 1\n"}),
+        ),
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "fuera.py", "contenido": "x = 1\n"}),
+        ),
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Entregado fuera.py."}),
+        ),
+        Respuesta::Texto("Uno, dos, tres.".to_string()),
+    ]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(
+            &Limites::default(),
+            &Verificacion::default(),
+            &crate::terminal::TerminalReal,
+        ),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    let intervencion = |texto: &str| {
+        buzon
+            .split("LATIDO:")
+            .find(|parte| parte.contains(texto))
+            .unwrap_or_else(|| panic!("falta «{texto}»: {buzon}"))
+    };
+    let primera = intervencion("Entregado fuera.py.");
+    let segunda = intervencion("Uno, dos, tres.");
+    assert!(
+        primera.contains("**Denegado por el arnés**"),
+        "la respuesta no cuenta la denegación: {buzon}"
+    );
+    assert!(
+        primera.contains("- `escribir_propuesta`: «../../fuera.py» saldría de"),
+        "{buzon}"
+    );
+    assert!(!segunda.contains("Denegado"), "pasó al siguiente: {buzon}");
+}
+
+/// Si la sesión montara el repertorio sin la sección `[verificacion]` del TOML,
+/// ninguna propuesta se comprobaría y nada fallaba. Con un comprobador que rechaza, la respuesta
+/// tiene que decir que la propuesta no pasa.
+#[test]
+fn la_sesion_comprueba_las_propuestas_con_el_comprobador_del_toml() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nEscribe roto.rs.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "roto.rs", "contenido": "esto no es Rust"}),
+        ),
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Entregado roto.rs."}),
+        ),
+    ]);
+    let mut verificacion = Verificacion::default();
+    verificacion.comprobadores.insert(
+        "rs".to_string(),
+        crate::plataforma::ordenes_de_prueba::eco_y_codigo("el compilador dijo que no", 1),
+    );
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(
+            &Limites::default(),
+            &verificacion,
+            &crate::terminal::TerminalReal,
+        ),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    assert!(
+        buzon.contains("`roto.rs`: ❌ NO pasa la comprobación — el compilador dijo que no"),
+        "la sesión no comprobó la propuesta: {buzon}"
+    );
+}

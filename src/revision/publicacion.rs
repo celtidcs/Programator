@@ -442,6 +442,7 @@ mod pruebas {
         let con_ausentes = busqueda_con(Reposicion {
             repuestos: vec![Repuesto {
                 nombre: "JackOD-9B-Coder-CD-Q4_K_M".into(),
+                repositorio: "r/JackOD-GGUF".into(),
                 bytes: 5 * 1024 * 1024 * 1024,
             }],
             sin_reponer: vec![SinReponer {

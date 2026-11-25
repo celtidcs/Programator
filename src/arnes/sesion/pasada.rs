@@ -25,6 +25,8 @@ pub(super) struct Pasada<'a> {
     pub(super) canal: &'a Canal,
     pub(super) deltas: &'a [(String, Delta)],
     pub(super) leido: &'a ResumenLeido,
+    /// Cuándo leyó esta pasada el canal, con la marca del latido: la hora del `RECIBIDO`.
+    pub(super) recibido_a: &'a str,
     pub(super) ruta_latido: &'a Path,
 }
 
@@ -61,6 +63,7 @@ pub fn ejecutar_pasada_con_motores(
     let mut cola = cola_leida.clone();
 
     let buzones = canal.buzones_ajenos()?;
+    let recibido_a = crate::protocolo::marca_del_latido();
     let deltas = deltas_de(&buzones, &mut registro);
     let encargos = encargos_nuevos(agente, &deltas, &cola);
 
@@ -95,6 +98,7 @@ pub fn ejecutar_pasada_con_motores(
         canal: &canal,
         deltas: &deltas,
         leido: &leido,
+        recibido_a: &recibido_a,
         ruta_latido: &ruta_latido,
     };
     let mut resumen = ResumenPasada::default();

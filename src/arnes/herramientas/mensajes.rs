@@ -87,6 +87,14 @@ pub(super) fn verificacion_pendiente(cual: &str, motivo: &str) -> String {
     format!("la verificación «{cual}» {motivo}")
 }
 
+/// La línea con que la respuesta cuenta una denegación: la herramienta y la primera línea del
+/// motivo, recortada como las demás líneas del canal.
+pub(super) fn denegada_para_el_canal(herramienta: &str, motivo: &str) -> String {
+    let primera = motivo.lines().map(str::trim).find(|l| !l.is_empty());
+    let primera = crate::arnes::verificacion::en_una_linea_del_canal(primera.unwrap_or_default());
+    format!("`{herramienta}`: {primera}")
+}
+
 /// Una propuesta cuyo nombre la sacaría de la carpeta de las propuestas.
 pub(super) fn saldria_de_la_carpeta(nombre: &str, carpeta: &str) -> String {
     format!("«{nombre}» saldría de {carpeta}/")
@@ -152,6 +160,23 @@ pub(super) fn linea_sin_verificar(citada: usize) -> String {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// La línea de una denegación lleva solo la primera línea no vacía del motivo: el resto lo
+    /// recibe el modelo, no el canal.
+    #[test]
+    fn la_denegacion_en_el_canal_solo_lleva_la_primera_linea_del_motivo() {
+        let linea = denegada_para_el_canal("leer_fichero", "\n  fuera del ámbito\nsegunda línea\n");
+        assert_eq!(linea, "`leer_fichero`: fuera del ámbito");
+    }
+
+    /// Un motivo largo se recorta: la línea del canal no crece con él.
+    #[test]
+    fn la_denegacion_en_el_canal_recorta_un_motivo_largo() {
+        let maximo = crate::arnes::verificacion::MAXIMO_EN_UNA_LINEA_DEL_CANAL;
+        let linea = denegada_para_el_canal("leer_fichero", &"x".repeat(maximo * 3));
+        assert!(linea.contains("[…recortado]"), "{linea}");
+        assert!(linea.chars().count() < maximo + 40, "{linea}");
+    }
 
     #[test]
     fn sin_ficha_no_se_inventa_ninguna_firma() {

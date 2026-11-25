@@ -90,6 +90,17 @@ Al iniciarse, Programator entra en un bucle continuo de sondeo: examina periódi
 Programator determina la carpeta de trabajo evaluando cuatro fuentes por orden de prioridad: primero el parámetro --ruta en la línea de órdenes; en segundo lugar la clave ruta en programator.toml; en tercer lugar la ruta guardada en ultima-carpeta.txt si la carpeta todavía existe en el disco; y finalmente, si ninguna de las anteriores está disponible, muestra una ventana de diálogo para seleccionarla manualmente. La tercera fuente solo cuenta si has puesto preguntar_siempre = false en la sección [carpeta]: con el valor de fábrica, true, ultima-carpeta.txt no se usa y la ventana aparece en cada arranque en el que no haya --ruta ni ruta en la configuración. Así que, para que el programa pueda reiniciarse sin que nadie tenga que elegir la carpeta en pantalla, fija la carpeta con --ruta o con la clave ruta, o pon preguntar_siempre = false para que use la última que elegiste.
 
 
+Tres formas de hablar con Programator
+
+Programator lee los encargos del canal del proyecto, la carpeta .gestor/canal, y contesta en su buzón, programator.md. Lo que cambia de una forma a otra es quién escribe esos encargos.
+
+Con un gestor de agentes, que es la recomendada. Abres desde el gestor Programator y el agente que dirige, por ejemplo Claude, sobre el mismo proyecto, y le dices al agente que lea .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md antes de mandarle nada. El gestor deja preparados el canal y la identidad de cada agente, y su vigilante avisa al agente en cuanto Programator responde. A cambio, hay que instalar el gestor y decirle la primera vez dónde está programator.exe.
+
+Con un agente de pago, sin gestor. Arrancas Programator con --ruta sobre el proyecto y abres el agente en otra terminal, en la misma carpeta. Le dices que lea la guía, que escriba sus encargos en un buzón propio dentro de .gestor/canal cuya primera línea diga quién es, como # Bandeja de Claude 1, y que las respuestas llegan a programator.md. No hace falta nada más, pero la preparación la haces tú, y el agente solo se entera de las respuestas si lanza el vigilante que Programator deja en .gestor/vigilante o si mira el buzón de vez en cuando.
+
+Escribiéndole tú, sin ningún agente, que no es lo recomendable. Creas tú un buzón en .gestor/canal, por ejemplo usuario.md, que empiece por # Bandeja de Usuario 1, y añades cada encargo al final, en una intervención nueva: una línea LATIDO: con la fecha y la hora, una línea en blanco y una línea que empiece por Para Programator: con lo que pides. No edites lo que ya estaba escrito. No gastas nada en un agente de pago, pero nadie revisa lo que entrega: la línea de la comprobación dice si una propuesta compila, no si hace lo que pediste, y el modelo local se equivoca. Revísalo tú todo antes de usarlo.
+
+
 Avisos de inicio en la terminal
 
 Para evitar confusiones sobre cuándo se puede empezar a enviar trabajo, Programator imprime en la consola un mensaje claro sobre su disponibilidad operativa.
@@ -114,6 +125,8 @@ Dos ajustes nuevos en programator.toml. La clave flash_attn de la sección [moto
 Si cambias el nombre del agente con la opción nombre de la sección [agente], las propuestas van a .gestor/candidatos/ seguido de ese nombre en minúsculas, como su buzón; antes iban siempre a .gestor/candidatos/programator. Con el nombre de fábrica no cambia nada.
 
 Los textos que lees son más limpios: ya no enseñan valores tal como los guarda el programa, las rutas salen como las escribe el sistema y con una sola cosa se dice en singular.
+
+Las entregas dicen más. Si una propuesta no pasa la comprobación, la línea del arnés dice por qué, con la línea del error del comprobador. Si el arnés le deniega algo al modelo, como una propuesta con un nombre que la sacaría de su carpeta, la respuesta lo cuenta en un apartado propio. La línea de memoria ya no dice más capas en la tarjeta que las del modelo, y el acuse RECIBIDO lleva la hora en que se leyó el encargo.
 
 
 Novedades de la versión 1.0.0
