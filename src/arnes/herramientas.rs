@@ -27,14 +27,17 @@ mod mensajes;
 mod propuesta;
 mod verificacion_pedida;
 
-pub use self::propuesta::carpeta_de_candidatos;
+pub(crate) use self::candidatos::{con_variante, PRIMERA_VARIANTE};
+pub use self::propuesta::{carpeta_de_candidatos, CARPETA_DEL_ARCHIVO};
 
+use super::entregas::EncargoDeLaEntrega;
 use super::verificacion::Comprobadores;
 use super::Ambito;
 use crate::arnes::ficha::{self, verbo, Estado};
 use crate::motor::SolicitudHerramienta;
 use crate::protocolo::{Canal, ResumenLeido};
 use crate::terminal::Terminal;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -112,6 +115,10 @@ pub struct Repertorio<'t> {
     veredictos: Vec<String>,
     /// Nombres reales de los ficheros de propuesta escritos en disco durante esta pasada, en orden.
     propuestas: Vec<String>,
+    /// Lo que dejó el encargo en curso, una línea por propuesta: su nombre en la carpeta de
+    /// candidatos y su veredicto en pocas palabras. Lo lleva su respuesta (uso real del 26/11: la
+    /// respuesta nombró un fichero que no era la entrega buena).
+    del_encargo: Vec<String>,
     /// Tope de bytes que se le entregan al modelo en una lectura de fichero.
     tope_lectura: usize,
     /// Resumen de los buzones leídos al inicio de la pasada, para notificar entregas al canal.
@@ -130,6 +137,12 @@ pub struct Repertorio<'t> {
     reservas: Vec<String>,
     /// Por dónde se avisa de una entrega que no se pudo publicar en el buzón.
     terminal: &'t dyn Terminal,
+    /// El encargo en curso y dónde se anotan sus propuestas (`arnes::entregas`). Vacío fuera de un
+    /// encargo, o donde no se lleva registro, como en el banco.
+    entregas: Option<(EncargoDeLaEntrega, PathBuf)>,
+    /// Cuánto se espera a git al buscar en el proyecto si la propuesta ya estaba
+    /// (`[entregas] tiempo_de_busqueda_segundos`).
+    tiempo_de_busqueda: Duration,
 }
 
 /// Lo que se espera a un comprobador si el TOML no dice otra cosa.
@@ -146,16 +159,33 @@ impl<'t> Repertorio<'t> {
             pendiente_de_publicar: None,
             comprobadores: Comprobadores::new(),
             tiempo_de_verificacion: TIEMPO_VERIFICACION_POR_DEFECTO,
+            tiempo_de_busqueda: Duration::from_secs(
+                crate::config::TIEMPO_DE_BUSQUEDA_POR_DEFECTO_SEGUNDOS,
+            ),
             maximo_salida_de_verificacion: crate::config::MAXIMO_SALIDA_AL_MODELO_POR_DEFECTO,
             veredictos: Vec::new(),
             propuestas: Vec::new(),
+            del_encargo: Vec::new(),
             tope_lectura: TOPE_LECTURA_POR_DEFECTO,
             leido: ResumenLeido::vacio(),
             sin_publicar: Vec::new(),
             denegadas: Vec::new(),
             reservas: Vec::new(),
             terminal,
+            entregas: None,
         }
+    }
+
+    /// Al empezar un encargo: sus propuestas se anotarán en el registro de entregas de `ruta`.
+    /// Pone cuánto se espera a git al buscar en el proyecto (`[entregas]`).
+    pub fn con_tiempo_de_busqueda(mut self, tiempo: Duration) -> Self {
+        self.tiempo_de_busqueda = tiempo;
+        self
+    }
+
+    pub fn empezar_encargo(&mut self, encargo: EncargoDeLaEntrega, ruta: PathBuf) {
+        self.entregas = Some((encargo, ruta));
+        self.del_encargo.clear();
     }
 
     /// Pone la puerta de verificación: con qué se comprueba cada extensión y cuánto se espera.
@@ -216,6 +246,11 @@ impl<'t> Repertorio<'t> {
         &self.sin_publicar
     }
 
+    /// Lo que dejó el encargo en curso, una línea por propuesta con su veredicto en pocas palabras.
+    pub fn lo_que_dejo_el_encargo(&self) -> &[String] {
+        &self.del_encargo
+    }
+
     /// Lo que el arnés denegó en el encargo en curso, para contarlo en su respuesta.
     pub fn denegadas_del_encargo(&self) -> &[String] {
         &self.denegadas
@@ -227,6 +262,8 @@ impl<'t> Repertorio<'t> {
     pub fn cerrar_los_veredictos_del_encargo(&mut self) {
         self.sin_publicar.clear();
         self.denegadas.clear();
+        self.del_encargo.clear();
+        self.entregas = None;
     }
 
     /// Los nombres reales de los ficheros de propuesta escritos en disco durante esta pasada.

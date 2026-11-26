@@ -385,7 +385,7 @@ mod pruebas {
     use crate::registro::modelo::EntradaDeModelo;
     use crate::revision::catalogo::leer_detalle;
 
-    const GIB: u64 = 1024 * BYTES_POR_MIB;
+    use crate::revision::pruebas_comunes::GIB;
 
     fn hoy() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, 12).unwrap()

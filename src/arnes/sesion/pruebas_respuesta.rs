@@ -251,6 +251,7 @@ fn p4_un_encargo_que_agota_sus_intentos_se_cierra_con_su_linea_y_el_motivo() {
     sembrar_registro_no_vacio(&carpeta);
     escribir_buzon(&carpeta, "claude.md", "");
     let pendiente = Encargo {
+        latido: None,
         de: "claude.md".into(),
         texto: "Para Programator: dos\nClase: diagnostico".into(),
         forma: crate::protocolo::encargo::Forma::Linea,
@@ -373,8 +374,11 @@ fn las_entregas_intermedias_no_llevan_linea_para() {
 
     canal
         .publicar_entrega(
-            "Para Claude 2.cs",
-            "Para Gemini 1: compila",
+            &crate::protocolo::canal::EntregaPublicada {
+                propuesta: "Para Claude 2.cs",
+                veredicto: "Para Gemini 1: compila",
+                confirmacion: "",
+            },
             &crate::protocolo::ResumenLeido::default(),
             "2026-11-22 15:00:00",
         )

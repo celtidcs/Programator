@@ -53,7 +53,7 @@ pub fn pasar_encargos<'a>(
                 total,
                 &encargo.ficha.id,
                 semilla,
-                recogida.a_tiempo,
+                mensajes::Plazo::segun(recogida.a_tiempo),
                 recogida.duracion,
                 recogida.entregas.len(),
             ));
@@ -78,10 +78,10 @@ mod pruebas {
 
     #[test]
     fn cada_pasada_queda_en_disco_en_cuanto_termina() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![criterio(dir.path()), oficio(dir.path())];
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![criterio(carpeta.path()), oficio(carpeta.path())];
         pasar(
-            dir.path(),
+            carpeta.path(),
             &encargos,
             vec![
                 vec![Respuesta::Texto("El protocolo dice esto.".into())],
@@ -95,7 +95,7 @@ mod pruebas {
             ],
         );
 
-        let guardadas = pasadas::cargar(&carpeta_tanda(dir.path())).unwrap();
+        let guardadas = pasadas::cargar(&carpeta_tanda(carpeta.path())).unwrap();
 
         assert_eq!(guardadas.tanda, datos());
         assert_eq!(guardadas.pasadas.len(), 2);

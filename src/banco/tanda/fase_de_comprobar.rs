@@ -158,10 +158,13 @@ mod pruebas {
 
     #[test]
     fn una_tanda_completa_sin_comprobacion_deja_un_toml_y_un_informe_validos() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![criterio(dir.path()), formas(dir.path())];
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargos = vec![
+            criterio(carpeta_temporal.path()),
+            formas(carpeta_temporal.path()),
+        ];
         let pasados = pasar(
-            dir.path(),
+            carpeta_temporal.path(),
             &encargos,
             vec![
                 vec![Respuesta::Texto("El protocolo dice esto.".into())],
@@ -172,7 +175,7 @@ mod pruebas {
                 )],
             ],
         );
-        let carpeta = carpeta_tanda(dir.path());
+        let carpeta = carpeta_tanda(carpeta_temporal.path());
 
         let resultados = puntuar_tanda(
             &pasados,

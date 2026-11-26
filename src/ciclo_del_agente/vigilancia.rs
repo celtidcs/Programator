@@ -14,7 +14,9 @@ use super::guia_del_equipo::republicar_la_guia_del_equipo;
 use crate::VERSION;
 use atencion::atender_si_toca;
 use cola::hay_encargos_en_cola;
-use decisiones::{mensaje_de_escucha, sigue_siendo_la_primera, sondeo_de_la_vuelta};
+use decisiones::{
+    mensaje_de_escucha, sondeo_de_la_vuelta, vuelta_siguiente, Cola, Pendiente, Vuelta,
+};
 use derivados::DerivadosDeLaConfig;
 use latido::{registrar_latido_fin_vuelta, EstadoFinVuelta};
 use motor_propio::{modelo_cargado, soltar_si_toca};
@@ -35,18 +37,19 @@ struct SeguimientoDelCanal {
     huella: Option<String>,
     /// La primera vuelta mira el canal aunque no haya cambiado: lo publicado antes de arrancar, o
     /// mientras Programator estaba cerrado, se atiende ya y no cuando alguien vuelva a escribir.
-    primera_vuelta: bool,
-    /// Hay un encargo detectado que no se pudo atender porque el motor seguía cargando el modelo.
-    /// Mientras esto sea cierto, el bucle vuelve a intentarlo aunque nadie escriba en el canal.
-    pendiente_por_motor: bool,
+    vuelta: Vuelta,
+    /// La vuelta anterior dejó algo para luego: un encargo que no se pudo atender porque el motor
+    /// seguía cargando el modelo, o un buzón a medio escribir. Mientras sea
+    /// [`Pendiente::Aplazado`], el bucle vuelve a intentarlo aunque nadie escriba en el canal.
+    aplazado: Pendiente,
 }
 
 impl SeguimientoDelCanal {
     fn al_empezar() -> Self {
         Self {
             huella: None,
-            primera_vuelta: true,
-            pendiente_por_motor: false,
+            vuelta: Vuelta::Primera,
+            aplazado: Pendiente::Nada,
         }
     }
 }
@@ -57,7 +60,7 @@ pub(super) fn vigilar_el_canal(
     ruta_config: PathBuf,
     mut config: Config,
     carpeta: &Path,
-    canal_dir: &Path,
+    carpeta_del_canal: &Path,
     instantanea: Option<sesion::Instantanea>,
 ) -> Resultado<()> {
     let mut derivados = DerivadosDeLaConfig::de(&config, carpeta);
@@ -97,19 +100,24 @@ pub(super) fn vigilar_el_canal(
                 println!("{}", revision::mensajes::configuracion_releida(&config));
                 // La guía cuenta el modelo por defecto y sus cifras: con otro, hay que
                 // volver a publicarla, con el registro y los modelos disponibles de ahora.
-                republicar_la_guia_del_equipo(canal_dir, &config);
+                republicar_la_guia_del_equipo(carpeta_del_canal, &config);
             }
         }
 
-        let estado_fin_vuelta =
-            sondear_y_atender(canal_dir, carpeta, &config, &mut seguimiento, || {
+        let estado_fin_vuelta = sondear_y_atender(
+            carpeta_del_canal,
+            carpeta,
+            &config,
+            &mut seguimiento,
+            || {
                 let desenlace =
                     pasar_por_el_canal(carpeta, &config, &derivados, &servidor_local, &mut revisor);
                 if matches!(desenlace, Ok(DesenlacePasada::Atendidos(_))) {
                     ultimo_encargo = std::time::Instant::now();
                 }
                 desenlace
-            });
+            },
+        );
 
         // El latido se escribe exactamente una vez por vuelta al terminar el sondeo y antes de
         // dormir, garantizando por tipos (Rust match exhaustivo) que ninguna rama futura omita
@@ -118,7 +126,12 @@ pub(super) fn vigilar_el_canal(
             &config,
             &servidor_local,
             ultimo_encargo,
-            seguimiento.pendiente_por_motor || hay_encargos_en_cola(carpeta, &config.agente.nombre),
+            seguimiento
+                .aplazado
+                .con_la_cola(Cola::segun(hay_encargos_en_cola(
+                    carpeta,
+                    &config.agente.nombre,
+                ))),
         );
 
         registrar_latido_fin_vuelta(
@@ -157,29 +170,29 @@ fn releer_la_configuracion(
 /// Una vuelta por el canal: lo sondea, dice si no se pudo leer entero y, si toca, pasa por él con
 /// `pasar`.
 ///
-/// Un fallo al leer la raíz del canal no puede tumbar el proceso. Esto corre sobre una unidad
-/// virtual de Google Drive, donde un directorio puede quedar momentáneamente inaccesible mientras
-/// se sincroniza, y Programator está pensado para vivir días: salir con código 1 por un hipo de
-/// Drive sería perder al agente hasta que alguien lo note. Se avisa por `stderr` con el motivo y
+/// Un fallo al leer la raíz del canal no puede tumbar el proceso. El canal puede estar en una
+/// unidad de red o sincronizada, como Google Drive, donde un directorio puede quedar
+/// momentáneamente inaccesible mientras se sincroniza, y Programator está pensado para vivir días:
+/// salir con código 1 por un hipo de la unidad sería perder al agente hasta que alguien lo note. Se avisa por `stderr` con el motivo y
 /// se vuelve a sondear en la siguiente vuelta. La decisión de aguantar es de este bucle:
 /// `hay_novedades` sigue devolviendo el error para que cualquier otro que la llame pueda
 /// distinguir el fallo.
 fn sondear_y_atender(
-    canal_dir: &Path,
+    carpeta_del_canal: &Path,
     carpeta: &Path,
     config: &Config,
     seguimiento: &mut SeguimientoDelCanal,
     pasar: impl FnOnce() -> Resultado<DesenlacePasada>,
 ) -> EstadoFinVuelta {
-    let leido = match hay_novedades(canal_dir, &mut seguimiento.huella) {
+    let leido = match hay_novedades(carpeta_del_canal, &mut seguimiento.huella) {
         Ok(sondeo) => sondeo,
         Err(fallo) => {
             eprintln!("{}", arranque::mensaje_fallo_sondeo_canal(&fallo));
             return EstadoFinVuelta::Error(fallo.to_string());
         }
     };
-    let sondeo = sondeo_de_la_vuelta(leido, seguimiento.primera_vuelta);
-    seguimiento.primera_vuelta = sigue_siendo_la_primera(seguimiento.primera_vuelta, leido);
+    let sondeo = sondeo_de_la_vuelta(leido, seguimiento.vuelta);
+    seguimiento.vuelta = vuelta_siguiente(seguimiento.vuelta, leido);
     if sondeo == Sondeo::Ignorada {
         // Algo del canal no se dejó leer, así que esta foto no vale para comparar. Se
         // dice: un canal ilegible es un problema que hay que ver, y callarlo lo
@@ -188,8 +201,8 @@ fn sondear_y_atender(
     }
     atender_si_toca(
         sondeo,
-        &mut seguimiento.pendiente_por_motor,
-        hay_encargos_en_cola(carpeta, &config.agente.nombre),
+        &mut seguimiento.aplazado,
+        Cola::segun(hay_encargos_en_cola(carpeta, &config.agente.nombre)),
         config.ciclo.intervalo_segundos,
         pasar,
     )

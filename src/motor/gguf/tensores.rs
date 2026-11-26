@@ -4,6 +4,7 @@
 
 use super::super::tipos_tensor::{bytes_de_tensor, tipo_tensor};
 use super::lector::LectorAcotado;
+use super::mensajes;
 use super::{error_gguf, Cabecera};
 use crate::error::Resultado;
 use std::io::Read;
@@ -21,12 +22,56 @@ pub(super) const LIMITE_NUMERO_TENSORES: u64 = 100_000;
 /// la especificación del formato.
 const ALINEACION_POR_DEFECTO: u64 = 32;
 
+/// Proyecciones de las FFN que llama.cpp reconoce en los expertos: `LLM_FFN_EXPS_REGEX`,
+/// `\.ffn_(up|down|gate|gate_up)_(ch|)exps`, en `common/common.h:1131` de b10993.
+const PROYECCIONES_DE_EXPERTOS: [&str; 4] = ["up", "down", "gate", "gate_up"];
+
+/// Finales que admite ese mismo patrón tras la proyección: `_(ch|)exps`.
+const FINALES_DE_EXPERTOS: [&str; 2] = ["_exps", "_chexps"];
+
+/// Proyecciones de las FFN densas: `LLM_FFN_DENSE_REGEX`, `\.ffn_(up|down|gate)\.`, en
+/// `common/common.h:1133` de b10993.
+const PROYECCIONES_DENSAS: [&str; 3] = ["up", "down", "gate"];
+
+/// Qué opción de llama.cpp puede mandar un tensor a la CPU por capas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaseDeTensor {
+    /// Pesos de los expertos de un modelo de mezcla: los mueve `--n-cpu-moe`.
+    Experto,
+    /// Pesos de la FFN de un modelo denso: los mueve `--n-cpu-ffn`.
+    FfnDensa,
+    /// Todo lo demás: atención, normalizaciones, enrutador, expertos compartidos y lo que no es de
+    /// ninguna capa.
+    Otro,
+}
+
+/// Un tensor del modelo, con lo que hace falta para decidir dónde se carga.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TensorDelModelo {
+    /// Nombre tal y como lo trae el GGUF, por ejemplo `blk.3.ffn_up.weight`.
+    pub nombre: String,
+    /// Bytes que ocupan sus pesos.
+    pub bytes: u64,
+    /// Capa a la que pertenece, si pertenece a alguna.
+    pub capa: Option<usize>,
+}
+
+impl TensorDelModelo {
+    /// La clase del tensor, tal y como la reconocen los patrones de llama.cpp.
+    pub fn clase(&self) -> ClaseDeTensor {
+        clase_de(&self.nombre)
+    }
+}
+
 /// El peso del modelo, repartido por donde va a acabar cargándose.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PesoDelModelo {
-    /// Bytes de cada capa repetida, indexados por su número.
+    /// Cada tensor, en el orden de la tabla del GGUF.
+    pub tensores: Vec<TensorDelModelo>,
+    /// Bytes de cada capa repetida, indexados por su número. Sale de `tensores`.
     pub por_capa: Vec<u64>,
     /// Bytes de todo lo que no pertenece a ninguna capa: embeddings, salida y normalización final.
+    /// Sale de `tensores`.
     pub fuera_de_capa: u64,
     /// Posición del primer byte del bloque de datos.
     pub inicio_datos: u64,
@@ -38,9 +83,63 @@ pub struct PesoDelModelo {
 /// `blk.<n>.<lo que sea>`; el resto —`token_embd.weight`, `output.weight`, `output_norm.weight`—
 /// no son de ninguna.
 fn capa_de(nombre: &str) -> Option<usize> {
+    let (numero, _) = partir_en_capa(nombre)?;
+    Some(numero)
+}
+
+/// Separa `blk.<n>.<resto>` en el número de capa y el resto, sin el punto que los une.
+fn partir_en_capa(nombre: &str) -> Option<(usize, &str)> {
     let resto = nombre.strip_prefix("blk.")?;
-    let (numero, _) = resto.split_once('.')?;
-    numero.parse::<usize>().ok()
+    let (numero, cola) = resto.split_once('.')?;
+    Some((numero.parse::<usize>().ok()?, cola))
+}
+
+/// La clase de un tensor por su nombre. Reproduce los dos patrones de llama.cpp, que se buscan
+/// tras `blk\.<n>`: el de los expertos no exige nada detrás de `exps`; el de las FFN densas
+/// exige el punto que sigue a la proyección, así que `ffn_gate_up` o `ffn_up_shexp` no cuentan.
+pub fn clase_de(nombre: &str) -> ClaseDeTensor {
+    let Some((_, cola)) = partir_en_capa(nombre) else {
+        return ClaseDeTensor::Otro;
+    };
+    let Some(proyeccion) = cola.strip_prefix("ffn_") else {
+        return ClaseDeTensor::Otro;
+    };
+    let es_experto = PROYECCIONES_DE_EXPERTOS.iter().any(|p| {
+        proyeccion
+            .strip_prefix(p)
+            .is_some_and(|fin| FINALES_DE_EXPERTOS.iter().any(|f| fin.starts_with(f)))
+    });
+    if es_experto {
+        return ClaseDeTensor::Experto;
+    }
+    let es_densa = PROYECCIONES_DENSAS.iter().any(|p| {
+        proyeccion
+            .strip_prefix(p)
+            .is_some_and(|fin| fin.starts_with('.'))
+    });
+    if es_densa {
+        ClaseDeTensor::FfnDensa
+    } else {
+        ClaseDeTensor::Otro
+    }
+}
+
+/// Suma los tensores por capa y aparte lo que no es de ninguna.
+fn agregar_por_capa(tensores: &[TensorDelModelo]) -> (Vec<u64>, u64) {
+    let mut por_capa: Vec<u64> = Vec::new();
+    let mut fuera_de_capa = 0u64;
+    for tensor in tensores {
+        match tensor.capa {
+            Some(capa) => {
+                if capa >= por_capa.len() {
+                    por_capa.resize(capa + 1, 0);
+                }
+                por_capa[capa] = por_capa[capa].saturating_add(tensor.bytes);
+            }
+            None => fuera_de_capa = fuera_de_capa.saturating_add(tensor.bytes),
+        }
+    }
+    (por_capa, fuera_de_capa)
 }
 
 /// Lee la tabla de tensores que sigue a la cabecera y devuelve el peso de cada capa. Sigue sin
@@ -95,57 +194,47 @@ pub(super) fn leer_tensores_de<R: Read>(
         }
         let codigo = lector.leer_u32(ruta)?;
         let tipo = tipo_tensor(codigo).ok_or_else(|| {
-            error_gguf(
-                ruta,
-                format!("tipo de tensor desconocido en «{nombre}»: código {codigo}"),
-            )
+            error_gguf(ruta, mensajes::tipo_de_tensor_desconocido(&nombre, codigo))
         })?;
         let desplazamiento = lector.leer_u64(ruta)?;
 
-        let bytes = bytes_de_tensor(&dimensiones, tipo).ok_or_else(|| {
-            error_gguf(
-                ruta,
-                format!("las dimensiones de «{nombre}» desbordan al multiplicarse"),
-            )
-        })?;
+        let bytes = bytes_de_tensor(&dimensiones, tipo)
+            .ok_or_else(|| error_gguf(ruta, mensajes::dimensiones_desbordadas(&nombre)))?;
 
-        let fin = desplazamiento.checked_add(bytes).ok_or_else(|| {
-            error_gguf(
-                ruta,
-                format!("el desplazamiento de «{nombre}» más su tamaño desborda"),
-            )
-        })?;
+        let fin = desplazamiento
+            .checked_add(bytes)
+            .ok_or_else(|| error_gguf(ruta, mensajes::desplazamiento_desbordado(&nombre)))?;
         pesos.fin_datos = pesos.fin_datos.max(fin);
 
-        match capa_de(&nombre) {
-            Some(capa) => {
-                // Acotar antes de reservar: sin esto, `capa + 1` de más abajo desbordaría con
-                // `blk.18446744073709551615.w`, y con índices grandes pero no desbordantes el
-                // `resize` que sigue reservaría gigabytes o abortaría el proceso directamente.
-                if capa as u64 >= tope_capas {
-                    return Err(error_gguf(
-                        ruta,
-                        match cabecera.metadatos.numero_capas {
-                            Some(declaradas) => format!(
-                                "el tensor «{nombre}» declara la capa {capa}, pero la cabecera \
-                                 solo declara {declaradas} capas (`block_count`)"
-                            ),
-                            None => format!(
-                                "el tensor «{nombre}» declara la capa {capa}, más del límite de \
-                                 {LIMITE_NUMERO_TENSORES} capas que se usa cuando la cabecera no \
-                                 trae `block_count`"
-                            ),
-                        },
-                    ));
-                }
-                if capa >= pesos.por_capa.len() {
-                    pesos.por_capa.resize(capa + 1, 0);
-                }
-                pesos.por_capa[capa] = pesos.por_capa[capa].saturating_add(bytes);
+        let capa = capa_de(&nombre);
+        if let Some(capa) = capa {
+            // Acotar antes de reservar: sin esto, `capa + 1` de `agregar_por_capa` desbordaría
+            // con `blk.18446744073709551615.w`, y con índices grandes pero no desbordantes su
+            // `resize` reservaría gigabytes o abortaría el proceso directamente.
+            if capa as u64 >= tope_capas {
+                return Err(error_gguf(
+                    ruta,
+                    match cabecera.metadatos.numero_capas {
+                        Some(declaradas) => format!(
+                            "el tensor «{nombre}» declara la capa {capa}, pero la cabecera \
+                             solo declara {declaradas} capas (`block_count`)"
+                        ),
+                        None => format!(
+                            "el tensor «{nombre}» declara la capa {capa}, más del límite de \
+                             {LIMITE_NUMERO_TENSORES} capas que se usa cuando la cabecera no \
+                             trae `block_count`"
+                        ),
+                    },
+                ));
             }
-            None => pesos.fuera_de_capa = pesos.fuera_de_capa.saturating_add(bytes),
         }
+        pesos.tensores.push(TensorDelModelo {
+            nombre,
+            bytes,
+            capa,
+        });
     }
+    (pesos.por_capa, pesos.fuera_de_capa) = agregar_por_capa(&pesos.tensores);
 
     let alineacion = cabecera
         .metadatos
@@ -157,12 +246,7 @@ pub(super) fn leer_tensores_de<R: Read>(
     pesos.inicio_datos = lector
         .posicion()
         .checked_next_multiple_of(alineacion)
-        .ok_or_else(|| {
-            error_gguf(
-                ruta,
-                format!("la alineación {alineacion} lleva los datos más allá de lo que cabe"),
-            )
-        })?;
+        .ok_or_else(|| error_gguf(ruta, mensajes::alineacion_desbordada(alineacion)))?;
 
     Ok(pesos)
 }
@@ -315,11 +399,11 @@ pub(crate) mod pruebas_apoyo {
     }
 
     pub(crate) fn escribir_temporal(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("modelo.gguf");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("modelo.gguf");
         let mut fichero = std::fs::File::create(&ruta).unwrap();
         fichero.write_all(bytes).unwrap();
-        (dir, ruta)
+        (carpeta, ruta)
     }
 
     pub(crate) fn pares_llama_completos() -> Vec<(&'static str, ValorPrueba)> {
@@ -372,6 +456,7 @@ pub(crate) mod pruebas_apoyo {
 mod pruebas {
     use super::super::leer_modelo;
     use super::pruebas_apoyo::*;
+    use super::{clase_de, ClaseDeTensor};
     use crate::error::Error;
 
     fn tensor(nombre: &str, dimensiones: &[u64], tipo: u32) -> TensorPrueba {
@@ -620,6 +705,114 @@ mod pruebas {
         assert!(
             fallo.to_string().contains("dimensiones"),
             "el error debe decir que sobran dimensiones: {fallo}"
+        );
+    }
+
+    #[test]
+    fn cada_tensor_se_conserva_con_su_nombre_sus_bytes_y_su_capa() {
+        let bytes = fichero_con_tensores(
+            &pares_llama_completos(),
+            &[
+                tensor("token_embd.weight", &[256, 100], 0), // 102 400 bytes
+                tensor("blk.1.ffn_up.weight", &[256, 3], 0), //   3 072 bytes
+                tensor("blk.0.attn_q.weight", &[256, 2], 0), //   2 048 bytes
+            ],
+            32,
+        );
+        let (_dir, ruta) = escribir_temporal(&bytes);
+
+        let pesos = leer_modelo(&ruta).unwrap().pesos;
+
+        let vistos: Vec<(&str, u64, Option<usize>)> = pesos
+            .tensores
+            .iter()
+            .map(|t| (t.nombre.as_str(), t.bytes, t.capa))
+            .collect();
+        assert_eq!(
+            vistos,
+            vec![
+                ("token_embd.weight", 102_400, None),
+                ("blk.1.ffn_up.weight", 3_072, Some(1)),
+                ("blk.0.attn_q.weight", 2_048, Some(0)),
+            ],
+            "en el orden de la tabla, sin agregar"
+        );
+        assert_eq!(pesos.por_capa, vec![2_048, 3_072]);
+        assert_eq!(pesos.fuera_de_capa, 102_400);
+    }
+
+    #[test]
+    fn los_expertos_se_reconocen_como_los_reconoce_llama() {
+        // `LLM_FFN_EXPS_REGEX` de b10993: `\.ffn_(up|down|gate|gate_up)_(ch|)exps`, tras `blk\.<n>`.
+        for nombre in [
+            "blk.0.ffn_up_exps.weight",
+            "blk.7.ffn_down_exps.weight",
+            "blk.12.ffn_gate_exps.weight",
+            "blk.3.ffn_gate_up_exps.weight",
+            "blk.3.ffn_down_chexps.weight",
+        ] {
+            assert_eq!(clase_de(nombre), ClaseDeTensor::Experto, "{nombre}");
+        }
+        for nombre in [
+            "blk.0.ffn_up_shexp.weight",  // experto compartido: se queda
+            "blk.0.ffn_gate_inp.weight",  // el enrutador
+            "blk.0.ffn_norm_exps.weight", // otra proyección
+            "ffn_up_exps.weight",         // sin capa
+            "blk.x.ffn_up_exps.weight",   // capa que no es un número
+        ] {
+            assert_eq!(clase_de(nombre), ClaseDeTensor::Otro, "{nombre}");
+        }
+    }
+
+    #[test]
+    fn las_ffn_densas_se_reconocen_como_las_reconoce_llama() {
+        // `LLM_FFN_DENSE_REGEX` de b10993: `\.ffn_(up|down|gate)\.`, tras `blk\.<n>`.
+        for nombre in [
+            "blk.0.ffn_up.weight",
+            "blk.39.ffn_down.weight",
+            "blk.5.ffn_gate.weight",
+        ] {
+            assert_eq!(clase_de(nombre), ClaseDeTensor::FfnDensa, "{nombre}");
+        }
+        for nombre in [
+            "blk.0.ffn_norm.weight",    // normalización
+            "blk.0.ffn_gate_up.weight", // el patrón exige el punto tras la proyección
+            "blk.0.ffn_up",             // sin punto detrás
+            "blk.0.attn_q.weight",
+            "output.weight",
+        ] {
+            assert_eq!(clase_de(nombre), ClaseDeTensor::Otro, "{nombre}");
+        }
+    }
+
+    #[test]
+    fn la_clase_de_un_tensor_leido_sale_de_su_nombre() {
+        let bytes = fichero_con_tensores(
+            &pares_llama_completos(),
+            &[
+                tensor("blk.0.ffn_up_exps.weight", &[256], 0),
+                tensor("blk.0.ffn_down.weight", &[256], 0),
+                tensor("blk.0.attn_k.weight", &[256], 0),
+            ],
+            32,
+        );
+        let (_dir, ruta) = escribir_temporal(&bytes);
+
+        let clases: Vec<ClaseDeTensor> = leer_modelo(&ruta)
+            .unwrap()
+            .pesos
+            .tensores
+            .iter()
+            .map(|t| t.clase())
+            .collect();
+
+        assert_eq!(
+            clases,
+            vec![
+                ClaseDeTensor::Experto,
+                ClaseDeTensor::FfnDensa,
+                ClaseDeTensor::Otro
+            ]
         );
     }
 }

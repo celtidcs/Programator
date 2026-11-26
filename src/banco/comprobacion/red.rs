@@ -72,7 +72,7 @@ fn programa(intento: &str) -> Option<&str> {
 mod pruebas {
     use super::*;
 
-    fn dir(texto: &str) -> SocketAddr {
+    fn direccion(texto: &str) -> SocketAddr {
         texto.parse().unwrap()
     }
 
@@ -83,9 +83,9 @@ mod pruebas {
     #[test]
     fn cada_intento_dice_el_programa_que_abrio_la_conexion_si_se_sabe() {
         let remotas = [
-            (dir("2.20.71.150:443"), Some("rustc.exe".to_string())),
-            (dir("2.20.71.150:443"), Some("rustc.exe".to_string())),
-            (dir("104.20.23.154:443"), None),
+            (direccion("2.20.71.150:443"), Some("rustc.exe".to_string())),
+            (direccion("2.20.71.150:443"), Some("rustc.exe".to_string())),
+            (direccion("104.20.23.154:443"), None),
         ];
 
         assert_eq!(
@@ -120,26 +120,26 @@ mod pruebas {
         // del sistema que se conectó a Akamai: en la segunda lista ya no está. El 9 nació en
         // medio y aún no estaba en la primera; se verá en la siguiente mirada.
         let tabla = [
-            (dir("2.20.71.150:443"), 7),
-            (dir("104.20.23.154:443"), 5),
-            (dir("172.66.147.243:443"), 9),
-            (dir("13.89.179.12:443"), 3),
+            (direccion("2.20.71.150:443"), 7),
+            (direccion("104.20.23.154:443"), 5),
+            (direccion("172.66.147.243:443"), 9),
+            (direccion("13.89.179.12:443"), 3),
         ];
 
         assert_eq!(
             de_los_procesos(&tabla, &[5, 7], &[5, 9]),
-            [(dir("104.20.23.154:443"), 5)]
+            [(direccion("104.20.23.154:443"), 5)]
         );
     }
 
     #[test]
     fn la_red_local_del_equipo_y_los_sockets_sin_destino_no_cuentan() {
         let remotas = [
-            dir("127.0.0.1:50123"),
-            dir("[::1]:8080"),
-            dir("[::ffff:127.0.0.1]:9000"),
-            dir("0.0.0.0:0"),
-            dir("[::]:0"),
+            direccion("127.0.0.1:50123"),
+            direccion("[::1]:8080"),
+            direccion("[::ffff:127.0.0.1]:9000"),
+            direccion("0.0.0.0:0"),
+            direccion("[::]:0"),
         ]
         .map(sin_programa);
 
@@ -149,11 +149,11 @@ mod pruebas {
     #[test]
     fn lo_que_sale_del_equipo_cuenta_una_vez_y_en_orden() {
         let remotas = [
-            dir("151.101.0.223:443"),
-            dir("127.0.0.1:50123"),
-            dir("[2a04:4e42::223]:443"),
-            dir("151.101.0.223:443"),
-            dir("[::ffff:10.0.0.1]:80"),
+            direccion("151.101.0.223:443"),
+            direccion("127.0.0.1:50123"),
+            direccion("[2a04:4e42::223]:443"),
+            direccion("151.101.0.223:443"),
+            direccion("[::ffff:10.0.0.1]:80"),
         ]
         .map(sin_programa);
 

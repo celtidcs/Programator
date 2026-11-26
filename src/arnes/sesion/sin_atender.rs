@@ -1,11 +1,11 @@
-//! Los encargos que no llegan a atenderse con el modelo: pasan a la cola de pendientes (o suman
-//! un intento), o se cierran respondiendo con el motivo a quien los pidió.
+//! Los encargos que no llegan a atenderse con el modelo: quedan pendientes en el registro de
+//! encargos (o suman un intento), o se cierran respondiendo con el motivo a quien los pidió.
 
 use super::pasada::Pasada;
 use super::publicacion;
 use super::respuesta::responder;
 use super::ResumenPasada;
-use crate::arnes::pendientes::Cola;
+use crate::arnes::registro_de_encargos::{EstadoDelEncargo, RegistroDeEncargos};
 use crate::protocolo::Encargo;
 use chrono::Local;
 
@@ -13,7 +13,7 @@ use chrono::Local;
 /// conseguir uno, y sale de la cola. Si la respuesta no se publica, queda pendiente.
 pub(super) fn cerrar_sin_modelo(
     pasada: &Pasada,
-    cola: &mut Cola,
+    fichas: &mut RegistroDeEncargos,
     encargo: &Encargo,
     motivo: &str,
     resumen: &mut ResumenPasada,
@@ -32,11 +32,17 @@ pub(super) fn cerrar_sin_modelo(
         terminal,
     ) {
         Ok(()) => {
-            cola.quitar(encargo);
+            super::guardado::terminar_y_guardar(
+                pasada,
+                fichas,
+                encargo,
+                EstadoDelEncargo::Atendido,
+                &fecha_de_ahora(),
+            );
         }
         Err(fallo) => dejar_pendiente(
             pasada,
-            cola,
+            fichas,
             encargo,
             &publicacion::motivo_sin_publicar(&fallo),
             resumen,
@@ -49,17 +55,16 @@ pub(super) fn cerrar_sin_modelo(
 /// respuesta no se publica, sigue en la cola y se vuelve a intentar cerrar en la vuelta siguiente.
 pub(super) fn dejar_pendiente(
     pasada: &Pasada,
-    cola: &mut Cola,
+    fichas: &mut RegistroDeEncargos,
     encargo: &Encargo,
     motivo: &str,
     resumen: &mut ResumenPasada,
 ) {
-    let fecha = Local::now()
-        .format(crate::protocolo::canal::FORMATO_DE_LA_MARCA_DE_TIEMPO)
-        .to_string();
-    let cierre = cola
+    let fecha = fecha_de_ahora();
+    let cierre = fichas
         .anotar_fallo(encargo, &fecha, motivo, pasada.ajustes.intentos_por_encargo)
-        .map(|p| publicacion::aviso_encargo_cerrado(p.intentos(), p.motivo()));
+        .map(|ficha| publicacion::aviso_encargo_cerrado(ficha.intentos, &ficha.motivo));
+    super::guardado::guardar_al_momento(pasada, fichas);
     let terminal = pasada.ajustes.terminal;
     let Some(cierre) = cierre else {
         resumen.pendientes += 1;
@@ -78,7 +83,13 @@ pub(super) fn dejar_pendiente(
         terminal,
     ) {
         Ok(()) => {
-            cola.quitar(encargo);
+            super::guardado::terminar_y_guardar(
+                pasada,
+                fichas,
+                encargo,
+                EstadoDelEncargo::Cerrado,
+                &fecha,
+            );
             terminal.avisar(&publicacion::mensaje_encargo_cerrado(&encargo.de, motivo));
         }
         Err(fallo) => {
@@ -86,4 +97,11 @@ pub(super) fn dejar_pendiente(
             terminal.avisar(&publicacion::mensaje_fallo_publicar_aviso_pendiente(&fallo));
         }
     }
+}
+
+/// La fecha de ahora, como la marca de tiempo del canal: la de las fichas del registro.
+pub(super) fn fecha_de_ahora() -> String {
+    Local::now()
+        .format(crate::protocolo::canal::FORMATO_DE_LA_MARCA_DE_TIEMPO)
+        .to_string()
 }

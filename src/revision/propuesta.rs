@@ -451,7 +451,7 @@ mod pruebas {
     use crate::registro::modelo::pruebas::entrada_de_ejemplo;
     use crate::registro::modelo::{NotaDeClase, NotasDeFamilia};
 
-    const TARJETA: &str = "NVIDIA GeForce RTX 4070 Ti SUPER";
+    use crate::revision::pruebas_comunes::TARJETA;
 
     /// Un modelo con la misma nota en todo, sin inventados, a 10 tokens por segundo, y con su
     /// código puntuado ejecutando las pruebas ocultas, como todos los demás de estas pruebas:

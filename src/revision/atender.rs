@@ -119,6 +119,9 @@ impl Revisor for RevisorReal<'_> {
     fn es_suyo(&self, texto: &str) -> bool {
         reconocer(texto) != Reconocido::NoEsDeRevision
     }
+    fn necesita_el_motor(&self, texto: &str) -> bool {
+        super::encargo::necesita_el_motor(texto)
+    }
 
     fn atender(&mut self, de: &str, quien: Option<&Identidad>, texto: &str) -> String {
         let config = match Config::cargar(&self.ruta_de_la_configuracion) {
@@ -129,7 +132,6 @@ impl Revisor for RevisorReal<'_> {
         let donde = donde(&self.carpeta_de_trabajo, config.carpeta_de_instalacion());
         let latido = AvisoEnElLatido {
             ruta: self.ruta_del_latido.clone(),
-            intervalo_segundos: config.ciclo.intervalo_segundos,
             buzon: de.to_string(),
         };
         let mut en_el_mundo = EnElMundo {
@@ -213,24 +215,46 @@ mod pruebas {
     use super::*;
     use crate::error::Error;
 
+    /// El revisor del ciclo dice, sin tocar nada, qué pedidos tocan el motor: solo «probar».
+    #[test]
+    fn el_revisor_real_dice_que_solo_probar_necesita_el_motor() {
+        let servidor = RefCell::new(None);
+        let terminal = crate::terminal::TerminalDeMentira::default();
+        let revisor = RevisorReal::nuevo(
+            PathBuf::from("no-existe.toml"),
+            PathBuf::from("."),
+            PathBuf::from("latido.json"),
+            &servidor,
+            "0.0.0",
+            &terminal,
+        );
+
+        assert!(!revisor.necesita_el_motor("revisión: buscar"));
+        assert!(!revisor.necesita_el_motor("revisión: cerrar"));
+        assert!(revisor.necesita_el_motor("revisión: probar\na/b c.gguf"));
+    }
+
     #[test]
     fn se_cierra_la_carpeta_del_mes_con_lo_probado_aunque_sea_el_anterior() {
-        let dir = tempfile::tempdir().unwrap();
-        let anterior = dir.path().join("2026-10");
-        let este = dir.path().join("2026-11");
+        let carpeta = tempfile::tempdir().unwrap();
+        let anterior = carpeta.path().join("2026-10");
+        let este = carpeta.path().join("2026-11");
         std::fs::create_dir_all(&anterior).unwrap();
         std::fs::create_dir_all(&este).unwrap();
         std::fs::write(anterior.join(NOMBRE_DE_LO_PROBADO), "").unwrap();
 
-        assert_eq!(carpeta_que_se_cierra(dir.path(), &este).unwrap(), anterior);
+        assert_eq!(
+            carpeta_que_se_cierra(carpeta.path(), &este).unwrap(),
+            anterior
+        );
     }
 
     #[test]
     fn sin_nada_probado_se_cierra_la_carpeta_de_este_mes() {
-        let dir = tempfile::tempdir().unwrap();
-        let este = dir.path().join("2026-11");
+        let carpeta = tempfile::tempdir().unwrap();
+        let este = carpeta.path().join("2026-11");
 
-        assert_eq!(carpeta_que_se_cierra(dir.path(), &este).unwrap(), este);
+        assert_eq!(carpeta_que_se_cierra(carpeta.path(), &este).unwrap(), este);
     }
 
     #[derive(Default)]

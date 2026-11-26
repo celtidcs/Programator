@@ -12,6 +12,12 @@ use super::catalogo::{
 use super::descarga::{Apertura, Fuente};
 use crate::error::{Error, Resultado};
 
+/// Un gibibyte en bytes, para escribir tamaños de modelo y de tarjeta de un vistazo.
+pub const GIB: u64 = 1024 * crate::unidades::BYTES_POR_MIB;
+
+/// La tarjeta de las pruebas: una real, con su nombre tal como lo da el sistema.
+pub const TARJETA: &str = "NVIDIA GeForce RTX 4070 Ti SUPER";
+
 /// Lo que da [`FuenteFija`].
 pub const CONTENIDO_DE_LA_FUENTE_FIJA: &[u8] = b"un modelo";
 

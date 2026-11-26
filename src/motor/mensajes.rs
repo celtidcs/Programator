@@ -9,7 +9,58 @@ use std::path::Path;
 
 use super::encaje::{Encaje, MedidaDelBanco, CAPAS_SI_NO_SE_SABE};
 use super::hardware::Gpu;
-use crate::unidades::BYTES_POR_GIB_F64;
+
+/// El motor mandó una llamada a herramienta sin nombre.
+pub(crate) fn llamada_sin_nombre() -> String {
+    "llamada sin nombre".to_string()
+}
+
+/// El motor contestó sin texto y sin cortar la respuesta.
+pub(crate) fn respuesta_sin_contenido() -> String {
+    "la respuesta no trae contenido".to_string()
+}
+
+/// El motor rechazó la petición porque la conversación no cabe en su ventana de contexto.
+pub(crate) fn rechazo_por_contexto(estado: u16, cuerpo: &str) -> String {
+    format!(
+        "el motor rechazó la petición porque NO CABE EN SU VENTANA DE CONTEXTO (HTTP {estado}). \
+         No es una caída: es que la conversación es más larga que la ventana configurada. \
+         Acorta el encargo, o pídele que lea los ficheros con «leer_fichero» en vez de \
+         pegárselos. Respuesta del motor: {cuerpo}"
+    )
+}
+
+/// El motor rechazó la petición por otra causa: el código y lo que dijo.
+pub(crate) fn rechazo_del_motor(estado: u16, cuerpo: &str) -> String {
+    format!("el motor respondió HTTP {estado}: {cuerpo}")
+}
+
+/// Cómo está el servidor, dicho a una persona.
+pub(crate) fn estado_del_servidor(estado: &super::proceso::EstadoServidor) -> &'static str {
+    use super::proceso::EstadoServidor;
+    match estado {
+        EstadoServidor::Listo => "el servidor está listo y responde",
+        EstadoServidor::Cargando => "el servidor sigue cargando el modelo",
+        EstadoServidor::NoDisponible => "el servidor no está disponible",
+        EstadoServidor::RechazaLaClave => "el servidor no acepta la clave de Programator",
+    }
+}
+
+/// Falta el fichero del modelo que se quiere usar.
+pub(crate) fn falta_el_fichero_del_modelo(modelo: &Path) -> String {
+    format!("falta el fichero del modelo «{}»", modelo.display())
+}
+
+/// El modelo no cabe lo bastante en la tarjeta: con `capas`, cuántas quedarían de cuántas.
+pub(crate) fn modelo_que_no_cabe(nombre: &str, capas: Option<(u32, u32)>) -> String {
+    match capas {
+        Some((en_tarjeta, total)) => format!(
+            "el modelo «{nombre}» no cabe en esta tarjeta: quedarían en ella {en_tarjeta} de sus \
+             {total} capas, menos de lo mínimo para trabajar a buena velocidad"
+        ),
+        None => format!("el modelo «{nombre}» no cabe en esta tarjeta: no le cabe ni una capa"),
+    }
+}
 
 /// El binario de `llama-server` configurado no existe.
 pub(crate) fn sin_binario(binario: &Path) -> String {
@@ -22,6 +73,14 @@ pub(crate) fn sin_binario(binario: &Path) -> String {
 /// El sistema no dejó lanzar `llama-server`.
 pub(crate) fn no_se_lanzo(binario: &Path, causa: &std::io::Error) -> String {
     format!("no se pudo lanzar «{}»: {causa}", binario.display())
+}
+
+/// El sistema no dio bytes al azar para inventar la clave del motor.
+pub(crate) fn sin_azar_para_la_clave(causa: &getrandom::Error) -> String {
+    format!(
+        "el sistema no dio bytes al azar para la clave del motor ({causa}); escribe una en \
+         [motor] clave"
+    )
 }
 
 /// El GGUF no dice cuántas capas tiene.
@@ -90,6 +149,28 @@ pub(crate) fn aviso_tope_sin_tarjeta(aviso: &str, tope_mib: u64) -> String {
     )
 }
 
+/// El aviso, con lo que `"auto"` decidió dejar en la CPU. Sin nada que contar, el aviso tal cual.
+pub(crate) fn aviso_con_en_cpu(aviso: &str, expertos: Option<u32>, ffn: Option<u32>) -> String {
+    let mut partes = Vec::new();
+    if let Some(n @ 1..) = expertos {
+        partes.push(format!(
+            "los expertos de las {n} primeras capas (expertos_en_cpu = \"auto\")"
+        ));
+    }
+    if let Some(n @ 1..) = ffn {
+        partes.push(format!(
+            "la FFN de las {n} primeras capas (ffn_en_cpu = \"auto\")"
+        ));
+    }
+    if partes.is_empty() {
+        return aviso.to_string();
+    }
+    format!(
+        "{aviso}; se dejan en la memoria del equipo {}",
+        partes.join(" y ")
+    )
+}
+
 /// El aviso, con las capas fijadas en `capas_gpu` bajadas para caber en el tope.
 pub(crate) fn aviso_capas_bajadas(aviso: &str, tope_mib: u64, fijadas: u32, caben: u32) -> String {
     format!(
@@ -112,9 +193,12 @@ pub(crate) fn redactar_aviso(encaje: &Encaje, coste: Option<u64>, gpu: Option<&G
     // no pasa por aquí porque su rama de `match` no lo consulta.
     let pide = coste.map(en_gib).unwrap_or_default();
     match encaje {
-        Encaje::Completo { total } => format!(
-            "el modelo entero cabe en {donde}: sus {total} capas piden {pide} y van a la GPU"
-        ),
+        // No dice «el modelo entero cabe»: con `ffn_en_cpu` o `expertos_en_cpu`, todas las capas
+        // van a la GPU, pero parte de cada una se queda en la memoria del equipo, y lo añade
+        // `aviso_con_en_cpu`.
+        Encaje::Completo { total } => {
+            format!("sus {total} capas caben en {donde}: piden {pide} y van a la GPU")
+        }
         // Todas las capas caben, pero no junto con los embeddings y la salida: sin esta rama
         // diría «las 0 restantes irán por CPU».
         Encaje::Parcial { en_gpu, total } if en_gpu >= total => format!(
@@ -146,14 +230,9 @@ pub(crate) fn redactar_aviso(encaje: &Encaje, coste: Option<u64>, gpu: Option<&G
     }
 }
 
-/// Bytes a GiB con un decimal, que es la unidad en la que se habla de VRAM.
-///
-/// `pub(crate)` y no privada: `encaje_historico` la reutiliza para que el log acumulativo hable de
-/// VRAM con la misma cifra y el mismo redondeo que el aviso de arranque, en vez de reinventar el
-/// formato.
-pub(crate) fn en_gib(bytes: u64) -> String {
-    format!("{:.1} GiB", bytes as f64 / BYTES_POR_GIB_F64)
-}
+/// `encaje_historico` la toma de aquí: el historial habla de VRAM con la misma cifra que el aviso
+/// de arranque.
+pub(crate) use crate::unidades::en_gib;
 
 /// Por qué falla un encargo cuyo motor se cerró solo.
 pub fn mensaje_motor_terminado(modelo: Option<&Path>) -> String {
@@ -161,6 +240,14 @@ pub fn mensaje_motor_terminado(modelo: Option<&Path>) -> String {
     format!(
         "el motor local se cerró solo con el modelo «{modelo}» (su registro, en la ventana de \
          Programator, dice por qué)"
+    )
+}
+
+/// El error cuando en el puerto hay un `llama-server` que no acepta la clave de Programator.
+pub fn mensaje_puerto_con_otra_clave(puerto: u16) -> String {
+    format!(
+        "en el puerto {puerto} hay un llama-server que no acepta la clave de Programator: es de \
+         otro programa o se perdió su clave; ciérralo o cambia [motor] puerto"
     )
 }
 
@@ -219,6 +306,12 @@ mod pruebas {
             "«q9_0» no es un tipo de caché que llama-server admita"
         );
         assert!(cache_paralela_desbordada(4).contains("de 4 conversaciones"));
+        assert_eq!(aviso_con_en_cpu("cabe", None, Some(0)), "cabe");
+        assert_eq!(
+            aviso_con_en_cpu("cabe", Some(2), Some(5)),
+            "cabe; se dejan en la memoria del equipo los expertos de las 2 primeras capas \
+             (expertos_en_cpu = \"auto\") y la FFN de las 5 primeras capas (ffn_en_cpu = \"auto\")"
+        );
         assert!(capas_increibles(5_000_000_000).contains("5000000000 capas"));
     }
 
@@ -256,6 +349,18 @@ mod pruebas {
             None,
         );
         assert!(varias.contains("las 10 restantes irán por CPU"), "{varias}");
+    }
+
+    /// Con la FFN de parte de las capas en la memoria del equipo, el aviso no dice que el modelo
+    /// cabe entero en la tarjeta (prueba Q de la 1.2.0, con Devstral en una de 8 GB).
+    #[test]
+    fn con_la_ffn_en_el_equipo_el_aviso_no_dice_que_cabe_entero() {
+        let completo = redactar_aviso(&Encaje::Completo { total: 40 }, Some(1 << 30), None);
+        let aviso = aviso_con_en_cpu(&completo, None, Some(34));
+
+        assert!(!aviso.contains("entero"), "{aviso}");
+        assert!(aviso.starts_with("sus 40 capas caben en "), "{aviso}");
+        assert!(aviso.contains("la FFN de las 34 primeras capas"), "{aviso}");
     }
 
     #[test]

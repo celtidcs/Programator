@@ -12,12 +12,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// De qué clase es una carpeta vigilada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaseDeCarpeta {
+    /// Una de `vigilar`: lo que cambie en ella es rastro del encargo.
+    Vigilada,
+    /// El temporal del sistema, que también usan otros programas.
+    Temporal,
+}
+
 /// Una carpeta que se vigila, ya con su ruta de este equipo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CarpetaVigilada {
     pub ruta: PathBuf,
-    /// Es el temporal del sistema, que también usan otros programas.
-    pub es_temporal: bool,
+    pub clase: ClaseDeCarpeta,
 }
 
 /// Hasta dónde se mira dentro de cada carpeta vigilada.
@@ -37,7 +45,7 @@ struct Entrada {
     modificada: Option<SystemTime>,
     /// `None` en las carpetas, cuyo tamaño no dice nada.
     tamano: Option<u64>,
-    en_temporal: bool,
+    carpeta: ClaseDeCarpeta,
 }
 
 /// Cómo estaban las carpetas vigiladas en un momento.
@@ -55,14 +63,14 @@ impl Foto {
         ruta: PathBuf,
         modificada: Option<SystemTime>,
         tamano: Option<u64>,
-        en_temporal: bool,
+        carpeta: ClaseDeCarpeta,
     ) {
         self.entradas.insert(
             ruta,
             Entrada {
                 modificada,
                 tamano,
-                en_temporal,
+                carpeta,
             },
         );
     }
@@ -93,18 +101,18 @@ pub fn carpetas_vigiladas(
     temporales: &[String],
     entorno: &BTreeMap<String, String>,
 ) -> Vec<CarpetaVigilada> {
-    let de = |plantillas: &[String], es_temporal: bool| -> Vec<CarpetaVigilada> {
+    let de = |plantillas: &[String], clase: ClaseDeCarpeta| -> Vec<CarpetaVigilada> {
         plantillas
             .iter()
             .filter_map(|plantilla| expandir(plantilla, entorno))
             .map(|ruta| CarpetaVigilada {
                 ruta: con_un_solo_separador(&ruta),
-                es_temporal,
+                clase,
             })
             .collect()
     };
-    let mut carpetas = de(vigilar, false);
-    carpetas.extend(de(temporales, true));
+    let mut carpetas = de(vigilar, ClaseDeCarpeta::Vigilada);
+    carpetas.extend(de(temporales, ClaseDeCarpeta::Temporal));
     carpetas
 }
 
@@ -163,7 +171,7 @@ fn recorrer(carpeta: &CarpetaVigilada, alcance: Alcance, foto: &mut Foto) -> boo
             let es_carpeta = entrada.file_type().is_ok_and(|tipo| tipo.is_dir());
             let modificada = metadatos.as_ref().and_then(|m| m.modified().ok());
             let tamano = metadatos.filter(|_| !es_carpeta).map(|m| m.len());
-            foto.anotar(entrada.path(), modificada, tamano, carpeta.es_temporal);
+            foto.anotar(entrada.path(), modificada, tamano, carpeta.clase);
             if es_carpeta && nivel < alcance.profundidad {
                 pendientes.push((entrada.path(), nivel + 1));
             }
@@ -185,10 +193,9 @@ pub fn diferencia(antes: &Foto, despues: &Foto) -> Vec<Rastro> {
         })
         .map(|(ruta, entrada)| Rastro {
             ruta: ruta.clone(),
-            clase: if entrada.en_temporal {
-                ClaseDeRastro::EnTemporal
-            } else {
-                ClaseDeRastro::Fuera
+            clase: match entrada.carpeta {
+                ClaseDeCarpeta::Temporal => ClaseDeRastro::EnTemporal,
+                ClaseDeCarpeta::Vigilada => ClaseDeRastro::Fuera,
             },
         });
     let incompletas = antes
@@ -206,18 +213,16 @@ pub fn describir(rastro: &Rastro) -> String {
     let ruta = rastro.ruta.display();
     match rastro.clase {
         ClaseDeRastro::Fuera => ruta.to_string(),
-        ClaseDeRastro::EnTemporal => {
-            format!("{ruta} (temporal del sistema: puede ser de otro programa)")
-        }
-        ClaseDeRastro::SinVigilarEntera => {
-            format!("{ruta} (no se pudo vigilar entera: pasa del tope de entradas)")
-        }
+        ClaseDeRastro::EnTemporal => crate::banco::mensajes::rastro_en_el_temporal(&ruta),
+        ClaseDeRastro::SinVigilarEntera => crate::banco::mensajes::rastro_sin_vigilar_entera(&ruta),
     }
 }
 
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    const VIGILADA: ClaseDeCarpeta = ClaseDeCarpeta::Vigilada;
     use std::time::Duration;
 
     const ALCANCE: Alcance = Alcance {
@@ -239,7 +244,7 @@ mod pruebas {
     #[test]
     fn si_nada_cambia_no_hay_rastro() {
         let mut foto = Foto::default();
-        foto.anotar("c/a".into(), instante(1), Some(1), false);
+        foto.anotar("c/a".into(), instante(1), Some(1), VIGILADA);
 
         assert!(diferencia(&foto, &foto.clone()).is_empty());
     }
@@ -248,7 +253,7 @@ mod pruebas {
     fn una_entrada_nueva_es_rastro() {
         let antes = Foto::default();
         let mut despues = Foto::default();
-        despues.anotar("c/nueva".into(), instante(1), Some(1), false);
+        despues.anotar("c/nueva".into(), instante(1), Some(1), VIGILADA);
 
         let rastro = diferencia(&antes, &despues);
 
@@ -264,10 +269,10 @@ mod pruebas {
     #[test]
     fn una_entrada_modificada_es_rastro_y_una_borrada_no() {
         let mut antes = Foto::default();
-        antes.anotar("c/cambia".into(), instante(1), Some(1), false);
-        antes.anotar("c/se_va".into(), instante(1), Some(1), false);
+        antes.anotar("c/cambia".into(), instante(1), Some(1), VIGILADA);
+        antes.anotar("c/se_va".into(), instante(1), Some(1), VIGILADA);
         let mut despues = Foto::default();
-        despues.anotar("c/cambia".into(), instante(2), Some(1), false);
+        despues.anotar("c/cambia".into(), instante(2), Some(1), VIGILADA);
 
         let rastro = diferencia(&antes, &despues);
 
@@ -278,7 +283,12 @@ mod pruebas {
     #[test]
     fn lo_del_temporal_del_sistema_se_marca() {
         let mut despues = Foto::default();
-        despues.anotar("tmp/x".into(), instante(1), Some(1), true);
+        despues.anotar(
+            "tmp/x".into(),
+            instante(1),
+            Some(1),
+            ClaseDeCarpeta::Temporal,
+        );
 
         let rastro = diferencia(&Foto::default(), &despues);
 
@@ -288,10 +298,10 @@ mod pruebas {
 
     #[test]
     fn una_carpeta_que_aparece_despues_cuenta_entera() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let vigilada = CarpetaVigilada {
-            ruta: dir.path().join("cache"),
-            es_temporal: false,
+            ruta: carpeta.path().join("cache"),
+            clase: ClaseDeCarpeta::Vigilada,
         };
         let antes = tomar_foto(std::slice::from_ref(&vigilada), ALCANCE);
         std::fs::create_dir(&vigilada.ruta).unwrap();
@@ -306,10 +316,10 @@ mod pruebas {
         assert_eq!(rastro[0].ruta, vigilada.ruta.join("paquete"));
     }
 
-    fn vigilada_en(dir: &Path) -> CarpetaVigilada {
+    fn vigilada_en(carpeta: &Path) -> CarpetaVigilada {
         CarpetaVigilada {
-            ruta: dir.join("cache"),
-            es_temporal: false,
+            ruta: carpeta.join("cache"),
+            clase: ClaseDeCarpeta::Vigilada,
         }
     }
 
@@ -317,8 +327,8 @@ mod pruebas {
     /// se veían.
     #[test]
     fn un_fichero_nuevo_a_dos_niveles_se_ve() {
-        let dir = tempfile::tempdir().unwrap();
-        let vigilada = vigilada_en(dir.path());
+        let carpeta = tempfile::tempdir().unwrap();
+        let vigilada = vigilada_en(carpeta.path());
         std::fs::create_dir_all(vigilada.ruta.join("a")).unwrap();
         let antes = tomar_foto(std::slice::from_ref(&vigilada), ALCANCE);
         std::fs::write(vigilada.ruta.join("a").join("nuevo"), "x").unwrap();
@@ -335,8 +345,8 @@ mod pruebas {
 
     #[test]
     fn lo_que_pasa_de_la_profundidad_no_se_mira() {
-        let dir = tempfile::tempdir().unwrap();
-        let vigilada = vigilada_en(dir.path());
+        let carpeta = tempfile::tempdir().unwrap();
+        let vigilada = vigilada_en(carpeta.path());
         let hondo = vigilada.ruta.join("a").join("b");
         std::fs::create_dir_all(&hondo).unwrap();
         std::fs::write(hondo.join("f"), "x").unwrap();
@@ -354,17 +364,17 @@ mod pruebas {
     #[test]
     fn el_mismo_instante_con_otro_tamano_es_rastro() {
         let mut antes = Foto::default();
-        antes.anotar("c/f".into(), instante(1), Some(1), false);
+        antes.anotar("c/f".into(), instante(1), Some(1), VIGILADA);
         let mut despues = Foto::default();
-        despues.anotar("c/f".into(), instante(1), Some(2), false);
+        despues.anotar("c/f".into(), instante(1), Some(2), VIGILADA);
 
         assert_eq!(diferencia(&antes, &despues).len(), 1);
     }
 
     #[test]
     fn la_carpeta_que_pasa_del_tope_se_dice_sin_vigilar_entera() {
-        let dir = tempfile::tempdir().unwrap();
-        let vigilada = vigilada_en(dir.path());
+        let carpeta = tempfile::tempdir().unwrap();
+        let vigilada = vigilada_en(carpeta.path());
         std::fs::create_dir_all(&vigilada.ruta).unwrap();
         for nombre in ["a", "b", "c"] {
             std::fs::write(vigilada.ruta.join(nombre), "x").unwrap();
@@ -429,11 +439,11 @@ mod pruebas {
             [
                 CarpetaVigilada {
                     ruta: "/home/x/.npm".into(),
-                    es_temporal: false
+                    clase: ClaseDeCarpeta::Vigilada
                 },
                 CarpetaVigilada {
                     ruta: "/tmp".into(),
-                    es_temporal: true
+                    clase: ClaseDeCarpeta::Temporal
                 },
             ]
         );

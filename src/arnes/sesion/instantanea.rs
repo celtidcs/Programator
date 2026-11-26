@@ -1,9 +1,11 @@
 //! La foto inicial del canal: si no hay registro de lectura, decide si lo que ya hay en los
-//! buzones ajenos se da por visto o se atiende, y deja el registro guardado.
+//! buzones ajenos se da por visto o se atiende, y deja el registro guardado. Lo que da por visto
+//! queda anotado como visto en el registro de encargos.
 
-use crate::arnes::espacio::ruta_del_registro;
+use crate::arnes::espacio::{carpeta_de_los_encargos, ruta_del_registro};
+use crate::arnes::registro_de_encargos::{disco, EstadoDelEncargo, RegistroDeEncargos};
 use crate::error::Resultado;
-use crate::protocolo::{Canal, RegistroLectura};
+use crate::protocolo::{detectar, Canal, RegistroLectura};
 use std::path::Path;
 
 /// Lo que hizo [`tomar_instantanea_inicial`].
@@ -33,15 +35,25 @@ pub fn tomar_instantanea_inicial(carpeta: &Path, agente: &str) -> Resultado<Inst
     }
     let canal = Canal::nuevo(carpeta, agente)?;
     let propio = std::fs::read_to_string(canal.ruta_buzon(agente)).unwrap_or_default();
+    let carpeta_encargos = carpeta_de_los_encargos(carpeta, agente);
     let mut registro = RegistroLectura::default();
     let instantanea = if ya_respondio(&propio) {
+        let mut fichas = RegistroDeEncargos::de_fichas(disco::leer(&carpeta_encargos)?.fichas);
+        let fecha = crate::protocolo::marca_de_tiempo_actual();
         for (nombre, contenido) in canal.buzones_ajenos()? {
             registro.delta(&nombre, &contenido);
+            for encargo in detectar(agente, &nombre, &contenido) {
+                fichas.anotar(&encargo, &fecha, EstadoDelEncargo::Visto);
+            }
         }
+        disco::guardar_las_cambiadas(&carpeta_encargos, &mut fichas)?;
         Instantanea::Tomada
     } else {
         Instantanea::SinRespuestasPrevias
     };
+    // La carpeta de los encargos dice que este canal ya no viene de la 1.1.0: sin ella, la
+    // migración daría por visto lo leído.
+    crate::ficheros::crear_carpeta(&carpeta_encargos)?;
     registro.guardar(&ruta_registro)?;
     Ok(instantanea)
 }

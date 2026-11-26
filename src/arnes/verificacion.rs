@@ -14,6 +14,7 @@
 //! arnés incrusta comandos ni el modelo elige ninguno: el modelo solo pone el nombre del fichero,
 //! y ese ya está confinado.
 
+mod mensajes;
 pub mod python;
 
 use std::collections::BTreeMap;
@@ -61,6 +62,16 @@ impl Veredicto {
             Veredicto::NoPasa { orden, salida } => format!(
                 "NO pasa la comprobación de «{orden}»:\n{salida}\nCorrígela y vuelve a escribirla."
             ),
+        }
+    }
+
+    /// El veredicto en pocas palabras, para la lista de lo que dejó un encargo en su respuesta.
+    pub fn en_pocas_palabras(&self) -> &'static str {
+        match self {
+            Veredicto::SinComprobador { .. } => "sin comprobar",
+            Veredicto::NoSePudo { .. } => "no se pudo comprobar",
+            Veredicto::Pasa { .. } => "pasa la comprobación",
+            Veredicto::NoPasa { .. } => "NO pasa la comprobación",
         }
     }
 
@@ -154,7 +165,7 @@ pub fn verificar(
 
     let Some((programa, resto)) = orden.split_first() else {
         return Veredicto::NoSePudo {
-            motivo: format!("el comprobador de «.{extension}» está configurado vacío"),
+            motivo: mensajes::comprobador_vacio(&extension),
         };
     };
 
@@ -191,25 +202,22 @@ pub fn verificar(
         } => (exito, estado, salida, errores),
         DesenlaceDeOrden::NoSeLanzo(e) => {
             return Veredicto::NoSePudo {
-                motivo: format!("no se pudo lanzar «{programa}»: {e}"),
+                motivo: mensajes::no_se_lanzo(programa, &e),
             }
         }
         DesenlaceDeOrden::Agotada => {
             return Veredicto::NoSePudo {
-                motivo: format!(
-                    "«{programa}» seguía trabajando tras {} segundos y se ha cortado",
-                    tiempo_maximo.as_secs()
-                ),
+                motivo: mensajes::cortado(programa, tiempo_maximo),
             }
         }
         DesenlaceDeOrden::NoSePudoEsperar(e) => {
             return Veredicto::NoSePudo {
-                motivo: format!("no se pudo esperar a «{programa}»: {e}"),
+                motivo: mensajes::sin_esperar(programa, &e),
             }
         }
         DesenlaceDeOrden::SalidaIlegible(e) => {
             return Veredicto::NoSePudo {
-                motivo: format!("no se pudo leer la salida de «{programa}»: {e}"),
+                motivo: mensajes::salida_ilegible(programa, &e),
             }
         }
     };
@@ -234,7 +242,7 @@ fn juntar_salidas(errores: &str, salida: &str, estado: &impl std::fmt::Display) 
         .filter(|parte| !parte.is_empty())
         .collect();
     if partes.is_empty() {
-        format!("terminó con {estado} y sin decir nada")
+        mensajes::termino_sin_decir_nada(estado)
     } else {
         partes.join("\n")
     }
@@ -242,7 +250,7 @@ fn juntar_salidas(errores: &str, salida: &str, estado: &impl std::fmt::Display) 
 
 /// Recorta por caracteres, no por bytes: un error de compilación puede traer acentos y partir un
 /// carácter a la mitad dejaría el texto roto justo donde hay que leerlo.
-fn recortar(texto: &str, maximo: usize) -> String {
+pub(crate) fn recortar(texto: &str, maximo: usize) -> String {
     if texto.chars().count() <= maximo {
         return texto.to_string();
     }
@@ -316,6 +324,25 @@ mod pruebas {
     }
 
     #[test]
+    fn una_frase_con_error_y_espacios_no_es_la_linea_del_error() {
+        let salida = "se encontró un error: detalle\nerror[E0308]: mismatched types";
+        let linea = no_pasa(salida).para_el_canal("a.rs");
+
+        assert!(
+            linea.ends_with("— error[E0308]: mismatched types"),
+            "{linea}"
+        );
+    }
+
+    #[test]
+    fn una_palabra_que_contiene_error_sin_acabar_en_el_no_es_la_linea_del_error() {
+        let salida = "error_handler.py:3: note: aviso\nSyntaxError: invalid syntax";
+        let linea = no_pasa(salida).para_el_canal("error_handler.py");
+
+        assert!(linea.ends_with("— SyntaxError: invalid syntax"), "{linea}");
+    }
+
+    #[test]
     fn sin_linea_de_error_se_dice_la_primera_que_haya() {
         let linea = no_pasa("\n  algo salió mal\notra cosa").para_el_canal("a.lua");
 
@@ -347,22 +374,22 @@ mod pruebas {
         mapa
     }
 
-    fn fichero_de_prueba(dir: &tempfile::TempDir, nombre: &str) -> std::path::PathBuf {
-        let ruta = dir.path().join(nombre);
+    fn fichero_de_prueba(carpeta: &tempfile::TempDir, nombre: &str) -> std::path::PathBuf {
+        let ruta = carpeta.path().join(nombre);
         std::fs::write(&ruta, b"contenido").unwrap();
         ruta
     }
 
     #[test]
     fn sin_comprobador_para_esa_extension_se_dice_y_no_se_inventa_un_aprobado() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.ts");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.ts");
 
         let veredicto = verificar(
             &fichero,
             &comprobadores("py", orden_que(true)),
             Duration::from_secs(5),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
 
@@ -381,14 +408,14 @@ mod pruebas {
 
     #[test]
     fn un_comprobador_que_acepta_el_fichero_dice_que_pasa() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.py");
 
         let veredicto = verificar(
             &fichero,
             &comprobadores("py", orden_que(true)),
             Duration::from_secs(10),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
 
@@ -397,14 +424,14 @@ mod pruebas {
 
     #[test]
     fn un_tope_menor_que_el_de_fabrica_tambien_recorta() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.py");
 
         let veredicto = verificar(
             &fichero,
             &comprobadores("py", orden_que(false)),
             Duration::from_secs(10),
-            dir.path(),
+            carpeta.path(),
             10,
         );
 
@@ -430,14 +457,14 @@ mod pruebas {
 
     #[test]
     fn un_comprobador_que_rechaza_devuelve_su_salida_para_que_el_modelo_corrija() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.py");
 
         let veredicto = verificar(
             &fichero,
             &comprobadores("py", orden_que(false)),
             Duration::from_secs(10),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
 
@@ -453,14 +480,14 @@ mod pruebas {
 
     #[test]
     fn la_extension_no_distingue_mayusculas() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "PROPUESTA.PY");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "PROPUESTA.PY");
 
         let veredicto = verificar(
             &fichero,
             &comprobadores("py", orden_que(true)),
             Duration::from_secs(10),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
 
@@ -469,8 +496,8 @@ mod pruebas {
 
     #[test]
     fn un_comprobador_que_no_esta_instalado_no_tumba_nada() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.lua");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.lua");
 
         let veredicto = verificar(
             &fichero,
@@ -482,7 +509,7 @@ mod pruebas {
                 ],
             ),
             Duration::from_secs(5),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
 
@@ -499,15 +526,15 @@ mod pruebas {
     fn un_comprobador_colgado_se_corta_por_el_tiempo_maximo() {
         // Un arnés pensado para vivir días no puede quedarse esperando a un comprobador que no
         // termina nunca.
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.py");
 
         let inicio = Instant::now();
         let veredicto = verificar(
             &fichero,
             &comprobadores("py", crate::plataforma::ordenes_de_prueba::tardar_mucho()),
             Duration::from_millis(400),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
         let tardado = inicio.elapsed();
@@ -524,8 +551,8 @@ mod pruebas {
 
     #[test]
     fn el_marcador_del_fichero_se_sustituye_por_su_ruta() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.py");
 
         // La orden falla si el fichero no existe: si la sustitución no ocurriera, buscaría uno
         // llamado literalmente «{fichero}» y esta prueba lo cazaría.
@@ -533,7 +560,7 @@ mod pruebas {
             &fichero,
             &comprobadores("py", crate::plataforma::ordenes_de_prueba::volcar_fichero()),
             Duration::from_secs(10),
-            dir.path(),
+            carpeta.path(),
             MAXIMO_SALIDA,
         );
 
@@ -545,8 +572,8 @@ mod pruebas {
         // El comprobador se ejecuta en un directorio temporal, así que una ruta relativa se
         // resolvería contra ese directorio y el comprobador diría que el fichero no existe. Pasó
         // de verdad al escribir la prueba contra las entregas reales.
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = fichero_de_prueba(&dir, "propuesta.py");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = fichero_de_prueba(&carpeta, "propuesta.py");
         let otro_directorio = tempfile::tempdir().unwrap();
 
         let relativa = ruta_relativa_simple(&fichero, &std::env::current_dir().unwrap())

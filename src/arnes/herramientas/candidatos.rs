@@ -13,7 +13,22 @@ use std::path::{Path, PathBuf};
 const MAX_VARIANTES_DE_UN_NOMBRE: u32 = 99;
 
 /// La primera variante: la 1 es el nombre tal cual, sin sufijo.
-const PRIMERA_VARIANTE: u32 = 2;
+pub(crate) const PRIMERA_VARIANTE: u32 = 2;
+
+/// `ruta` con la variante `variante`: `nombre-002.ext`, o `nombre-002` sin extensión. Es la única
+/// regla de los sufijos: las propuestas y su archivo los componen igual, y la deducción de las
+/// entregas depende de que coincidan.
+pub(crate) fn con_variante(ruta: &Path, variante: u32) -> PathBuf {
+    let tronco = ruta
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    ruta.with_file_name(match ruta.extension() {
+        Some(ext) => format!("{tronco}-{variante:03}.{}", ext.to_string_lossy()),
+        None => format!("{tronco}-{variante:03}"),
+    })
+}
 
 /// La primera ruta libre de la forma `nombre.ext`, `nombre-002.ext`, `nombre-003.ext`…
 ///
@@ -23,19 +38,8 @@ pub(super) fn siguiente_libre(ruta: &Path) -> Option<PathBuf> {
     if !hay_algo_en(ruta) {
         return Some(ruta.to_path_buf());
     }
-    let tronco = ruta
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    let extension = ruta.extension().map(|e| e.to_string_lossy().to_string());
     (PRIMERA_VARIANTE..=MAX_VARIANTES_DE_UN_NOMBRE)
-        .map(|variante| {
-            ruta.with_file_name(match &extension {
-                Some(ext) => format!("{tronco}-{variante:03}.{ext}"),
-                None => format!("{tronco}-{variante:03}"),
-            })
-        })
+        .map(|variante| con_variante(ruta, variante))
         .find(|candidata| !hay_algo_en(candidata))
 }
 
@@ -61,6 +65,24 @@ pub(super) fn motivo_sin_nombre_libre(nombre: &str) -> String {
 mod pruebas {
     use super::*;
 
+    /// La regla de los sufijos, que comparten las propuestas y su archivo.
+    #[test]
+    fn la_variante_va_antes_de_la_extension_con_tres_cifras() {
+        let carpeta = Path::new("candidatos").join("src");
+        assert_eq!(
+            con_variante(&carpeta.join("lib.rs"), 2),
+            carpeta.join("lib-002.rs")
+        );
+        assert_eq!(
+            con_variante(&carpeta.join("Makefile"), 15),
+            carpeta.join("Makefile-015")
+        );
+        assert_eq!(
+            con_variante(&carpeta.join("datos.tar.gz"), 3),
+            carpeta.join("datos.tar-003.gz")
+        );
+    }
+
     #[test]
     fn siguiente_libre_mantiene_el_directorio_padre_con_cualquier_nombre() {
         // `siguiente_libre` es la pieza nueva que calcula nombres libres cuando el fichero ya existe.
@@ -68,8 +90,8 @@ mod pruebas {
         // confinada —que son por definición el último componente, sin /, \ ni ..— y aplica
         // with_file_name(), que solo sustituye ese componente y conserva el directorio padre.
         // Por construcción, no hay nombre que lo rompa.
-        let dir = tempfile::tempdir().expect("crear directorio temporal");
-        let candidatos = dir.path().join(".gestor/candidatos/programator");
+        let carpeta = tempfile::tempdir().expect("crear directorio temporal");
+        let candidatos = carpeta.path().join(".gestor/candidatos/programator");
         std::fs::create_dir_all(&candidatos).expect("crear directorio de candidatos");
 
         let nombres_retorcidos = [
@@ -121,8 +143,8 @@ mod pruebas {
 
     #[test]
     fn escribir_un_fichero_nuevo_nunca_escribe_encima() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("a.rs");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("a.rs");
         escribir_fichero_nuevo(&ruta, "uno").unwrap();
 
         assert!(escribir_fichero_nuevo(&ruta, "dos").is_err());
@@ -133,11 +155,15 @@ mod pruebas {
     /// escribir encima, y si era un enlace, seguirlo.
     #[test]
     fn sin_nombres_libres_no_devuelve_ninguno() {
-        let dir = tempfile::tempdir().unwrap();
-        let original = dir.path().join("z.rs");
+        let carpeta = tempfile::tempdir().unwrap();
+        let original = carpeta.path().join("z.rs");
         std::fs::write(&original, "ocupado").unwrap();
         for variante in 2..=MAX_VARIANTES_DE_UN_NOMBRE {
-            std::fs::write(dir.path().join(format!("z-{variante:03}.rs")), "ocupado").unwrap();
+            std::fs::write(
+                carpeta.path().join(format!("z-{variante:03}.rs")),
+                "ocupado",
+            )
+            .unwrap();
         }
 
         assert_eq!(siguiente_libre(&original), None);
@@ -148,10 +174,10 @@ mod pruebas {
     #[cfg(windows)]
     #[test]
     fn un_enlace_roto_ocupa_su_nombre() {
-        let dir = tempfile::tempdir().unwrap();
-        let destino = dir.path().join("borrado");
+        let carpeta = tempfile::tempdir().unwrap();
+        let destino = carpeta.path().join("borrado");
         std::fs::create_dir(&destino).unwrap();
-        let enlace = dir.path().join("x.rs");
+        let enlace = carpeta.path().join("x.rs");
         let estado = std::process::Command::new("cmd")
             .args([
                 "/C",
@@ -165,13 +191,16 @@ mod pruebas {
         assert!(estado.success(), "no se pudo crear la unión de prueba");
         std::fs::remove_dir(&destino).unwrap();
 
-        assert_eq!(siguiente_libre(&enlace), Some(dir.path().join("x-002.rs")));
+        assert_eq!(
+            siguiente_libre(&enlace),
+            Some(carpeta.path().join("x-002.rs"))
+        );
 
         // Y también cuando el enlace roto es una de las variantes.
-        let original = dir.path().join("y.rs");
+        let original = carpeta.path().join("y.rs");
         std::fs::write(&original, "ocupado").unwrap();
         std::fs::create_dir(&destino).unwrap();
-        let variante = dir.path().join("y-002.rs");
+        let variante = carpeta.path().join("y-002.rs");
         let estado = std::process::Command::new("cmd")
             .args([
                 "/C",
@@ -187,28 +216,34 @@ mod pruebas {
 
         assert_eq!(
             siguiente_libre(&original),
-            Some(dir.path().join("y-003.rs"))
+            Some(carpeta.path().join("y-003.rs"))
         );
     }
 
     #[cfg(unix)]
     #[test]
     fn un_enlace_roto_ocupa_su_nombre() {
-        let dir = tempfile::tempdir().unwrap();
-        let enlace = dir.path().join("x.rs");
-        std::os::unix::fs::symlink(dir.path().join("no-existe"), &enlace).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let enlace = carpeta.path().join("x.rs");
+        std::os::unix::fs::symlink(carpeta.path().join("no-existe"), &enlace).unwrap();
 
-        assert_eq!(siguiente_libre(&enlace), Some(dir.path().join("x-002.rs")));
+        assert_eq!(
+            siguiente_libre(&enlace),
+            Some(carpeta.path().join("x-002.rs"))
+        );
 
         // Y también cuando el enlace roto es una de las variantes.
-        let original = dir.path().join("y.rs");
+        let original = carpeta.path().join("y.rs");
         std::fs::write(&original, "ocupado").unwrap();
-        std::os::unix::fs::symlink(dir.path().join("no-existe"), dir.path().join("y-002.rs"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            carpeta.path().join("no-existe"),
+            carpeta.path().join("y-002.rs"),
+        )
+        .unwrap();
 
         assert_eq!(
             siguiente_libre(&original),
-            Some(dir.path().join("y-003.rs"))
+            Some(carpeta.path().join("y-003.rs"))
         );
     }
 }

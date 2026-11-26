@@ -176,7 +176,7 @@ fn consultar(catalogo: &dyn CatalogoDeModelos, config: &ConfigRevision) -> Resul
         };
         let respuesta = catalogo
             .buscar(&busqueda)
-            .map_err(|fallo| en_la_consulta(&format!("la búsqueda «{texto}»"), fallo))?;
+            .map_err(|fallo| en_la_consulta(&super::mensajes::la_busqueda(texto), fallo))?;
         respuestas.push((
             nombre_de_la_respuesta("busqueda", texto),
             respuesta.en_bruto,
@@ -189,9 +189,9 @@ fn consultar(catalogo: &dyn CatalogoDeModelos, config: &ConfigRevision) -> Resul
     }
     let mut detalles = Vec::new();
     for repositorio in repositorios {
-        let respuesta = catalogo
-            .detalle(&repositorio)
-            .map_err(|fallo| en_la_consulta(&format!("el detalle de «{repositorio}»"), fallo))?;
+        let respuesta = catalogo.detalle(&repositorio).map_err(|fallo| {
+            en_la_consulta(&super::mensajes::el_detalle_de(&repositorio), fallo)
+        })?;
         respuestas.push((
             nombre_de_la_respuesta("detalle", &repositorio),
             respuesta.en_bruto,
@@ -327,7 +327,7 @@ mod pruebas {
     };
     use crate::revision::reponer::MotivoSinReponer;
 
-    const GIB: u64 = 1024 * BYTES_POR_MIB;
+    use crate::revision::pruebas_comunes::GIB;
 
     /// La búsqueda de siempre, sin mirar los avisos de la reposición.
     fn buscar(config: &ConfigRevision, entorno: &Entorno) -> Resultado<BusquedaHecha> {

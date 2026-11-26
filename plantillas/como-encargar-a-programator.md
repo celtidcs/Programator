@@ -52,15 +52,17 @@ sigue sin haber ninguna garantía sobre la línea citada: verifícala tú.
 
 ## Lo que NO hace, y no insistas
 
-- **No ejecuta nada.** Ni comandos, ni pruebas, ni compila por su cuenta. Si necesitas que algo se
-  ejecute, lo ejecutas tú.
+- **El modelo no ejecuta nada.** Ni comandos, ni pruebas, ni compila por su cuenta. Lo único que
+  se ejecuta es lo que pides con `preparar:` (apartado 9), y lo ejecuta el arnés en una copia
+  aislada, con las órdenes que fija `programator.toml`; nunca el modelo, ni en el proyecto.
 - **No edita ficheros del proyecto.** Lee los que quiera, pero para entregar escribe propuestas en
   `.gestor/candidatos/programator/` y ahí se quedan hasta que alguien las mueva.
 - **No aprueba, ni firma, ni acepta nada.** No tiene el verbo. No le pidas un visto bueno.
 - **No navega, no busca en internet, no consulta documentación.**
-- **No lleva memoria entre encargos.** Cada encargo empieza de cero. Lo que esté **en un fichero del
-  proyecto** se lo pides por ruta; lo que no esté en ninguno —una decisión, un acuerdo, lo que se
-  entregó ayer— se lo dices en el encargo.
+- **Solo recuerda lo que entregó.** Cada encargo le llega con la lista de sus propuestas anteriores
+  en este proyecto y en qué quedaron (aceptada y dónde está, pendiente de revisión, o rechazada y
+  por qué), primero las tuyas. Nada más: lo que esté **en un fichero del proyecto** se lo pides por
+  ruta; lo que no esté en ninguno —una decisión, un acuerdo— se lo dices en el encargo.
 
 ## La limitación que más caro cuesta: se inventa APIs
 
@@ -128,8 +130,9 @@ para Programator y otro para otro agente, cada uno en su línea `Para …`.
   primera.
 - **No es un encargo** si Programator solo va con copia (`Para Gemini 1, con copia a Programator.`),
   si escribes «para» en minúscula o si lo nombras sin `Para` (`Se lo diré a Programator.`). Ojo:
-  `Para Programator` en medio de una línea, o citado con `>`, **sí** es un encargo; es la misma
-  regla que usa Gestor Agentes para todos los agentes. Por eso, **no cites en tu buzón una línea
+  `Para Programator` en medio de una línea, citado con `>`, entre comillas inversas o en la
+  cabecera de tu buzón **sí** es un encargo; es la misma regla que usa Gestor Agentes para todos
+  los agentes. Por eso, **no cites en tu buzón una línea
   `Para Programator` de otro encargo** (para comentarla o resumirla): Programator la toma por un
   encargo nuevo y le responde. Nómbralo por su etiqueta o di «el encargo de las 16:05».
 - **Etiqueta, si quieres seguirlo.** Si justo tras los dos puntos pones una palabra en mayúsculas
@@ -139,11 +142,18 @@ para Programator y otro para otro agente, cada uno en su línea `Para …`.
 - Se sigue atendiendo la forma antigua, un encabezado `## Para Programator: …` con el encargo
   debajo hasta el siguiente encabezado. Úsala solo si tu canal todavía trabaja así.
 
-**Tres situaciones en las que un encargo no se atiende:**
+**Dos situaciones en las que un encargo no se atiende:**
 
 - **Encargos anteriores en un canal donde se perdió el registro de lectura.** Da igual que publiques antes o después de que arranque Programator: si nunca ha respondido en este canal, atiende todo lo que vaya para él, y al arrancar mira el canal enseguida. La excepción es un canal donde Programator ya respondió alguna vez pero ha perdido su registro de lectura: ahí toma lo que hay como punto de partida y no lo atiende, para no repetir respuestas. Su estado está en `.gestor/<agente>/latido.json`.
-- **Añadir texto a un encargo anterior.** Programator solo procesa lo nuevo. Una línea añadida a un encargo que ya atendió no se interpreta como una petición de trabajo. Si necesitas corregir o ampliar algo, escribe un encargo nuevo con su propia línea `Para Programator`.
 - **Mencionar a Programator sin `Para`.** Nombrarlo sin más («se lo diré a Programator»), con «para» en minúscula o solo en copia no genera ninguna acción.
+
+**Editar lo que ya escribiste.** Programator reconoce cada encargo por tu buzón, el `LATIDO:` de
+la intervención que lo contiene y su texto, no por dónde cae en el fichero. Puedes corregir una
+intervención antigua o cambiar los saltos de línea sin que vuelva a atender nada. Pero si cambias el
+texto de un encargo que ya atendió, para él es un encargo nuevo y lo atiende entero otra vez, y
+su respuesta lo avisa con «Segunda atención»: para corregir o ampliar algo, mejor escribe
+un encargo nuevo con su propia línea `Para Programator`.
+Una línea `Para Programator` añadida dentro de una intervención antigua sí se atiende.
 
 ### 2. Dile los requisitos, uno por línea
 
@@ -203,19 +213,111 @@ Lo que le pides, en las líneas que hagan falta.
   atenderlo. Eso cuesta la carga, de segundos a decenas de segundos, así que agrupa los encargos de
   una misma clase cuando puedas: los que llegan juntos con el mismo modelo se atienden seguidos.
 
+### 6. Dile la prioridad, si corre prisa
+
+Una línea `Prioridad:` con `alta`, `normal` o `baja` adelanta o retrasa el encargo respecto de los
+demás que estén esperando. Se escribe como `Clase:`:
+
+```markdown
+Para Programator: PG-12 corregir el cálculo del IVA.
+Prioridad: alta
+```
+
+- Primero se atiende lo `alta`, luego lo `normal` y al final lo `baja`. Dentro de la misma
+  prioridad, el orden es el de siempre: el modelo que ya está cargado primero y luego por orden de
+  llegada.
+- Un encargo `alta` que pide otro modelo hace que Programator lo cambie, aunque haya encargos
+  `normal` para el que está cargado.
+- **Sin la línea**, el encargo es `normal`. **Con otro valor**, también, y la entrega lo avisa.
+
+### 7. Cancela lo que ya no quieras
+
+Si te equivocas, retira el encargo con otro encargo nuevo, escrito con los dos puntos:
+
+```markdown
+Para Programator: cancelar: PG-12
+```
+
+- Tras `cancelar:` va la etiqueta del encargo (`PG-12`), lo que escribiste tras
+  `Para Programator:` o su identificador (el campo `"id"` del latido).
+- Si aún no lo ha empezado, lo cancela sin gastar el modelo y te contesta «Cancelado, sin
+  atender». Vale también para el que espera en la cola detrás del que se está atendiendo.
+- Si lo está atendiendo, no corta una respuesta del modelo a medias: lo corta antes de la siguiente
+  llamada al modelo y te contesta «Cancelado a petición de…», con las propuestas que ya hubiera
+  dejado, que siguen en disco.
+- Si ya estaba atendido, no existe o es de otro agente, te lo dice y no cancela nada: solo cancela
+  quien encargó, desde su propio buzón.
+- Sin los dos puntos («Para Programator: cancelar la prueba de carga») es un encargo normal y va al
+  modelo.
+
+### 8. Dile en qué quedó cada propuesta
+
+Cada propuesta que deja en `.gestor/candidatos/programator/` va anotada en su registro de entregas,
+y el aviso de cada una termina diciendo cómo contarle qué hiciste con ella. Cuando la apliques o la
+descartes, díselo con un encargo nuevo, con los dos puntos y el nombre que dio el aviso:
+
+```markdown
+Para Programator: aceptada: cola-002.lua
+Para Programator: rechazada: cola-002.lua — no compila con la versión del motor
+```
+
+- Lo que dices manda y ya no se cambia. Solo cuenta quien encargó la propuesta, desde su buzón.
+- Si no dices nada, lo deduce él: la da por **aceptada** si encuentra en el proyecto un fichero con
+  su nombre y el mismo contenido (copiada tal cual; los saltos de línea dan igual), y por
+  **sustituida** si después te entregó otra para el mismo nombre. Lo que modifiques antes de copiar
+  no lo puede deducir: díselo.
+- Lo que pasa 30 días sin que se diga ni se deduzca nada queda «sin confirmar».
+- Lo resuelto sale de la carpeta a su subcarpeta `archivo/AAAA-MM/` en la pasada siguiente, no en
+  el acto: arriba solo queda lo que espera que lo revises. Si en el archivo ya hay un fichero con
+  ese nombre, va con sufijo (`fechas-003.py`); el campo `archivada` de `entregas.toml` dice cuál es
+  cada una.
+- Lo que le cuentas es lo que verá en sus encargos siguientes: si rechazas con motivo, no repetirá
+  el error a ciegas.
+
+### 9. Pídele que prepare una propuesta antes de aplicarla
+
+Antes de copiar una propuesta al proyecto puedes ver cómo quedaría, sin tocarlo:
+
+```markdown
+Para Programator: preparar: cola-002.lua en src/cola.lua
+```
+
+- Tras `preparar:` va el nombre que dio el aviso de la propuesta y, tras `en`, la ruta donde iría,
+  relativa a la raíz del proyecto. Una ruta que sale del proyecto se rechaza.
+- Copia el proyecto (lo que lista git, hasta 512 MiB) a `.gestor/programator/preparacion/`, pone
+  la propuesta en esa ruta dentro de la copia y ejecuta allí las órdenes que `programator.toml`
+  tenga para su extensión: bajar dependencias, formatear, compilar, probar. Las que ejecutan código
+  van aisladas como las pruebas ocultas del banco, y en Linux también sin red.
+- Te contesta con lo que pasó en cada orden (la salida de las que fallaron), lo que cambiaría
+  frente al fichero que había (formateado, si hay orden de formatear y pasó) y la ruta de la copia
+  para que la mires.
+- No usa el modelo ni espera a que cargue: lo atiende el arnés en la pasada siguiente. Si llega
+  mientras el modelo atiende otro encargo, se atiende al terminar esa vuelta.
+- Si la extensión no tiene órdenes, solo copia y te dice el cambio. Si el aislamiento no funciona
+  en ese equipo, no ejecuta nada y te dice por qué.
+- La copia se borra en la pasada siguiente a tu `aceptada:` o `rechazada:` de esa propuesta, o a
+  los dos días.
+
 ## Qué te va a devolver
 
 Publica en `.gestor/canal/programator.md`, con el formato del canal: cada intervención
 empieza con `LATIDO: AAAA-MM-DD HH:MM:SS`. Si responde a un encargo tuyo, debajo va
 `Para <tu identidad>: respuesta a <nombre del encargo>` y, si el encargo trae etiqueta,
 `RECIBIDO <hora>: <etiqueta>` (más abajo, en «Cómo enterarte de la respuesta»). Después van su
-resumen y `LEÍDO:`, lo que leyó de cada buzón. Si reserva un fichero, lo anota en `## Reservas activas` de `estado.md`
+resumen y `LEÍDO:`, lo que leyó de cada buzón. Si el modelo publicó, tras su texto va
+una línea del arnés, no del modelo: «Lo que dejó este encargo, según el arnés:», con cada propuesta
+por su nombre en disco y lo que dijo su comprobación, o «Este encargo no dejó ninguna propuesta».
+Esa es la que hay que creer: el modelo puede decir «Entregado fechas.py» cuando la buena es
+`fechas-002.py`. Si reserva un fichero, lo anota en `## Reservas activas` de `estado.md`
 (`- Programator, AAAA-MM-DD HH:MM: ruta — motivo`) y lo quita al cerrar el encargo, publique o no.
-Debajo de lo que él escriba, **el arnés añade el resultado de compilar sus propuestas**:
+Cada propuesta, en cuanto la escribe, sale además en su propio aviso, con **el resultado de
+compilarla, que añade el arnés**:
 
 ```
+He dejado la propuesta «rangos.py» en disco.
+
 **Comprobación de las propuestas** (la hace el arnés, no el modelo):
-- `rangos.py`: pasa la comprobación
+- `rangos.py`: ✅ pasa la comprobación
 ```
 
 **Esa línea la escribe el arnés, no él.** Si dice que no pasa, no pasa, lo que él haya escrito
@@ -238,10 +340,13 @@ propio que copie la propuesta sobre una copia de tu proyecto real antes de compi
 `Memoria:` con el modelo, las capas que cupieron en la tarjeta y la memoria libre antes de cargar,
 la que ocupa el motor y la libre al terminar. Si cupieron menos capas que las que midió el banco, lo
 avisa: el encargo se hizo igual, solo que más despacio. Un mismo modelo puede salir con tres cifras
-de capas distintas, y cada una mide otra cosa: la lista de modelos disponibles, cuántas cabrían con
-la tarjeta entera para él; el registro del banco, cuántas cargó al medirlo; y la línea `Memoria:`,
-cuántas cupieron en ese encargo con la memoria libre de ese momento. Que no coincidan no es un
-error.
+de capas distintas, y cada una mide otra cosa. Que no coincidan no es un error:
+
+- la tabla de modelos de esta guía: cuántas cabrían con la tarjeta entera
+  para él (la más alta);
+- el registro del banco: cuántas cargó al medirlo;
+- la línea `Memoria:`: cuántas cupieron en ese encargo con la memoria libre de ese momento (la más
+  baja si otro programa usa la tarjeta).
 
 **Un encargo que no se pudo atender no se pierde en silencio.** Si no hay un modelo con el que
 atenderlo (falta su fichero o no cabe en la tarjeta), Programator no lo intenta: te responde en el
@@ -303,7 +408,10 @@ arrancar.
 Programator escribe su estado en `.gestor/<agente>/latido.json` en cada sondeo del canal, con tres
 valores posibles: `reposo` (sin nada que atender), `atendiendo` (generando una respuesta, con el
 encargo en curso) y `error` (algo falló, con el motivo). Si tiene un modelo cargado en el motor,
-el campo `"modelo_cargado"` dice cuál; sin modelo, el campo no aparece. En cuanto publica la respuesta
+el campo `"modelo_cargado"` dice cuál; sin modelo, el campo no aparece. Mientras atiende, el campo
+`"encargo"` dice de qué buzón es (`"buzon"`), su primera línea (`"resumen"`) y su identificador
+(`"id"`). Mientras atiende no lleva `"proximo_sondeo"`: lo nuevo del canal se lee al terminar
+la vuelta, y entre una llamada al modelo y la siguiente solo mira si cancelan el encargo en curso. En cuanto publica la respuesta
 de un encargo vuelve a `reposo` (si el encargo se abortó o se pasó de plazo, se queda en `error`), sin esperar al final
 de la vuelta. Vigilar la transición de `atendiendo` a `reposo` o `error` es la forma más rápida de
 saber cuándo ha terminado, sin esperar a ver algo nuevo en el canal.
@@ -312,9 +420,10 @@ saber cuándo ha terminado, sin esperar a ver algo nuevo en el canal.
 
 **Pídele:** una función, un fichero, una auditoría de código buscando **formas** —números sueltos,
 métodos largos, una clase que hace de todo—, con los requisitos en una lista y diciéndole cómo
-entregar.
+entregar. Y que prepare una propuesta (`preparar:`) para verla formateada, compilada y probada en
+una copia antes de aplicarla.
 
-**No le pidas:** que ejecute algo, que decida una arquitectura, que diagnostique la causa de un
+**No le pidas:** que ejecute algo fuera de `preparar:`, que decida una arquitectura, que diagnostique la causa de un
 fallo, datos sobre APIs o versiones, un proyecto entero, ni que apruebe nada.
 
 **Y verifica siempre lo que afirme sobre bibliotecas.** Ahí es donde falla, y falla con aplomo.

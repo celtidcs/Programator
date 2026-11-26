@@ -10,11 +10,11 @@ use crate::motor::{MotorDoble, Respuesta, SolicitudHerramienta};
 use crate::protocolo::EstadoLatido;
 
 pub(super) fn carpeta_de_prueba() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let carpeta = dir.path().to_path_buf();
+    let carpeta_temporal = tempfile::tempdir().unwrap();
+    let carpeta = carpeta_temporal.path().to_path_buf();
     std::fs::create_dir_all(carpeta.join(".gestor/canal")).unwrap();
     std::fs::write(carpeta.join("PROGRAMATOR.md"), "NORMAS DE LA CASA\n").unwrap();
-    (dir, carpeta)
+    (carpeta_temporal, carpeta)
 }
 
 pub(super) fn escribir_buzon(carpeta: &Path, nombre: &str, contenido: &str) {
@@ -991,6 +991,133 @@ fn multiples_propuestas_se_publican_al_entregar_y_cierre_no_duplica() {
     );
 }
 
+/// Uso real del 26/11: la respuesta dijo «Entregado fechas.py» y la entrega buena era
+/// `fechas-002.py`. La respuesta dirigida cierra con lo que dejó el encargo, nombrado como en
+/// disco y con lo que dijo la comprobación, en el orden en que se escribió. Lo escribe el arnés.
+#[test]
+fn la_respuesta_cierra_con_las_propuestas_del_encargo_como_quedaron_en_disco() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nEntrega alfa.rs.\n",
+    );
+    std::fs::create_dir_all(carpeta.join(".gestor/candidatos/programator")).unwrap();
+    std::fs::write(
+        carpeta.join(".gestor/candidatos/programator/alfa.rs"),
+        "viejo",
+    )
+    .unwrap();
+
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "alfa.rs", "contenido": "fn alfa() {}"}),
+        ),
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "src/beta.rs", "contenido": "fn beta() {}"}),
+        ),
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Entregado alfa.rs."}),
+        ),
+    ]);
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+
+    ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    let respuesta = &buzon[buzon.find("Entregado alfa.rs.").unwrap()..];
+    assert!(
+        respuesta.contains(
+            "Lo que dejó este encargo, según el arnés: «alfa-002.rs», sin comprobar; \
+             «src/beta.rs», sin comprobar."
+        ),
+        "{respuesta}"
+    );
+}
+
+/// El caso del uso real del 26/11 con comprobador: la primera propuesta no pasa y la segunda sí, y
+/// la respuesta dice de cada una lo suyo.
+#[test]
+fn la_lista_de_lo_que_dejo_dice_cual_pasa_y_cual_no() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nEntrega fechas.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "fechas.rs", "contenido": "esto no es Rust"}),
+        ),
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "fechas.lua", "contenido": "return {}"}),
+        ),
+        pedir(
+            "publicar",
+            serde_json::json!({"texto": "Entregado fechas.rs."}),
+        ),
+    ]);
+    let mut verificacion = Verificacion::default();
+    verificacion.comprobadores.insert(
+        "rs".to_string(),
+        crate::plataforma::ordenes_de_prueba::eco_y_codigo("el compilador dijo que no", 1),
+    );
+    verificacion.comprobadores.insert(
+        "lua".to_string(),
+        crate::plataforma::ordenes_de_prueba::eco_y_codigo("bien", 0),
+    );
+    let limites = Limites::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+
+    ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    let respuesta = &buzon[buzon.find("Entregado fechas.rs.").unwrap()..];
+    assert!(
+        respuesta.contains(
+            "Lo que dejó este encargo, según el arnés: «fechas.rs», NO pasa la comprobación; \
+             «fechas.lua», pasa la comprobación."
+        ),
+        "{respuesta}"
+    );
+}
+
+/// Uso real del 26/11: el modelo publicó sin dejar el fichero que se le pedía y nadie lo dijo.
+#[test]
+fn la_respuesta_dice_si_el_encargo_no_dejo_ninguna_propuesta() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nEntrega truncar.py.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![pedir(
+        "publicar",
+        serde_json::json!({"texto": "Estas son mis entregas."}),
+    )]);
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+
+    ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    assert!(
+        buzon.contains("Este encargo no dejó ninguna propuesta: si pedía un fichero, no está."),
+        "{buzon}"
+    );
+}
+
 #[test]
 fn al_cerrar_encargo_se_genera_propuesta_de_poda_sin_dejar_reserva() {
     let (_dir, carpeta) = carpeta_de_prueba();
@@ -1249,6 +1376,9 @@ impl Revisor for RevisorFalso {
     fn es_suyo(&self, texto: &str) -> bool {
         texto.trim_start().starts_with("revisión:")
     }
+    fn necesita_el_motor(&self, texto: &str) -> bool {
+        texto.trim_start().starts_with("revisión: probar")
+    }
     fn atender(
         &mut self,
         de: &str,
@@ -1457,7 +1587,7 @@ fn la_reserva_de_un_encargo_se_quita_aunque_se_aborte() {
 fn mientras_dura_el_encargo_la_reserva_esta_anotada() {
     // Lo que se quita al cerrar tiene que haber estado puesto: si `reservar` no anotara nada, las
     // pruebas de arriba pasarían igual.
-    let (dir, carpeta) = carpeta_de_prueba();
+    let (carpeta_temporal, carpeta) = carpeta_de_prueba();
     let ruta_estado = carpeta.join(".gestor/canal/estado.md");
     std::fs::write(&ruta_estado, ESTADO_CON_RESERVA_AJENA).unwrap();
     let canal = Canal::nuevo(&carpeta, "Programator").unwrap();
@@ -1480,7 +1610,7 @@ fn mientras_dura_el_encargo_la_reserva_esta_anotada() {
         repertorio.tomar_reservas().is_empty(),
         "quien las toma las quita"
     );
-    drop(dir);
+    drop(carpeta_temporal);
 }
 
 #[test]
@@ -1736,4 +1866,630 @@ fn la_sesion_comprueba_las_propuestas_con_el_comprobador_del_toml() {
         buzon.contains("`roto.rs`: ❌ NO pasa la comprobación — el compilador dijo que no"),
         "la sesión no comprobó la propuesta: {buzon}"
     );
+}
+
+/// Lo que la instantánea da por visto queda en el registro de encargos: aunque el buzón cambie
+/// después, no se atiende.
+#[test]
+fn lo_que_la_instantanea_da_por_visto_no_se_atiende_aunque_cambie_el_buzon() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    encargo_anterior_al_arranque(&carpeta, true);
+    escribir_buzon(
+        &carpeta,
+        "codex2.md",
+        "# Bandeja de Codex 2\n\nLATIDO: 2026-11-22 19:00:00\n\nPara Programator: anterior.\n\n\
+         LATIDO: 2026-11-22 20:00:00\n- Sin encargos.\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![Respuesta::Texto("Listo.".to_string())]);
+
+    let desenlace = ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(
+            &Limites::default(),
+            &Verificacion::default(),
+            &crate::terminal::TerminalReal,
+        ),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(desenlace, DesenlacePasada::SinEncargos),
+        "{desenlace:?}"
+    );
+}
+
+/// Un encargo de revisión queda atendido en el registro: si el buzón cambia, no se repite, porque
+/// la revisión cuesta horas.
+#[test]
+fn un_encargo_de_revision_atendido_no_se_repite_aunque_cambie_el_buzon() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    let buzon = "# Bandeja de Claude 1\n\nLATIDO: 2026-11-25 10:00:00\nPara Programator: revisión: buscar\n";
+    escribir_buzon(&carpeta, "claude.md", buzon);
+    let mut asegurar_motor =
+        || -> Resultado<EstadoMotor> { Err(Error::Configuracion("sin motor".to_string())) };
+    let mut revisor = RevisorFalso::default();
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+
+    for vuelta in 0..2 {
+        if vuelta == 1 {
+            escribir_buzon(
+                &carpeta,
+                "claude.md",
+                &format!("{buzon}\nLATIDO: 2026-11-25 11:00:00\n- Otra cosa.\n"),
+            );
+        }
+        ejecutar_pasada_con_revisor(
+            &carpeta,
+            "Programator",
+            &ajustes,
+            &mut asegurar_motor,
+            &mut revisor,
+        )
+        .unwrap();
+    }
+
+    assert_eq!(revisor.atendidos.len(), 1, "{:?}", revisor.atendidos);
+}
+
+/// Un encargo normal y una revisión con el motor cargando: la pasada se corta, pero antes atiende
+/// la revisión si no toca el motor. Devuelve cuántas revisiones se atendieron en la primera
+/// vuelta y, en la segunda, ya con el motor, el resumen y las revisiones atendidas en total, con
+/// lo que el buzón propio tenía tras cada vuelta (la segunda pasa al histórico lo de la primera).
+fn revision_con_el_motor_cargando(revision: &str) -> (usize, ResumenPasada, usize, String) {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        &format!("LATIDO: 2026-11-25 10:00:00\nPara Programator: {revision}\n"),
+    );
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "LATIDO: 2026-11-25 10:00:01\nPara Programator: revisa las puertas.\n",
+    );
+    let mut revisor = RevisorFalso::default();
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+
+    let mut cargando = || -> Resultado<EstadoMotor> { Ok(EstadoMotor::Esperando) };
+    let primera = ejecutar_pasada_con_revisor(
+        &carpeta,
+        "Programator",
+        &ajustes,
+        &mut cargando,
+        &mut revisor,
+    )
+    .unwrap();
+    assert!(
+        matches!(primera, DesenlacePasada::MotorCargando),
+        "{primera:?}"
+    );
+    let en_la_primera = revisor.atendidos.len();
+    let ruta_propia = carpeta.join(".gestor/canal/programator.md");
+    let tras_la_primera = std::fs::read_to_string(&ruta_propia).unwrap_or_default();
+
+    let mut listo = motor_con_guion(vec![pedir(
+        "publicar",
+        serde_json::json!({"texto": "Puertas revisadas por el modelo."}),
+    )]);
+    let segunda =
+        ejecutar_pasada_con_revisor(&carpeta, "Programator", &ajustes, &mut listo, &mut revisor)
+            .unwrap();
+    let DesenlacePasada::Atendidos(resumen) = segunda else {
+        panic!("se esperaba Atendidos: {segunda:?}");
+    };
+    (
+        en_la_primera,
+        resumen,
+        revisor.atendidos.len(),
+        format!(
+            "{tras_la_primera}
+{}",
+            buzon_propio(&carpeta)
+        ),
+    )
+}
+
+/// C1.
+#[test]
+fn una_revision_que_no_toca_el_motor_no_espera_a_que_cargue_el_modelo() {
+    let (en_la_primera, segunda, en_total, buzon) =
+        revision_con_el_motor_cargando("revisión: buscar");
+
+    assert_eq!(en_la_primera, 1);
+    assert_eq!(
+        segunda.atendidos, 1,
+        "solo el encargo del modelo: {segunda:?}"
+    );
+    assert_eq!(en_total, 1, "la revisión no se repite");
+    assert!(buzon.contains("Revisión atendida por el arnés."), "{buzon}");
+    assert!(
+        buzon.contains("Puertas revisadas por el modelo."),
+        "{buzon}"
+    );
+}
+
+/// C2.
+#[test]
+fn una_revision_que_suelta_el_motor_espera_a_que_cargue_el_modelo() {
+    let (en_la_primera, segunda, en_total, buzon) =
+        revision_con_el_motor_cargando("revisión: probar\na/b c.gguf");
+
+    assert_eq!(en_la_primera, 0);
+    assert_eq!(segunda.atendidos, 2, "{segunda:?}");
+    assert_eq!(en_total, 1);
+    let del_modelo = buzon.find("Puertas revisadas por el modelo.").unwrap();
+    let de_la_revision = buzon.find("Revisión atendida por el arnés.").unwrap();
+    assert!(del_modelo < de_la_revision, "{buzon}");
+}
+
+/// D2, en la entrega: la prioridad que no se entiende se avisa en la respuesta del encargo.
+#[test]
+fn la_entrega_avisa_de_una_prioridad_desconocida() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "## Para Programator\n\nRevisa esto.\nPrioridad: urgente\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![pedir(
+        "publicar",
+        serde_json::json!({"texto": "Revisado."}),
+    )]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(
+            &Limites::default(),
+            &Verificacion::default(),
+            &crate::terminal::TerminalReal,
+        ),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    assert!(buzon.contains("`Prioridad: urgente`"), "{buzon}");
+}
+
+/// D3: un encargo que esperaba a que cargara el modelo se cancela, y la pasada siguiente lo da
+/// por cancelado sin llamar al motor.
+#[test]
+fn cancelar_un_encargo_pendiente_no_llama_al_motor() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    let encargo = "LATIDO: 2026-11-25 10:00:00\nPara Programator: PG-7 contar líneas\n";
+    escribir_buzon(&carpeta, "codex.md", encargo);
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+    let mut cargando = || -> Resultado<EstadoMotor> { Ok(EstadoMotor::Esperando) };
+    let primera = ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut cargando).unwrap();
+    assert!(matches!(primera, DesenlacePasada::MotorCargando));
+
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        &format!("{encargo}\nLATIDO: 2026-11-25 10:00:30\nPara Programator: cancelar: PG-7\n"),
+    );
+    let mut llamadas = 0u32;
+    let mut contar = || -> Resultado<EstadoMotor> {
+        llamadas += 1;
+        Ok(EstadoMotor::Esperando)
+    };
+    let segunda = ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut contar).unwrap();
+
+    assert_eq!(llamadas, 0, "no debe preparar el motor");
+    assert!(
+        matches!(
+            segunda,
+            DesenlacePasada::Atendidos(ResumenPasada { atendidos: 1, .. })
+        ),
+        "{segunda:?}"
+    );
+    let buzon = buzon_propio(&carpeta);
+    assert!(
+        buzon.contains("Cancelado, sin atender: «contar líneas»"),
+        "{buzon}"
+    );
+    let tercera = ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut cargando).unwrap();
+    assert!(
+        matches!(tercera, DesenlacePasada::SinEncargos),
+        "{tercera:?}"
+    );
+}
+
+/// «cancelar» sin los dos puntos es un encargo normal: va al modelo.
+#[test]
+fn cancelar_sin_los_dos_puntos_va_al_modelo() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "LATIDO: 2026-11-25 10:00:00\nPara Programator: cancelar la prueba de carga\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![pedir(
+        "publicar",
+        serde_json::json!({"texto": "Prueba de carga quitada."}),
+    )]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(
+            &Limites::default(),
+            &Verificacion::default(),
+            &crate::terminal::TerminalReal,
+        ),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    let buzon = buzon_propio(&carpeta);
+    assert!(buzon.contains("Prueba de carga quitada."), "{buzon}");
+    assert!(!buzon.contains("No se ha cancelado nada"), "{buzon}");
+}
+
+/// Una cancelación no espera a que cargue el modelo: se contesta en la misma vuelta, y lo que
+/// sigue para el modelo continúa pendiente.
+#[test]
+fn una_cancelacion_se_contesta_aunque_el_modelo_este_cargando() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "LATIDO: 2026-11-25 10:00:00\nPara Programator: PG-1 revisar puertas\n\n\
+         LATIDO: 2026-11-25 10:00:01\nPara Programator: PG-2 contar líneas\n\n\
+         LATIDO: 2026-11-25 10:00:02\nPara Programator: cancelar: PG-2\n",
+    );
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+    let mut cargando = || -> Resultado<EstadoMotor> { Ok(EstadoMotor::Esperando) };
+
+    let desenlace = ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut cargando).unwrap();
+
+    assert!(matches!(desenlace, DesenlacePasada::MotorCargando));
+    let buzon = buzon_propio(&carpeta);
+    assert!(
+        buzon.contains("Cancelado, sin atender: «contar líneas»"),
+        "{buzon}"
+    );
+    let abiertos: Vec<String> = super::pruebas_motores::cola(&carpeta)
+        .into_iter()
+        .map(|f| f.texto)
+        .collect();
+    assert_eq!(abiertos.len(), 1, "{abiertos:?}");
+    assert!(abiertos[0].contains("PG-1"), "{abiertos:?}");
+}
+
+/// Un motor de guion que, tras su primera respuesta, añade al buzón `ruta` el texto `cancelacion`:
+/// quien encargó cancela mientras el modelo trabaja.
+pub(super) struct MotorQueCancelaAlResponder {
+    pub(super) doble: MotorDoble,
+    pub(super) ruta: std::path::PathBuf,
+    pub(super) cancelacion: Option<String>,
+}
+
+impl crate::motor::Motor for MotorQueCancelaAlResponder {
+    fn responder(&mut self, conversacion: &[crate::motor::Mensaje]) -> Resultado<Respuesta> {
+        let respuesta = self.doble.responder(conversacion);
+        if let Some(texto) = self.cancelacion.take() {
+            let antes = std::fs::read_to_string(&self.ruta).unwrap();
+            std::fs::write(&self.ruta, format!("{antes}{texto}")).unwrap();
+        }
+        respuesta
+    }
+
+    fn comprobar_salud(&mut self) -> crate::motor::proceso::EstadoServidor {
+        self.doble.comprobar_salud()
+    }
+
+    fn ultimo_consumo(&self) -> Option<crate::motor::Consumo> {
+        self.doble.ultimo_consumo()
+    }
+}
+
+/// D4: cancelado entre dos llamadas al modelo, el encargo se corta antes de la siguiente, el
+/// latido no queda en error, la respuesta lo dice con las propuestas, y la cancelación no se
+/// vuelve a contestar.
+#[test]
+fn cancelar_el_encargo_en_curso_lo_corta_antes_de_la_siguiente_llamada() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    let ruta_buzon = carpeta.join(".gestor/canal/codex.md");
+    std::fs::write(
+        &ruta_buzon,
+        "# Bandeja de Codex\n\nLATIDO: 2026-11-25 10:00:00\nPara Programator: PG-3 escribir la cola\n",
+    )
+    .unwrap();
+    let mut motor = Some(MotorQueCancelaAlResponder {
+        doble: MotorDoble::con_guion(vec![
+            pedir(
+                "escribir_propuesta",
+                serde_json::json!({"nombre": "cola.lua", "contenido": "return {}"}),
+            ),
+            pedir("publicar", serde_json::json!({"texto": "nunca se llega"})),
+        ]),
+        ruta: ruta_buzon.clone(),
+        cancelacion: Some(
+            "\nLATIDO: 2026-11-25 10:00:40\nPara Programator: cancelar: PG-3\n".to_string(),
+        ),
+    });
+    let mut asegurar_motor = move || -> Resultado<EstadoMotor> {
+        Ok(EstadoMotor::Disponible(Box::new(motor.take().unwrap())))
+    };
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+
+    let desenlace =
+        ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+
+    assert!(
+        matches!(
+            desenlace,
+            DesenlacePasada::Atendidos(ResumenPasada { atendidos: 1, .. })
+        ),
+        "{desenlace:?}"
+    );
+    let buzon = buzon_propio(&carpeta);
+    assert!(buzon.contains("Cancelado a petición de Codex"), "{buzon}");
+    assert!(buzon.contains("cola.lua"), "{buzon}");
+    assert!(!buzon.contains("nunca se llega"), "{buzon}");
+    // Uso real del 26/11: la respuesta ya leyó la cancelación, y su LEÍDO llega hasta ella.
+    let respuesta = &buzon[buzon.find("Cancelado a petición de Codex").unwrap()..];
+    let antes_de_la_respuesta = &buzon[..buzon.find("Cancelado a petición de Codex").unwrap()];
+    let leido = antes_de_la_respuesta
+        .lines()
+        .rev()
+        .find(|linea| linea.contains("LEÍDO"))
+        .unwrap_or_default();
+    assert!(
+        leido.contains("hasta su latido 2026-11-25 10:00:40"),
+        "{leido}\n{respuesta}"
+    );
+    let latido = Latido::cargar(&ruta_del_latido(&carpeta, "Programator", "latido.json"))
+        .unwrap()
+        .unwrap();
+    assert_ne!(latido.estado(), EstadoLatido::Error);
+    let fichas = crate::arnes::registro_de_encargos::disco::leer(
+        &crate::arnes::espacio::carpeta_de_los_encargos(&carpeta, "Programator"),
+    )
+    .unwrap()
+    .fichas;
+    let estados: Vec<_> = fichas.iter().map(|f| f.estado).collect();
+    use crate::arnes::registro_de_encargos::EstadoDelEncargo;
+    assert!(
+        estados.contains(&EstadoDelEncargo::Cancelado),
+        "{estados:?}"
+    );
+    assert_eq!(fichas.len(), 2, "el encargo y su cancelación: {estados:?}");
+
+    let mut sin_motor = || -> Resultado<EstadoMotor> { panic!("no debe pedir el motor") };
+    let siguiente = ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut sin_motor).unwrap();
+    assert!(
+        matches!(siguiente, DesenlacePasada::SinEncargos),
+        "{siguiente:?}"
+    );
+}
+
+/// E1, de punta a punta: la pasada anota en el registro de entregas lo que el modelo propone, con
+/// el identificador del encargo.
+#[test]
+fn la_pasada_anota_las_propuestas_en_el_registro_de_entregas() {
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "LATIDO: 2026-11-25 10:00:00\nPara Programator: PG-4 la cola\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "cola.lua", "contenido": "return {}"}),
+        ),
+        pedir("publicar", serde_json::json!({"texto": "Hecha."})),
+    ]);
+
+    ejecutar_pasada(
+        &carpeta,
+        "Programator",
+        &Ajustes::con_limites(
+            &Limites::default(),
+            &Verificacion::default(),
+            &crate::terminal::TerminalReal,
+        ),
+        &mut asegurar_motor,
+    )
+    .unwrap();
+
+    let entregas = crate::arnes::entregas::disco::leer(
+        &crate::arnes::espacio::ruta_de_las_entregas(&carpeta, "Programator"),
+    )
+    .unwrap()
+    .registro
+    .entregas;
+    assert_eq!(entregas.len(), 1, "{entregas:?}");
+    assert_eq!(entregas[0].propuesta, "cola.lua");
+    assert_eq!(entregas[0].de, "codex.md");
+    assert_eq!(entregas[0].nombre_del_encargo, "la cola");
+    assert_eq!(entregas[0].encargo.len(), 16);
+}
+
+/// E2 en la pasada: lo propuesto y copiado tal cual al proyecto queda aceptado en una pasada
+/// posterior, aunque no traiga encargos.
+#[test]
+fn la_pasada_deduce_que_una_propuesta_copiada_se_acepto() {
+    use crate::arnes::entregas::EstadoDeLaPropuesta;
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        "LATIDO: 2026-11-25 10:00:00\nPara Programator: PG-4 la cola\n",
+    );
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "cola.lua", "contenido": "return {}"}),
+        ),
+        pedir("publicar", serde_json::json!({"texto": "Hecha."})),
+    ]);
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+    ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+    std::fs::write(carpeta.join("cola.lua"), "return {}\r\n").unwrap();
+
+    let mut sin_motor = || -> Resultado<EstadoMotor> { panic!("no debe pedir el motor") };
+    ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut sin_motor).unwrap();
+
+    let entregas = crate::arnes::entregas::disco::leer(
+        &crate::arnes::espacio::ruta_de_las_entregas(&carpeta, "Programator"),
+    )
+    .unwrap()
+    .registro
+    .entregas;
+    assert_eq!(
+        entregas[0].estado,
+        EstadoDeLaPropuesta::Aceptada,
+        "{entregas:?}"
+    );
+    assert_eq!(entregas[0].destino.as_deref(), Some("cola.lua"));
+}
+
+/// E7 y E4 en la pasada: la entrega dice cómo confirmar, el que encargó rechaza con su motivo y
+/// queda anotado; el rechazo desde otro buzón no cambia nada.
+#[test]
+fn el_que_encargo_rechaza_la_propuesta_y_queda_anotado() {
+    use crate::arnes::entregas::EstadoDeLaPropuesta;
+    let (_dir, carpeta) = carpeta_de_prueba();
+    sembrar_registro_no_vacio(&carpeta);
+    let encargo =
+        "# Bandeja de Codex\n\nLATIDO: 2026-11-25 10:00:00\nPara Programator: PG-4 la cola\n";
+    escribir_buzon(&carpeta, "codex.md", encargo);
+    let mut asegurar_motor = motor_con_guion(vec![
+        pedir(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": "cola.lua", "contenido": "return {}"}),
+        ),
+        pedir("publicar", serde_json::json!({"texto": "Hecha."})),
+    ]);
+    let limites = Limites::default();
+    let verificacion = Verificacion::default();
+    let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+    ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+    let tras_la_entrega = buzon_propio(&carpeta);
+    assert!(
+        tras_la_entrega.contains("`aceptada: cola.lua`"),
+        "{tras_la_entrega}"
+    );
+
+    escribir_buzon(
+        &carpeta,
+        "claude.md",
+        "LATIDO: 2026-11-25 10:01:00\nPara Programator: rechazada: cola.lua — no es mía\n",
+    );
+    escribir_buzon(
+        &carpeta,
+        "codex.md",
+        &format!("{encargo}\nLATIDO: 2026-11-25 10:02:00\nPara Programator: rechazada: cola.lua — no compila\n"),
+    );
+    let mut sin_motor = || -> Resultado<EstadoMotor> { panic!("no debe pedir el motor") };
+    let desenlace = ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut sin_motor).unwrap();
+
+    assert!(
+        matches!(
+            desenlace,
+            DesenlacePasada::Atendidos(ResumenPasada { atendidos: 2, .. })
+        ),
+        "{desenlace:?}"
+    );
+    let buzon = buzon_propio(&carpeta);
+    assert!(
+        buzon.contains("Anotado: «cola.lua» queda rechazada"),
+        "{buzon}"
+    );
+    assert!(buzon.contains("la encargó otro buzón"), "{buzon}");
+    let entregas = crate::arnes::entregas::disco::leer(
+        &crate::arnes::espacio::ruta_de_las_entregas(&carpeta, "Programator"),
+    )
+    .unwrap()
+    .registro
+    .entregas;
+    assert_eq!(entregas[0].estado, EstadoDeLaPropuesta::Rechazada);
+    assert_eq!(entregas[0].estado_lo_dio, "Codex 1");
+    assert_eq!(entregas[0].motivo.as_deref(), Some("no compila"));
+}
+
+/// E6 en la pasada: lo que ya se entregó llega al modelo, citado; con
+/// `entregas_en_contexto = 0`, no.
+#[test]
+fn el_modelo_ve_lo_que_ya_entrego_salvo_con_limite_cero() {
+    use crate::arnes::entregas::{EncargoDeLaEntrega, EstadoDeLaPropuesta};
+    for (limite, se_ve) in [(20, true), (0, false)] {
+        let (_dir, carpeta) = carpeta_de_prueba();
+        sembrar_registro_no_vacio(&carpeta);
+        let anterior = EncargoDeLaEntrega {
+            encargo: "id".to_string(),
+            nombre_del_encargo: "PG-3 el menú".to_string(),
+            de: "codex.md".to_string(),
+            modelo: None,
+        };
+        let mut entrada = anterior.entrada(
+            "menu.lua",
+            "return {}\n",
+            &crate::arnes::verificacion::Veredicto::SinComprobador {
+                extension: "lua".to_string(),
+            },
+            "2026-11-25 09:00:00",
+        );
+        entrada.estado = EstadoDeLaPropuesta::Rechazada;
+        entrada.motivo = Some("no compila".to_string());
+        crate::arnes::entregas::disco::anotar(
+            &crate::arnes::espacio::ruta_de_las_entregas(&carpeta, "Programator"),
+            entrada,
+        )
+        .unwrap();
+        escribir_buzon(
+            &carpeta,
+            "codex.md",
+            "LATIDO: 2026-11-25 10:00:00\nPara Programator: PG-4 la cola\n",
+        );
+        let vista = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut motor = Some(MotorQueGuardaLaConversacion {
+            doble: MotorDoble::con_guion(vec![Respuesta::Texto("Hecha.".to_string())]),
+            vista: std::rc::Rc::clone(&vista),
+        });
+        let mut asegurar_motor = move || -> Resultado<EstadoMotor> {
+            Ok(EstadoMotor::Disponible(Box::new(motor.take().unwrap())))
+        };
+        let limites = Limites::default();
+        let verificacion = Verificacion::default();
+        let mut ajustes =
+            Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
+        ajustes.entregas_en_contexto = limite;
+
+        ejecutar_pasada(&carpeta, "Programator", &ajustes, &mut asegurar_motor).unwrap();
+
+        let todo: String = vista.borrow().iter().map(|m| m.contenido.clone()).collect();
+        assert_eq!(
+            todo.contains("> - «menu.lua» (PG-3 el menú): rechazada: no compila."),
+            se_ve,
+            "límite {limite}: {todo}"
+        );
+    }
 }

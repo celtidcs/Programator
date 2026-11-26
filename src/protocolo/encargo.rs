@@ -27,9 +27,17 @@ pub struct Encargo {
     pub texto: String,
     /// Cómo venía escrito.
     pub forma: Forma,
+    /// Lo que sigue a `LATIDO:` en la intervención que contiene el encargo, si la hay. Distingue
+    /// dos encargos con el mismo texto escritos en intervenciones distintas.
+    pub latido: Option<String>,
 }
 
 impl Encargo {
+    /// El identificador estable del encargo (`protocolo::identificador`).
+    pub fn id(&self) -> String {
+        super::identificador::identificador(&self.de, self.latido.as_deref(), &self.texto)
+    }
+
     /// Lo que se pide, sin la línea `Para …` que lo dirige: lo que va tras los dos puntos de esa
     /// línea, o, si no los lleva, lo que va debajo. Es lo que mira quien reconoce un pedido por su
     /// primera línea, como la revisión (`revisión: buscar`). En las otras formas, el texto entero.
@@ -65,16 +73,6 @@ pub enum Forma {
     Marcador,
 }
 
-impl Forma {
-    fn de_la_seccion(abierta_por_linea: bool) -> Self {
-        if abierta_por_linea {
-            Forma::Linea
-        } else {
-            Forma::Encabezado
-        }
-    }
-}
-
 /// Extrae los encargos dirigidos a `agente` dentro del contenido de un buzón ajeno.
 ///
 /// Quién es destinatario lo decide [`destinatarios`], con las reglas de Gestor Agentes: un «Para»
@@ -86,32 +84,42 @@ pub fn detectar(agente: &str, de: &str, contenido: &str) -> Vec<Encargo> {
 
     let identidad = Identidad::de(agente);
     let mut seccion: Option<Vec<String>> = None;
-    // Si la sección abierta la abrió una línea `Para …` y no un encabezado: esas se cierran también
-    // con el siguiente latido, la siguiente línea `Para …` o un `---`.
-    let mut abierta_por_linea = false;
+    // Cómo se abrió la sección abierta: las que abre una línea `Para …` ([`Forma::Linea`]) se
+    // cierran también con el siguiente latido, la siguiente línea `Para …` o un `---`.
+    let mut forma_abierta = Forma::Encabezado;
+    // El latido de la intervención en curso, y el de la intervención en que se abrió la sección.
+    let mut latido: Option<String> = None;
+    let mut latido_de_la_seccion: Option<String> = None;
 
     for linea in contenido.lines() {
         let recortada = linea.trim();
         let minusculas = recortada.to_lowercase();
 
-        if abierta_por_linea && cierra_un_encargo_en_linea(recortada) {
-            cerrar_seccion(seccion.take(), Forma::Linea, de, &mut encargos);
-            abierta_por_linea = false;
+        if forma_abierta == Forma::Linea && cierra_un_encargo_en_linea(recortada) {
+            let latido = latido_de_la_seccion.take();
+            cerrar_seccion(seccion.take(), Forma::Linea, de, latido, &mut encargos);
+            forma_abierta = Forma::Encabezado;
+        }
+        if let Some(marca) = crate::protocolo::tras_la_marca_de_latido(recortada) {
+            latido = Some(marca.trim().to_string());
         }
 
         let es_encabezado = minusculas.starts_with("## ");
         if seccion.is_none() && !es_encabezado && identidad.es_destinatario_de(recortada) {
             seccion = Some(vec![recortada.to_string()]);
-            abierta_por_linea = true;
+            latido_de_la_seccion = latido.clone();
+            forma_abierta = Forma::Linea;
             continue;
         }
 
         if es_encabezado {
             // Un encabezado nuevo cierra la sección anterior.
-            let forma = Forma::de_la_seccion(abierta_por_linea);
-            abierta_por_linea = false;
-            cerrar_seccion(seccion.take(), forma, de, &mut encargos);
+            let forma = forma_abierta;
+            forma_abierta = Forma::Encabezado;
+            let latido_anterior = latido_de_la_seccion.take();
+            cerrar_seccion(seccion.take(), forma, de, latido_anterior, &mut encargos);
             if identidad.es_destinatario_de(recortada) {
+                latido_de_la_seccion = latido.clone();
                 let texto_inicial = destinatarios::tras_los_dos_puntos(recortada, &identidad)
                     .map(str::trim)
                     .filter(|texto| !texto.is_empty())
@@ -128,14 +136,16 @@ pub fn detectar(agente: &str, de: &str, contenido: &str) -> Vec<Encargo> {
                 de: de.to_string(),
                 texto: recortada.to_string(),
                 forma: Forma::Marcador,
+                latido: latido.clone(),
             });
         }
     }
 
     cerrar_seccion(
         seccion.take(),
-        Forma::de_la_seccion(abierta_por_linea),
+        forma_abierta,
         de,
+        latido_de_la_seccion,
         &mut encargos,
     );
 
@@ -166,6 +176,7 @@ fn cerrar_seccion(
     seccion: Option<Vec<String>>,
     forma: Forma,
     de: &str,
+    latido: Option<String>,
     encargos: &mut Vec<Encargo>,
 ) {
     let Some(acumulado) = seccion else {
@@ -177,13 +188,89 @@ fn cerrar_seccion(
             de: de.to_string(),
             texto,
             forma,
+            latido,
         });
     }
+}
+
+/// La primera línea con texto de un encargo, sin los espacios de los extremos: la que dice qué se
+/// pide. `None` si no hay ninguna. La única forma de buscarla, para que todos los que reconocen una
+/// palabra al principio de un encargo (cancelar, aceptada, preparar…) miren la misma línea.
+pub fn primera_linea_con_texto(texto: &str) -> Option<&str> {
+    texto.lines().map(str::trim).find(|linea| !linea.is_empty())
 }
 
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn la_primera_linea_con_texto_salta_las_vacias_y_quita_los_espacios() {
+        assert_eq!(
+            primera_linea_con_texto("\n   \n  cancelar: PG-1  \nmás"),
+            Some("cancelar: PG-1")
+        );
+        assert_eq!(primera_linea_con_texto(" \n\t\n"), None);
+        assert_eq!(primera_linea_con_texto(""), None);
+    }
+
+    /// Cada encargo lleva el latido de la intervención que lo contiene, en sus tres formas, y no
+    /// el de la siguiente aunque sea ese latido el que lo cierra.
+    #[test]
+    fn cada_encargo_lleva_el_latido_de_su_intervencion() {
+        let texto = "LATIDO: 2026-11-25 10:00:00\n- Para Programator: uno\n\n\
+                     LATIDO: 2026-11-25 11:00:00\n- Para Programator: dos\n\
+                     ## Para Programator\ntres\n## Otra\nalgo [→ programator]\n";
+
+        let encargos = detectar("Programator", "claude.md", texto);
+
+        let latidos: Vec<_> = encargos
+            .iter()
+            .map(|encargo| (encargo.texto.as_str(), encargo.latido.as_deref()))
+            .collect();
+        assert_eq!(
+            latidos,
+            vec![
+                ("- Para Programator: uno", Some("2026-11-25 10:00:00")),
+                ("- Para Programator: dos", Some("2026-11-25 11:00:00")),
+                ("tres", Some("2026-11-25 11:00:00")),
+                ("algo [→ programator]", Some("2026-11-25 11:00:00")),
+            ]
+        );
+    }
+
+    #[test]
+    fn un_encargo_antes_de_cualquier_latido_no_lleva_latido() {
+        let encargos = detectar("Programator", "claude.md", "Para Programator: uno\n");
+        assert_eq!(encargos[0].latido, None);
+    }
+
+    /// B4: el mismo texto en dos intervenciones son dos encargos, con identificadores distintos.
+    #[test]
+    fn el_mismo_texto_en_dos_intervenciones_da_dos_identificadores() {
+        let texto = "LATIDO: 2026-11-25 10:00:00\nPara Programator: repite\n\
+                     LATIDO: 2026-11-25 11:00:00\nPara Programator: repite\n";
+
+        let encargos = detectar("Programator", "claude.md", texto);
+
+        assert_eq!(encargos.len(), 2);
+        assert_ne!(encargos[0].id(), encargos[1].id());
+    }
+
+    /// B1: el mismo buzón con CRLF da los mismos identificadores.
+    #[test]
+    fn el_buzon_con_crlf_da_los_mismos_identificadores() {
+        let lf = "LATIDO: 2026-11-25 10:00:00\nPara Programator: uno\nsigue\n";
+        let crlf = lf.replace('\n', "\r\n");
+
+        let ids = |texto: &str| -> Vec<String> {
+            detectar("Programator", "claude.md", texto)
+                .iter()
+                .map(Encargo::id)
+                .collect()
+        };
+        assert_eq!(ids(lf), ids(&crlf));
+    }
 
     #[test]
     fn detecta_un_encabezado_dirigido_solo_a_el() {

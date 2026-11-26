@@ -51,11 +51,11 @@ mod pruebas {
     use super::*;
 
     fn carpeta_de_prueba() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let carpeta = dir.path().to_path_buf();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let carpeta = carpeta_temporal.path().to_path_buf();
         std::fs::create_dir_all(carpeta.join(".gestor/canal")).unwrap();
         std::fs::write(carpeta.join("PROGRAMATOR.md"), "NORMAS DE LA CASA\n").unwrap();
-        (dir, carpeta)
+        (carpeta_temporal, carpeta)
     }
 
     #[test]
@@ -63,8 +63,8 @@ mod pruebas {
         // El porqué: las normas completas ocupan unos 8.000 tokens de los 16.384 del contexto, y
         // la mayor parte no le aplica al modelo porque no dispone de esos verbos. El preámbulo
         // trae lo que necesita para actuar en unos 1.000.
-        let (dir, carpeta) = carpeta_de_prueba();
-        let preambulo = dir.path().join("preambulo.md");
+        let (carpeta_temporal, carpeta) = carpeta_de_prueba();
+        let preambulo = carpeta_temporal.path().join("preambulo.md");
         std::fs::write(&preambulo, "ERES PROGRAMATOR Y TIENES CINCO HERRAMIENTAS\n").unwrap();
 
         let instrucciones = leer_instrucciones(
@@ -89,8 +89,8 @@ mod pruebas {
     fn el_preambulo_se_compone_con_el_repertorio_y_los_comprobadores_configurados() {
         // La plantilla cruda trae los dos marcadores sin sustituir: a este camino, a diferencia
         // de PROGRAMATOR.md, no lo compone nadie más antes de leerlo.
-        let (dir, carpeta) = carpeta_de_prueba();
-        let preambulo = dir.path().join("preambulo.md");
+        let (carpeta_temporal, carpeta) = carpeta_de_prueba();
+        let preambulo = carpeta_temporal.path().join("preambulo.md");
         std::fs::write(&preambulo, "{repertorio}\n\n{comprobadores}\n").unwrap();
         let comprobadores: Comprobadores = [(
             "rs".to_string(),
@@ -147,8 +147,8 @@ mod pruebas {
     #[test]
     fn un_preambulo_que_no_esta_no_deja_al_modelo_sin_instrucciones() {
         // Quedarse mudo sería mucho peor que gastar contexto de más: se cae a las normas enteras.
-        let (dir, carpeta) = carpeta_de_prueba();
-        let fantasma = dir.path().join("no-existe.md");
+        let (carpeta_temporal, carpeta) = carpeta_de_prueba();
+        let fantasma = carpeta_temporal.path().join("no-existe.md");
 
         let instrucciones = leer_instrucciones(
             &carpeta,
@@ -166,8 +166,8 @@ mod pruebas {
 
     #[test]
     fn un_preambulo_vacio_tampoco_deja_al_modelo_mudo() {
-        let (dir, carpeta) = carpeta_de_prueba();
-        let vacio = dir.path().join("vacio.md");
+        let (carpeta_temporal, carpeta) = carpeta_de_prueba();
+        let vacio = carpeta_temporal.path().join("vacio.md");
         std::fs::write(&vacio, "   \n\n").unwrap();
 
         let instrucciones =

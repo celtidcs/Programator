@@ -8,10 +8,11 @@
 //! y solo entonces le da la señal de arrancar. Mientras la orden corre, se mira cada poco si algún
 //! proceso del Job tiene una conexión que sale del equipo.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::banco::config::{Aislamiento, ComprobacionLocal};
+use crate::banco::mensajes;
 use crate::error::Resultado;
 use crate::orden_acotada::{ejecutar_con_tope_y_entorno, DesenlaceDeOrden};
 
@@ -81,6 +82,8 @@ impl FormaDeLanzar {
 pub struct LanzadorLocal {
     forma: FormaDeLanzar,
     ultima: Vigilancia,
+    /// El Programator que hace de ayudante con integridad baja. `None`, el que está corriendo.
+    ayudante: Option<PathBuf>,
 }
 
 impl LanzadorLocal {
@@ -88,6 +91,16 @@ impl LanzadorLocal {
         Self {
             forma,
             ultima: Vigilancia::default(),
+            ayudante: None,
+        }
+    }
+
+    /// El mismo, con otro Programator de ayudante. Lo usan las pruebas de integración, que no
+    /// corren dentro de Programator.
+    pub fn con_el_ayudante(self, ejecutable: PathBuf) -> Self {
+        Self {
+            ayudante: Some(ejecutable),
+            ..self
         }
     }
 
@@ -113,15 +126,21 @@ impl LanzadorConEntorno for LanzadorLocal {
         tope: Duration,
     ) -> DesenlaceDeOrden {
         let Some((programa, resto)) = argumentos.split_first() else {
-            return DesenlaceDeOrden::NoSeLanzo("la orden está vacía".into());
+            return DesenlaceDeOrden::NoSeLanzo(mensajes::orden_vacia());
         };
         match self.forma {
             FormaDeLanzar::Directa => {
                 ejecutar_con_tope_y_entorno(programa, resto, directorio, tope, entorno)
             }
             FormaDeLanzar::Aislada(topes) => {
-                let (desenlace, vigilancia) =
-                    aislado::lanzar(argumentos, directorio, entorno, tope, topes);
+                let (desenlace, vigilancia) = aislado::lanzar(
+                    argumentos,
+                    directorio,
+                    entorno,
+                    tope,
+                    topes,
+                    self.ayudante.as_deref(),
+                );
                 self.ultima = vigilancia;
                 desenlace
             }
@@ -150,6 +169,7 @@ mod aislado {
     use crate::argumentos::orden_del_ayudante;
     use crate::ayudante_aislado::SENAL_DE_ARRANQUE;
     use crate::banco::comprobacion::red::{de_los_procesos, intentos_de_red};
+    use crate::banco::mensajes;
     use crate::error::Resultado;
     use crate::orden_acotada::{
         ejecutar_con_tope_entorno_y_contencion, Contencion, DesenlaceDeOrden,
@@ -165,11 +185,15 @@ mod aislado {
         entorno: &[(String, String)],
         tope: Duration,
         topes: Topes,
+        ayudante: Option<&Path>,
     ) -> (DesenlaceDeOrden, Vigilancia) {
-        let ejecutable = match std::env::current_exe() {
+        let ejecutable = match ayudante
+            .map(Path::to_path_buf)
+            .map_or_else(std::env::current_exe, Ok)
+        {
             Ok(ruta) => ruta.display().to_string(),
             Err(causa) => {
-                let motivo = format!("no se sabe dónde está el propio Programator: {causa}");
+                let motivo = mensajes::ejecutable_desconocido(&causa);
                 return (DesenlaceDeOrden::NoSeLanzo(motivo), Vigilancia::default());
             }
         };
@@ -184,7 +208,7 @@ mod aislado {
         };
         let orden = orden_del_ayudante(&ejecutable, argumentos);
         let Some((programa, resto)) = orden.split_first() else {
-            let motivo = "la orden del ayudante salió vacía".to_string();
+            let motivo = mensajes::orden_del_ayudante_vacia();
             return (DesenlaceDeOrden::NoSeLanzo(motivo), Vigilancia::default());
         };
         let mut contencion = EnUnTrabajo::nuevo(trabajo, topes.vigilar_red_cada);
@@ -263,12 +287,12 @@ mod aislado {
                 .meter(hijo)
                 .map_err(|fallo| fallo.to_string())?;
             let Some(mut entrada) = hijo.stdin.take() else {
-                return Err("el ayudante no tiene entrada por donde darle la señal".into());
+                return Err(mensajes::ayudante_sin_entrada());
             };
             // Al soltar `entrada` se cierra, y lo que lance el ayudante lee el final al momento.
             entrada
                 .write_all(&[SENAL_DE_ARRANQUE])
-                .map_err(|causa| format!("no se pudo dar la señal al ayudante: {causa}"))
+                .map_err(|causa| mensajes::senal_sin_dar(&causa))
         }
 
         fn mientras_espera(&mut self) {
@@ -297,13 +321,12 @@ mod aislado {
     use std::time::Duration;
 
     use super::{Topes, Vigilancia};
+    use crate::banco::mensajes;
     use crate::error::{Error, Resultado};
     use crate::orden_acotada::DesenlaceDeOrden;
 
-    const SOLO_EN_WINDOWS: &str = "la integridad baja solo existe en Windows";
-
     pub fn marcar(_carpeta: &Path) -> Resultado<()> {
-        Err(Error::Aislamiento(SOLO_EN_WINDOWS.into()))
+        Err(Error::Aislamiento(mensajes::aislamiento_solo_en_windows()))
     }
 
     pub fn lanzar(
@@ -312,9 +335,10 @@ mod aislado {
         _entorno: &[(String, String)],
         _tope: Duration,
         _topes: Topes,
+        _ayudante: Option<&Path>,
     ) -> (DesenlaceDeOrden, Vigilancia) {
         (
-            DesenlaceDeOrden::NoSeLanzo(SOLO_EN_WINDOWS.into()),
+            DesenlaceDeOrden::NoSeLanzo(mensajes::aislamiento_solo_en_windows()),
             Vigilancia::default(),
         )
     }
@@ -353,13 +377,13 @@ mod pruebas {
     /// Con el lanzador real y una orden inocua, como las pruebas de `orden_acotada`.
     #[test]
     fn el_lanzador_local_pasa_las_variables_a_la_orden() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let orden = crate::plataforma::ordenes_de_prueba::eco_de_variable("PROGRAMATOR_LOCAL");
         let mut lanzador = LanzadorLocal::nuevo(FormaDeLanzar::Directa);
 
         let desenlace = lanzador.lanzar(
             &orden,
-            dir.path(),
+            carpeta.path(),
             &[("PROGRAMATOR_LOCAL".into(), "desde-la-tanda".into())],
             Duration::from_secs(30),
         );

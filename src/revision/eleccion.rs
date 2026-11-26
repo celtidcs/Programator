@@ -93,7 +93,7 @@ mod pruebas {
     use crate::registro::modelo::pruebas::entrada_de_ejemplo;
     use crate::registro::modelo::{CodigoPuntuadoCon, EntradaDeModelo, NotaDeClase};
 
-    const TARJETA: &str = "NVIDIA GeForce RTX 4070 Ti SUPER";
+    use crate::revision::pruebas_comunes::TARJETA;
     const FILA: FilaDeDesempeno = FilaDeDesempeno::Diagnostico;
 
     /// Un modelo de esta tarjeta con `nota` en todas las clases, sin inventados, a 10 tokens por

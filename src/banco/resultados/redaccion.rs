@@ -6,6 +6,7 @@ use super::estadisticas::{
     calcular_clases, nota_de_familia, resumir_encargos, velocidad_de_generacion,
     velocidad_de_lectura, ResumenDeEncargo, FAMILIAS,
 };
+use super::margen::margen_medido;
 use super::persistencia::NOMBRE_RESULTADOS;
 use super::{DatosDeTanda, ResultadoDeSemilla, ResultadosDeTanda};
 use crate::argumentos::OPCION_BANCO_INFORME;
@@ -37,11 +38,29 @@ fn cabecera_de_nota(nombre: &str) -> String {
     format!("{nombre} (sobre {NOTA_MAXIMA})")
 }
 
-fn texto_de_nota(nota: Option<f64>, pendiente: bool) -> String {
-    match (pendiente, nota) {
-        (true, _) => "pendiente".into(),
-        (false, Some(n)) => decimal(n, 1),
-        (false, None) => "no evaluado".into(),
+/// Si a una nota le faltan semillas por evaluar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EstadoDeLaNota {
+    Pendiente,
+    Completa,
+}
+
+impl EstadoDeLaNota {
+    /// Pendiente si queda alguna semilla sin evaluar.
+    fn con_pendientes(pendientes: usize) -> Self {
+        if pendientes > 0 {
+            Self::Pendiente
+        } else {
+            Self::Completa
+        }
+    }
+}
+
+fn texto_de_nota(nota: Option<f64>, estado: EstadoDeLaNota) -> String {
+    match (estado, nota) {
+        (EstadoDeLaNota::Pendiente, _) => "pendiente".into(),
+        (EstadoDeLaNota::Completa, Some(n)) => decimal(n, 1),
+        (EstadoDeLaNota::Completa, None) => "no evaluado".into(),
     }
 }
 
@@ -150,7 +169,26 @@ fn cabecera_del_informe(resultados: &ResultadosDeTanda) -> String {
             decimal(carga, 1)
         ));
     }
+    texto.push_str(&linea_del_margen(datos));
     texto
+}
+
+/// La línea del margen de VRAM medido en esta máquina, o nada si falta lo ocupado o lo calculado.
+/// Solo recomienda: el TOML no se toca.
+fn linea_del_margen(datos: &DatosDeTanda) -> String {
+    let (Some(margen), Some(ocupada), Some(calculada)) = (
+        margen_medido(datos.vram_ocupada_mib, datos.vram_calculada_mib),
+        datos.vram_ocupada_mib,
+        datos.vram_calculada_mib,
+    ) else {
+        return String::new();
+    };
+    format!(
+        "- Margen de VRAM en esta máquina: {} MiB (ocupó {ocupada} MiB y el cálculo daba \
+         {calculada}). Para cubrirlo, margen_vram_mib = {} en programator.toml; Programator no lo \
+         cambia solo.\n",
+        margen.medido_mib, margen.recomendado_mib
+    )
 }
 
 /// La tabla con una fila por encargo.
@@ -176,7 +214,7 @@ fn seccion_por_encargo(resumenes: &[ResumenDeEncargo]) -> String {
             r.id,
             r.titulo,
             nombre_de_familia(r.familia),
-            texto_de_nota(media, r.pendientes > 0),
+            texto_de_nota(media, EstadoDeLaNota::con_pendientes(r.pendientes)),
             detalle_del_encargo(r),
         ));
     }
@@ -219,11 +257,12 @@ fn seccion_por_familia(resumenes: &[ResumenDeEncargo]) -> String {
         if de_la_familia.is_empty() {
             continue;
         }
-        let pendiente = de_la_familia.iter().any(|r| r.pendientes > 0);
+        let estado =
+            EstadoDeLaNota::con_pendientes(de_la_familia.iter().map(|r| r.pendientes).sum());
         texto.push_str(&format!(
             "| {} | {} |\n",
             nombre_de_familia(familia),
-            texto_de_nota(nota_de_familia(resumenes, familia), pendiente),
+            texto_de_nota(nota_de_familia(resumenes, familia), estado),
         ));
     }
     texto
@@ -241,7 +280,10 @@ fn seccion_por_clase(resultados: &ResultadosDeTanda) -> String {
         texto.push_str(&format!(
             "| {} | {} | {} | {} |\n",
             clase.fila.titulo(),
-            texto_de_nota(clase.nota_media, clase.pendientes > 0),
+            texto_de_nota(
+                clase.nota_media,
+                EstadoDeLaNota::con_pendientes(clase.pendientes)
+            ),
             clase.inventados,
             clase
                 .tokens_por_segundo
@@ -295,6 +337,29 @@ mod pruebas {
         componer_toml, leer_toml, EstadoDeNota, PuntuadaCon, FILAS_DE_DESEMPENO,
     };
     use crate::banco::rubrica::nombre_del_fichero;
+
+    #[test]
+    fn el_informe_trae_el_margen_medido_y_la_recomendacion() {
+        // G5.
+        let mut resultados = tanda_de_ejemplo();
+        resultados.tanda.vram_ocupada_mib = Some(13_763);
+        resultados.tanda.vram_calculada_mib = Some(13_300);
+        let informe = componer_informe(&resultados);
+        assert!(
+            informe.contains(
+                "- Margen de VRAM en esta máquina: 463 MiB (ocupó 13763 MiB y el cálculo daba \
+                 13300). Para cubrirlo, margen_vram_mib = 512 en programator.toml; Programator \
+                 no lo cambia solo.\n"
+            ),
+            "{informe}"
+        );
+
+        resultados.tanda.vram_calculada_mib = None;
+        assert!(
+            !componer_informe(&resultados).contains("Margen de VRAM"),
+            "sin lo calculado no hay margen que dar"
+        );
+    }
 
     #[test]
     fn el_informe_dice_donde_se_comprobo_y_lo_que_quedo_fuera() {

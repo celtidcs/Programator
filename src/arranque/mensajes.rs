@@ -101,6 +101,17 @@ pub fn mensaje_fallo_arranque(fallo: &Error) -> String {
              publicar esos encargos en el canal."
                 .to_string()
         }
+        Error::RegistroDeEncargos(_) => {
+            "El registro de encargos, en la carpeta «encargos» del espacio del agente, guarda en \
+             qué está cada encargo: no lo borres sin mirarlo. Corrige o aparta la ficha que nombra \
+             el mensaje."
+                .to_string()
+        }
+        Error::RegistroDeEntregas(_) => {
+            "El registro de entregas, «entregas.toml» en el espacio del agente, guarda lo que \
+             Programator propuso y en qué quedó: no lo borres sin mirarlo."
+                .to_string()
+        }
     };
 
     format!(
@@ -329,9 +340,16 @@ pub fn mensaje_novedades_atendiendo() -> String {
     "Novedades en el canal: atendiendo…".to_string()
 }
 
-/// Redacta el aviso cuando se reanuda un encargo que había quedado en espera de que cargara el motor.
-pub fn mensaje_reanudacion_encargo_esperando_motor() -> String {
-    "Se retoma el encargo que quedó esperando a que cargara el modelo.".to_string()
+/// Redacta el aviso cuando se retoma lo que la vuelta anterior dejó para luego: un encargo que
+/// esperaba a que cargara el modelo, o un buzón que se estaba escribiendo.
+pub fn mensaje_se_retoma_lo_aplazado() -> String {
+    "Se retoma lo que quedó para esta vuelta: el modelo cargando o un buzón a medio escribir."
+        .to_string()
+}
+
+/// Redacta el desenlace cuando un buzón acababa de cambiar y podía estar a medio escribir.
+pub fn mensaje_desenlace_buzon_a_medias() -> String {
+    "Un buzón se estaba escribiendo: lo nuevo se lee en el ciclo siguiente.".to_string()
 }
 
 /// Redacta el desenlace cuando hubo novedades en el canal pero ninguna contenía un encargo para el agente.

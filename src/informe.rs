@@ -200,17 +200,8 @@ fn describir_modelo(modelo: &ResumenModelo) -> String {
     }
 }
 
-use crate::unidades::BYTES_POR_GIB_F64;
-
-/// Bytes a GiB con un decimal y **coma** decimal, que es como se escribe en español.
-///
-/// Deliberadamente distinta de la `en_gib` de `motor::encaje`, que usa punto: aquella cifra la lee
-/// una máquina (se compara con otras cifras internas) y esta la lee una persona. No se unifican.
-/// `pub(crate)` porque la revisión de modelos dice con ella el tamaño de cada fichero.
-pub(crate) fn en_gib(bytes: u64) -> String {
-    let gib = bytes as f64 / BYTES_POR_GIB_F64;
-    format!("{gib:.1} GiB").replace('.', ",")
-}
+/// La revisión de modelos la toma de aquí para decir el tamaño de cada fichero.
+pub(crate) use crate::unidades::en_gib;
 
 #[cfg(test)]
 mod pruebas {

@@ -780,18 +780,18 @@ auditado = "texto.rs"
 
     #[test]
     fn una_carpeta_sin_encargos_es_un_error() {
-        let dir = tempfile::tempdir().unwrap();
-        escribir(&dir.path().join("README.md"), "nada");
+        let carpeta = tempfile::tempdir().unwrap();
+        escribir(&carpeta.path().join("README.md"), "nada");
 
-        let error = cargar_encargos(dir.path()).unwrap_err();
+        let error = cargar_encargos(carpeta.path()).unwrap_err();
 
         assert!(error.to_string().contains("no hay ningún encargo"));
     }
 
     #[test]
     fn cargar_lee_las_subcarpetas_y_los_ficheros_de_partida_anidados() {
-        let dir = tempfile::tempdir().unwrap();
-        let u01 = dir.path().join("U01");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let u01 = carpeta_temporal.path().join("U01");
         escribir(
             &u01.join(NOMBRE_FICHA),
             &AUDITORIA.replace("\"Pedidos.cs\"", "\"src/Pedidos.cs\""),
@@ -801,11 +801,11 @@ auditado = "texto.rs"
             &u01.join(CARPETA_PARTIDA).join("src/Pedidos.cs"),
             "class X {}",
         );
-        let e03 = dir.path().join("E03");
+        let e03 = carpeta_temporal.path().join("E03");
         escribir(&e03.join(NOMBRE_FICHA), OFICIO);
         escribir(&e03.join(NOMBRE_ENUNCIADO), "Escribe.");
 
-        let encargos = cargar_encargos(dir.path()).unwrap();
+        let encargos = cargar_encargos(carpeta_temporal.path()).unwrap();
 
         assert_eq!(encargos.len(), 2);
         assert_eq!(encargos[0].ficha.id, "E03");
@@ -814,12 +814,12 @@ auditado = "texto.rs"
 
     #[test]
     fn una_ficha_ilegible_dice_en_que_carpeta_esta() {
-        let dir = tempfile::tempdir().unwrap();
-        let carpeta = dir.path().join("E99");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let carpeta = carpeta_temporal.path().join("E99");
         escribir(&carpeta.join(NOMBRE_FICHA), "id = ");
         escribir(&carpeta.join(NOMBRE_ENUNCIADO), "x");
 
-        let error = cargar_encargos(dir.path()).unwrap_err();
+        let error = cargar_encargos(carpeta_temporal.path()).unwrap_err();
 
         assert!(error
             .to_string()

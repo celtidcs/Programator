@@ -19,9 +19,13 @@ use crate::motor::{MotorDoble, Respuesta, SolicitudHerramienta};
 use crate::reloj::RelojDeMentira;
 
 /// El encargo, también en disco, como lo lee `cargar_encargos`.
-pub(super) fn encargo(dir: &Path, texto_ficha: &str, rubrica: Option<&str>) -> Encargo {
+pub(super) fn encargo(
+    carpeta_temporal: &Path,
+    texto_ficha: &str,
+    rubrica: Option<&str>,
+) -> Encargo {
     let ficha: FichaEncargo = toml::from_str(texto_ficha).unwrap();
-    let carpeta = dir.join(CARPETA_DE_ENCARGOS).join(&ficha.id);
+    let carpeta = carpeta_temporal.join(CARPETA_DE_ENCARGOS).join(&ficha.id);
     std::fs::create_dir_all(&carpeta).unwrap();
     std::fs::write(carpeta.join(crate::banco::ficha::NOMBRE_FICHA), texto_ficha).unwrap();
     std::fs::write(carpeta.join("enunciado.md"), "Haz el encargo.\n").unwrap();
@@ -31,20 +35,23 @@ pub(super) fn encargo(dir: &Path, texto_ficha: &str, rubrica: Option<&str>) -> E
     Encargo { ficha, carpeta }
 }
 
-pub(super) fn criterio(dir: &Path) -> Encargo {
+pub(super) fn criterio(carpeta: &Path) -> Encargo {
     encargo(
-        dir,
+        carpeta,
         "id = \"E01\"\ntitulo = \"Protocolo\"\nfamilia = \"criterio\"\n",
         Some("- **5**: lo explica todo\n"),
     )
 }
 
-pub(super) fn formas(dir: &Path) -> Encargo {
-    let partida = dir.join(CARPETA_DE_ENCARGOS).join("U01").join("partida");
+pub(super) fn formas(carpeta: &Path) -> Encargo {
+    let partida = carpeta
+        .join(CARPETA_DE_ENCARGOS)
+        .join("U01")
+        .join("partida");
     std::fs::create_dir_all(&partida).unwrap();
     std::fs::write(partida.join("Pedidos.cs"), "class Pedidos {}\n").unwrap();
     encargo(
-        dir,
+        carpeta,
         "id = \"U01\"\ntitulo = \"Formas\"\nfamilia = \"uso\"\nclase = \"formas\"\n\
          auditado = \"Pedidos.cs\"\n\
          [[defectos]]\nlineas = [10]\ntipo = \"NUMERO_MAGICO\"\ndescripcion = \"un 0.21\"\n\
@@ -53,9 +60,9 @@ pub(super) fn formas(dir: &Path) -> Encargo {
     )
 }
 
-pub(super) fn oficio(dir: &Path) -> Encargo {
+pub(super) fn oficio(carpeta: &Path) -> Encargo {
     encargo(
-        dir,
+        carpeta,
         "id = \"E03\"\ntitulo = \"Rangos\"\nfamilia = \"oficio\"\nentrega = \"rangos.rs\"\n\
          colocar_en = \"src/rangos.rs\"\nherramientas = [\"rust\"]\n\
          [[comprobaciones]]\nnombre = \"basico\"\norden = \"cargo test\"\n\
@@ -65,9 +72,9 @@ pub(super) fn oficio(dir: &Path) -> Encargo {
 }
 
 /// Un encargo de oficio en PHP, un lenguaje que el banco no trae de serie.
-pub(super) fn oficio_en_php(dir: &Path) -> Encargo {
+pub(super) fn oficio_en_php(carpeta: &Path) -> Encargo {
     encargo(
-        dir,
+        carpeta,
         "id = \"P01\"\ntitulo = \"Rangos en PHP\"\nfamilia = \"oficio\"\n\
          entrega = \"rangos.php\"\ncolocar_en = \"rangos.php\"\nherramientas = [\"php\"]\n\
          [[comprobaciones]]\nnombre = \"basico\"\norden = \"php pruebas.php\"\n",
@@ -89,6 +96,7 @@ pub(super) fn datos() -> DatosDeTanda {
         maquina_de_comprobacion: None,
         capas_en_gpu: None,
         vram_ocupada_mib: None,
+        vram_calculada_mib: None,
         segundos_de_carga: None,
         tarjeta: None,
         sistema_de_comprobacion: None,
@@ -98,9 +106,9 @@ pub(super) fn datos() -> DatosDeTanda {
     }
 }
 
-/// La tanda vive donde la pone `ejecutar`: en `<banco>/resultados/<tanda>`, con el banco en `dir`.
-pub(super) fn carpeta_tanda(dir: &Path) -> PathBuf {
-    dir.join(CARPETA_DE_RESULTADOS).join("tanda")
+/// La tanda vive donde la pone `ejecutar`: en `<banco>/resultados/<tanda>`, con el banco en `carpeta`.
+pub(super) fn carpeta_tanda(carpeta: &Path) -> PathBuf {
+    carpeta.join(CARPETA_DE_RESULTADOS).join("tanda")
 }
 
 pub(super) fn preparacion() -> Preparacion<'static> {
@@ -114,7 +122,7 @@ pub(super) fn preparacion() -> Preparacion<'static> {
 
 /// Pasa los encargos con un motor doble por encargo, en orden, y una semilla.
 pub(super) fn pasar<'a>(
-    dir: &Path,
+    carpeta: &Path,
     encargos: &'a [Encargo],
     guiones: Vec<Vec<Respuesta>>,
 ) -> Vec<Pasado<'a>> {
@@ -125,7 +133,7 @@ pub(super) fn pasar<'a>(
     let verificacion = Verificacion::default();
     let ajustes = Ajustes::con_limites(&limites, &verificacion, &crate::terminal::TerminalReal);
     let mut avisos = Vec::new();
-    let tanda = carpeta_tanda(dir);
+    let tanda = carpeta_tanda(carpeta);
     let trabajo = tanda.join(CARPETA_DE_TRABAJO);
     let mut guardadas = PasadasDeTanda {
         tanda: datos(),

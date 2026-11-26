@@ -246,8 +246,8 @@ mod pruebas {
 
     #[test]
     fn anade_la_reserva_bajo_la_seccion_correspondiente() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(
             &ruta,
             "# Estado\n\n## Reservas activas\n\n- Codex, 2026-11-13 10:00: src/main.rs — refactor\n\n## Código\n\n- Rama: main\n",
@@ -277,8 +277,8 @@ mod pruebas {
 
     #[test]
     fn crea_la_seccion_si_el_estado_no_la_tiene() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, "# Estado\n\n## Código\n\n- Rama: main\n").unwrap();
 
         anotar_reserva(&ruta, &reserva("x.md", "motivo")).unwrap();
@@ -290,8 +290,8 @@ mod pruebas {
 
     #[test]
     fn no_duplica_una_reserva_identica() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, "# Estado\n\n## Reservas activas\n\n").unwrap();
         anotar_reserva(&ruta, &reserva("x.md", "motivo")).unwrap();
 
@@ -308,8 +308,8 @@ mod pruebas {
 
     #[test]
     fn rechaza_inyeccion_en_motivo() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, "# Estado\n\n## Reservas activas\n\n").unwrap();
 
         // Intento de inyección: un motivo que contiene líneas falsas
@@ -354,8 +354,8 @@ mod pruebas {
 
     #[test]
     fn anade_ambas_reservas_si_el_motivo_de_la_segunda_es_prefijo_de_la_primera() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, "# Estado\n\n## Reservas activas\n\n").unwrap();
 
         anotar_reserva(&ruta, &reserva("x.md", "urgente, revisar antes del martes")).unwrap();
@@ -383,8 +383,8 @@ mod pruebas {
 
     #[test]
     fn la_deduplicacion_exacta_sigue_funcionando() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, "# Estado\n\n## Reservas activas\n\n").unwrap();
 
         anotar_reserva(&ruta, &reserva("x.md", "urgente")).unwrap();
@@ -406,8 +406,8 @@ mod pruebas {
 
     #[test]
     fn anotar_quita_el_ninguna_de_su_seccion_y_no_el_de_las_demas() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, PLANTILLA_DE_GESTOR).unwrap();
 
         let linea = anotar_reserva(&ruta, &reserva("x.md", "motivo")).unwrap();
@@ -424,8 +424,8 @@ mod pruebas {
 
     #[test]
     fn retirar_deja_la_seccion_como_la_plantilla() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, PLANTILLA_DE_GESTOR).unwrap();
         let linea = anotar_reserva(&ruta, &reserva("x.md", "motivo")).unwrap();
 
@@ -436,8 +436,8 @@ mod pruebas {
 
     #[test]
     fn retirar_deja_las_reservas_de_otros() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(
             &ruta,
             "## Reservas activas\n\n- Codex, 2026-11-13 10:00: a.rs — algo\n",
@@ -455,15 +455,15 @@ mod pruebas {
 
     #[test]
     fn retirar_lo_que_no_esta_no_toca_nada() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("estado.md");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("estado.md");
         std::fs::write(&ruta, PLANTILLA_DE_GESTOR).unwrap();
 
         retirar_reserva(&ruta, "- Programator, 2026-11-13 15:40: x.md — motivo").unwrap();
-        retirar_reserva(&dir.path().join("no.md"), "- algo").unwrap();
+        retirar_reserva(&carpeta.path().join("no.md"), "- algo").unwrap();
 
         assert_eq!(std::fs::read_to_string(&ruta).unwrap(), PLANTILLA_DE_GESTOR);
-        assert!(!dir.path().join("no.md").exists());
+        assert!(!carpeta.path().join("no.md").exists());
     }
 
     #[test]

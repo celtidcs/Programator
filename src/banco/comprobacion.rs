@@ -127,9 +127,7 @@ fn salida_de(desenlace: DesenlaceDeOrden, tope: Duration) -> Salida {
         DesenlaceDeOrden::Terminada {
             salida, errores, ..
         } => Salida::Falla(recortar(&format!("{salida}{errores}"))),
-        DesenlaceDeOrden::Agotada => {
-            Salida::Falla(format!("se cortó al pasar de {} segundos", tope.as_secs()))
-        }
+        DesenlaceDeOrden::Agotada => Salida::Falla(mensajes::orden_cortada(tope)),
         DesenlaceDeOrden::NoSeLanzo(motivo)
         | DesenlaceDeOrden::NoSePudoEsperar(motivo)
         | DesenlaceDeOrden::SalidaIlegible(motivo) => Salida::NoSePudoEjecutar(motivo),
@@ -718,17 +716,17 @@ mod pruebas {
 
     #[test]
     fn la_carpeta_de_pruebas_lleva_la_entrega_en_su_sitio() {
-        let dir = tempfile::tempdir().unwrap();
-        let carpeta = dir.path().join("E03");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let carpeta = carpeta_temporal.path().join("E03");
         std::fs::create_dir_all(carpeta.join("pruebas/tests")).unwrap();
         std::fs::write(carpeta.join("pruebas/tests/t.rs"), "// prueba").unwrap();
-        let entrega = dir.path().join("a.rs");
+        let entrega = carpeta_temporal.path().join("a.rs");
         std::fs::write(&entrega, "fn a() {}").unwrap();
         let encargo = Encargo {
             ficha: ficha_de_oficio(),
             carpeta,
         };
-        let destino = dir.path().join("montada");
+        let destino = carpeta_temporal.path().join("montada");
 
         montar_carpeta_de_pruebas(&encargo, &entrega, &destino).unwrap();
 

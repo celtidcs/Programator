@@ -110,6 +110,106 @@ pub fn mensaje_comprobacion_en_otra_maquina() -> String {
     )
 }
 
+/// `[comprobacion_local] interprete` está puesto y vacío.
+pub fn interprete_vacio() -> String {
+    "«interprete» no puede estar vacío".to_string()
+}
+
+/// Una clave de `[comprobacion_local]` que vale 0 y tiene que ser al menos 1.
+pub fn tiene_que_ser_mayor_que_cero(clave: &str) -> String {
+    format!("«{clave}» tiene que ser mayor que 0")
+}
+
+/// Un aislamiento que solo existe en `donde` pedido en `sistema`.
+pub fn aislamiento_de_otro_sistema(aislamiento: &str, donde: &str, sistema: &str) -> String {
+    format!("«aislamiento = \"{aislamiento}\"» solo existe en {donde}, y esto es {sistema}")
+}
+
+/// Un espacio de nombres sin envoltorio, que no aislaría nada.
+pub fn envoltorio_vacio() -> String {
+    "«envoltorio» no puede estar vacío con «espacio_de_nombres»".to_string()
+}
+
+/// `banco.toml` sin semillas.
+pub fn sin_semillas() -> String {
+    "banco.toml: «semillas» no puede estar vacía".to_string()
+}
+
+/// `banco.toml` con el tiempo por encargo a 0.
+pub fn sin_tiempo_por_encargo() -> String {
+    "banco.toml: «tiempo_maximo_encargo_segundos» tiene que ser mayor que 0".to_string()
+}
+
+/// Un fichero de rúbrica sin la línea de la nota.
+pub fn rubrica_sin_nota(prefijo: &str) -> String {
+    format!("no tiene la línea «{prefijo}»")
+}
+
+/// La nota de una rúbrica no es un número.
+pub fn nota_que_no_es_un_numero(valor: &str) -> String {
+    format!("la nota «{valor}» no es un número")
+}
+
+/// La nota de una rúbrica se sale de la escala.
+pub fn nota_fuera_de_la_escala(valor: &str, maxima: f64) -> String {
+    format!("la nota {valor} está fuera de 0 a {maxima}")
+}
+
+/// El modelo no dejó el fichero que pedía el encargo.
+pub fn no_entrego(nombre: &str) -> String {
+    format!("no entregó {nombre}")
+}
+
+/// Una entrada de rastro en el temporal del sistema, tal como se cuenta.
+pub fn rastro_en_el_temporal(ruta: &dyn std::fmt::Display) -> String {
+    format!("{ruta} (temporal del sistema: puede ser de otro programa)")
+}
+
+/// Una carpeta vigilada que pasó del tope de entradas, tal como se cuenta.
+pub fn rastro_sin_vigilar_entera(ruta: &dyn std::fmt::Display) -> String {
+    format!("{ruta} (no se pudo vigilar entera: pasa del tope de entradas)")
+}
+
+/// Una comprobación que se cortó por tiempo.
+pub fn orden_cortada(tope: Duration) -> String {
+    format!("se cortó al pasar de {} segundos", tope.as_secs())
+}
+
+/// La tanda no sabe qué modelo mide: falta `[motor] modelo`.
+pub fn banco_sin_modelo() -> String {
+    "el banco necesita «motor.modelo» para saber qué modelo mide".to_string()
+}
+
+/// Una orden de comprobación sin programa que lanzar.
+pub fn orden_vacia() -> String {
+    "la orden está vacía".to_string()
+}
+
+/// No se sabe la ruta del propio ejecutable, que hace de ayudante aislado.
+pub fn ejecutable_desconocido(causa: &dyn std::fmt::Display) -> String {
+    format!("no se sabe dónde está el propio Programator: {causa}")
+}
+
+/// La orden con que se lanza al ayudante aislado salió sin programa.
+pub fn orden_del_ayudante_vacia() -> String {
+    "la orden del ayudante salió vacía".to_string()
+}
+
+/// El ayudante aislado se lanzó sin entrada estándar, por donde se le da la señal de arranque.
+pub fn ayudante_sin_entrada() -> String {
+    "el ayudante no tiene entrada por donde darle la señal".to_string()
+}
+
+/// No se pudo escribir la señal de arranque al ayudante aislado.
+pub fn senal_sin_dar(causa: &dyn std::fmt::Display) -> String {
+    format!("no se pudo dar la señal al ayudante: {causa}")
+}
+
+/// El aislamiento con integridad baja se pidió fuera de Windows.
+pub fn aislamiento_solo_en_windows() -> String {
+    "la integridad baja solo existe en Windows".to_string()
+}
+
 /// Por qué no salió bien una orden, para una persona: el 12/11/2026 salía tal cual
 /// `NoSeLanzo("program not found")`.
 pub fn motivo_del_desenlace(desenlace: &DesenlaceDeOrden) -> String {
@@ -418,17 +518,35 @@ pub fn mensaje_motor_cargado(capas: u32, vram_mib: Option<u64>, carga: Duration)
     )
 }
 
+/// Si un encargo del banco terminó antes de su tiempo máximo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plazo {
+    ATiempo,
+    Agotado,
+}
+
+impl Plazo {
+    /// El plazo de una recogida que dice `a_tiempo`.
+    pub fn segun(a_tiempo: bool) -> Self {
+        if a_tiempo {
+            Self::ATiempo
+        } else {
+            Self::Agotado
+        }
+    }
+}
+
 /// Una línea por encargo pasado.
 pub fn mensaje_de_avance(
     numero: usize,
     total: usize,
     id: &str,
     semilla: i64,
-    a_tiempo: bool,
+    plazo: Plazo,
     duracion: Duration,
     entregas: usize,
 ) -> String {
-    let como = if a_tiempo {
+    let como = if plazo == Plazo::ATiempo {
         format!(
             "{} s, {}",
             duracion.as_secs(),
@@ -460,6 +578,7 @@ pub fn encargo_no_detectado(id: &str, desenlace: &DesenlacePasada) -> String {
             "el ciclo no encontró en el canal ningún encargo para el agente"
         }
         DesenlacePasada::MotorCargando => "el motor seguía cargando el modelo",
+        DesenlacePasada::BuzonAMedias => "un buzón parecía a medio escribir",
         DesenlacePasada::Atendidos(_) => "el ciclo dice que lo atendió",
     };
     format!("{id}: la pasada no fue la esperada, porque {que_paso}; el encargo no llegó al ciclo")
@@ -997,9 +1116,16 @@ mod pruebas {
     }
 
     #[test]
+    fn el_plazo_sale_de_si_la_recogida_llego_a_tiempo() {
+        assert_eq!(Plazo::segun(true), Plazo::ATiempo);
+        assert_eq!(Plazo::segun(false), Plazo::Agotado);
+    }
+
+    #[test]
     fn el_avance_distingue_lo_que_no_llego_a_tiempo() {
-        let bien = mensaje_de_avance(1, 45, "E03", 42, true, Duration::from_secs(130), 1);
-        let mal = mensaje_de_avance(2, 45, "E04", 42, false, Duration::from_secs(901), 0);
+        let (a_tiempo, agotado) = (Plazo::ATiempo, Plazo::Agotado);
+        let bien = mensaje_de_avance(1, 45, "E03", 42, a_tiempo, Duration::from_secs(130), 1);
+        let mal = mensaje_de_avance(2, 45, "E04", 42, agotado, Duration::from_secs(901), 0);
 
         assert_eq!(bien, "[1/45] E03, semilla 42: 130 s, 1 fichero entregado");
         assert!(mal.contains("sin respuesta a tiempo"));

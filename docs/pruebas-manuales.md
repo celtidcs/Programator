@@ -81,7 +81,7 @@ La línea «Motor:» dice «llama-server con CUDA, en <ruta de «motor.binario»
 
 La línea «Modelo:» nombra el fichero del Devstral, con «40 capas», y su peso en GiB.
 
-La línea «Encaje:» lleva el aviso que redacta motor::encaje::redactar_aviso. No es un texto fijo: si el modelo cabe entero dice algo del tipo «el modelo entero cabe en <GPU> (<libres> libres): sus 40 capas piden <tanto> y van a la GPU»; si no cabe entero, dice cuántas de las 40 van a la GPU y cuántas se quedan en CPU; si el banco ya midió ese modelo en esta tarjeta con el mismo contexto y la misma caché, dice que usa las capas que midió el banco. Cuando el aviso no nombra ya la cifra, va seguido de «; se pedirán N capas», con las que de verdad se le pasarán a llama-server. Nunca 0 capas con VRAM de sobra ni más de 40 (41 contando la capa de salida aparte).
+La línea «Encaje:» lleva el aviso que redacta motor::encaje::redactar_aviso. No es un texto fijo: si el modelo cabe entero dice algo del tipo «sus 40 capas caben en <GPU> (<libres> libres): piden <tanto> y van a la GPU»; si no cabe entero, dice cuántas de las 40 van a la GPU y cuántas se quedan en CPU; si el banco ya midió ese modelo en esta tarjeta con el mismo contexto y la misma caché, dice que usa las capas que midió el banco. Cuando el aviso no nombra ya la cifra, va seguido de «; se pedirán N capas», con las que de verdad se le pasarán a llama-server. Nunca 0 capas con VRAM de sobra ni más de 40 (41 contando la capa de salida aparte).
 
 La línea «Carpeta de trabajo:» lleva la ruta fijada en el TOML o, si no la tiene, el texto «NO FIJA» con lo que se haría al arrancar de verdad: elegirla en la ventana emergente o, si «[carpeta] preguntar_siempre = false», usar la última carpeta guardada (con --diagnostico nunca se llega a abrir la ventana).
 
@@ -100,7 +100,7 @@ cargo test --lib motor::gguf -- --ignored --nocapture el_peso_del_devstral_real_
 
 La señal de éxito es «test result: ok» y, en la salida (visible gracias a --nocapture), una línea «inicio_datos + fin_datos = ... | tamaño del fichero = ...» con la suma igual o unos pocos bytes por debajo del tamaño del fichero (menos de 32, la alineación habitual). Si el assert! falla porque la diferencia es mayor o la suma supera al fichero, algún tamaño de la tabla de tipos (motor::tipos_tensor) está mal. Si el fichero no está en el equipo, la prueba lo dice por consola y pasa sin comprobar nada: no es una señal de éxito, es que no se pudo ejecutar.
 
-Después, arranca programator.exe con ese modelo configurado en «[motor] modelo» y publica un encargo en el canal: llama-server no se lanza al arrancar, sino al atender el primer encargo. La señal de éxito es que, al atenderlo, la consola imprime una línea «Arrancando el motor — encaje: ...» antes de lanzar llama-server, y que el número de capas que menciona es coherente con las 40 que tiene Devstral («sus 40 capas piden ... y van a la GPU», «caben N de 40 capas», o un reparto parcial con menos de 41), nunca 0 con una GPU con VRAM de sobra ni un número mayor que 41. También es una degradación legítima, y no un fallo, que el aviso caiga a las 99 capas de siempre si no pudo medir la GPU o pesar el modelo: es un desenlace correcto, no una avería.
+Después, arranca programator.exe con ese modelo configurado en «[motor] modelo» y publica un encargo en el canal: llama-server no se lanza al arrancar, sino al atender el primer encargo. La señal de éxito es que, al atenderlo, la consola imprime una línea «Arrancando el motor — encaje: ...» antes de lanzar llama-server, y que el número de capas que menciona es coherente con las 40 que tiene Devstral («sus 40 capas caben en ...: piden ... y van a la GPU», «caben N de 40 capas», o un reparto parcial con menos de 41), nunca 0 con una GPU con VRAM de sobra ni un número mayor que 41. También es una degradación legítima, y no un fallo, que el aviso caiga a las 99 capas de siempre si no pudo medir la GPU o pesar el modelo: es un desenlace correcto, no una avería.
 
 
 Pendientes (requieren GPU)
@@ -184,10 +184,12 @@ Lo que debe verse, en este orden:
     Novedades en el canal: atendiendo…
     Arrancando el motor — encaje: …
     El motor local todavía está cargando el modelo: se reintenta en el ciclo siguiente.
-    Se retoma el encargo que quedó esperando a que cargara el modelo.
+    Se retoma lo que quedó para esta vuelta: el modelo cargando o un buzón a medio escribir.
     Encargos atendidos: 1 (fallos al publicar: 0).
 
-La línea que importa es la cuarta. Si tras «todavía está cargando» no aparece nada más y el programa se queda mudo, el defecto ha vuelto.
+La línea que importa es la cuarta. Si tras «todavía está cargando» no aparece nada más y el programa se queda mudo, el defecto ha vuelto. Las líneas segunda a cuarta se repiten mientras el modelo carga.
+
+Hechas F y G el 25/11/2026 en la máquina Linux de pruebas, con una GTX 1070 Ti de 8 GB, llama-server b10993 con CUDA 12.8 y el modelo de 9B: las 33 capas y la de salida en la tarjeta, 5,4 GiB ocupados, n_slots = 1 y entre 27 y 29 tokens por segundo. El primer encargo se atendió solo, a los 99 segundos de publicarlo, sin tocar nada.
 
 
 Prueba H — Programator no presupone el proyecto (0.9.0)
@@ -395,6 +397,55 @@ Paso 3: la reposición. La respuesta de «revisión: buscar» empieza por el blo
 Paso 4: sin aviso. Volver a arrancar Programator: el aviso del paso 1 ya no sale.
 
 Al terminar, borrar la copia del portable.
+
+
+Prueba O — el motor con clave y sin CORS abierto (1.2.0)
+
+Por qué existe. Las pruebas automáticas comprueban la línea de arranque, la variable de entorno y las cabeceras contra un servidor de mentira. Que llama-server de verdad exige la clave, que deja de avisar de CORS y que Programator sigue atendiendo con ella solo se ve con el motor encendido.
+
+Paso 1: el arranque. Con «[motor] clave = "auto"», arrancar Programator y dejar que cargue el modelo. En el registro de llama-server ya no sale el aviso de que CORS permite todos los orígenes sin clave. Junto a programator.toml aparece el fichero .clave-del-motor, con una línea de 64 caracteres hexadecimales.
+
+Paso 2: sin clave, nada. Desde otra consola, «curl -s -o NUL -w "%{http_code}" http://127.0.0.1:8080/props» (en Linux, -o /dev/null) da 401, y lo mismo una petición a /v1/chat/completions. «curl http://127.0.0.1:8080/health» sigue dando 200, porque esa ruta es pública.
+
+Paso 3: con clave, sí. Repetir la petición a /props con «-H "Authorization: Bearer <la clave del fichero>"»: da 200 y el JSON de llama-server.
+
+Paso 4: el trabajo de siempre. Un encargo cualquiera se atiende como antes.
+
+Paso 5: el huérfano. Matar Programator desde el Administrador de tareas (o con kill -9 en Linux), sin tocar llama-server, y volver a arrancarlo: reutiliza el motor que quedó, sin arrancar otro. Además, matar Programator en cuanto publique una respuesta y volver a arrancarlo: ese encargo no se atiende otra vez. Después, cambiar a mano la clave del fichero, escribir un encargo nuevo y arrancar otra vez: al atenderlo, la consola dice que en el puerto hay un llama-server que no acepta la clave de Programator, y no arranca otro encima. El aviso sale al atender, no al arrancar, porque solo entonces hace falta el motor. Cerrar el huérfano a mano al terminar.
+
+Hecha el 25/11/2026 en la máquina Windows de pruebas, con la GTX 1070 Ti, llama-server b10993 y el modelo de 9B. Los cinco pasos salen como se describen. La primera vez, el paso 5 encontró un fallo: el estado de un encargo respondido no llegaba al disco hasta el final de la vuelta, y al matar Programator justo después de responder, el mismo encargo recibió tres respuestas. Quedó arreglado antes de repetirla. También salió que la línea de la GPU escribía los GiB con coma y la del encaje con punto, y ahora las dos usan coma.
+
+
+Prueba P — preparar una propuesta sin tocar el proyecto (1.2.0)
+
+Por qué existe. Las pruebas automáticas preparan con órdenes de mentira. Que cargo formatea, compila y prueba de verdad en la copia, aislado y sin red, solo se ve en un equipo con Rust instalado. Se hace en las máquinas virtuales de pruebas, nunca en el equipo de uso diario.
+
+Paso 1: el proyecto. En un proyecto Rust de prueba con alguna dependencia en su Cargo.toml, descomentar en programator.toml la tabla preparacion.ordenes.rs del ejemplo. En Ubuntu 24.04 y posteriores, poner también el envoltorio con bwrap que trae el ejemplo. Encargar a Programator una función y esperar al aviso de la propuesta.
+
+Paso 2: preparar. Escribir en el buzón del agente «Para Programator: preparar: <nombre del aviso> en src/lib.rs». En la pasada siguiente, sin cargar el modelo, Programator contesta con cada orden (cargo fetch, cargo fmt, cargo build --offline y cargo test --offline), con lo que cambiaría en src/lib.rs y con la ruta de la copia, dentro de .gestor/programator/preparacion. El src/lib.rs del proyecto sigue igual y no aparece ningún target nuevo fuera de la copia.
+
+Paso 3: sin aislamiento, nada. En Ubuntu 24.04 o posterior, quitar el envoltorio de programator.toml y repetir: la respuesta dice que no se pudo aislar con unshare, no lanza ninguna orden (tampoco cargo fetch) y sí cuenta la copia y el cambio.
+
+Paso 4: la caducidad. Escribir «Para Programator: rechazada: <nombre del aviso>»: en la pasada siguiente, las copias de esa propuesta desaparecen de .gestor/programator/preparacion.
+
+Hecha el 25/11/2026 en la máquina Linux de pruebas, Ubuntu 26.04, con el envoltorio de bwrap. Los cuatro pasos salen como se describen: pasan cargo fetch, cargo fmt y, sin red, cargo build y cargo test; el src/lib.rs del proyecto no cambia y no aparece ningún target fuera de la copia. Sin el envoltorio, la respuesta dice que unshare no pudo aislar y no lanza nada. La primera vez no se pudo preparar: el aviso nombraba la propuesta «lib.rs» y el registro la guardaba como «src/lib.rs». Quedó arreglado antes de repetirla.
+
+
+Prueba Q — el reparto de la memoria con la tarjeta de verdad (1.2.0)
+
+Por qué existe. Las pruebas automáticas calculan el reparto con modelos inventados y comprueban la línea de arranque sin lanzar nada. Que llama-server b10993 acepta las opciones nuevas, que deja de verdad en el procesador lo que se le pide y que lo que ocupa se parece a lo calculado solo se ve con el motor y la tarjeta. Se hace en una máquina con GPU de NVIDIA y el paquete de Programator, nunca en una prueba automática.
+
+Paso 1: las opciones existen. Lanzar el llama-server empaquetado con --help y comprobar que salen --n-cpu-ffn, --n-cpu-moe, --override-tensor, --no-kv-offload, --cache-type-k, --cache-type-v y --load-mode, y que no salen --no-mmap ni --mlock.
+
+Paso 2: nada cambia por defecto. Con programator.toml sin ninguna de las claves nuevas, arrancar Programator y anotar la línea de arranque de llama-server que se ve en el Administrador de tareas (o con ps en Linux): es la misma que con la 1.1.0, sin --n-cpu-ffn, --no-kv-offload ni --load-mode.
+
+Paso 3: ffn_en_cpu = "auto". Poner vram_maxima_mib por debajo de lo que pide Devstral entero (por ejemplo 12288) y ffn_en_cpu = "auto". Al arrancar, el aviso dice cuántas capas dejan la FFN en la memoria del equipo, la línea de llama-server lleva --n-cpu-ffn con ese número y la memoria que ocupa en la tarjeta queda por debajo del tope. Un encargo cualquiera se atiende, más despacio.
+
+Paso 4: la caché en el equipo. Con cache_en_cpu = true, la línea lleva --no-kv-offload y la tarjeta ocupa menos que en el paso 2.
+
+Paso 5: el margen del banco. Pasar una tanda corta del banco de modelos sin claves nuevas: el informe trae la línea «Margen de VRAM en esta máquina» con lo que ocupó, lo calculado y el margen_vram_mib recomendado, y programator.toml no ha cambiado.
+
+Hecha el 25/11/2026 en la máquina Linux de pruebas, con una GTX 1070 Ti de 8 GB. En una tarjeta así, Devstral sin claves nuevas no se usa: solo le caben 21 de sus 40 capas, por debajo de los tres cuartos. La línea por defecto del paso 2 se comprobó con el modelo de 9B, en la prueba F. Paso 3, con vram_maxima_mib = 6144: --n-cpu-ffn 34, 5289 MiB en la tarjeta y el encargo atendido a 1,9 tokens por segundo. Paso 4, con el modelo de 9B: --no-kv-offload, 5213 MiB frente a 5519 y de 27 a 13 tokens por segundo. Paso 5, con una tanda de un encargo: «Margen de VRAM en esta máquina: -1105 MiB (ocupó 5500 MiB y el cálculo daba 6605)». La primera vez, el banco se detuvo en el primer encargo porque esperaba a que su propio buzón se quedara quieto, y el aviso del paso 3 decía que el modelo cabía entero. Las dos cosas quedaron arregladas antes de repetirla.
 
 
 

@@ -9,6 +9,7 @@ use super::mensajes;
 use super::mes;
 use super::propuesta::{proponer, Entrada, Propuesta};
 use super::redaccion::{self, NOMBRE_DE_LAS_RETIRADAS, NOMBRE_DE_LA_PROPUESTA};
+use super::uso_real;
 use super::FORMATO_DEL_DIA;
 use crate::error::{Error, Resultado};
 use crate::ficheros;
@@ -26,6 +27,8 @@ pub struct Entorno<'a> {
     /// El nombre, sin extensión, del modelo de `programator.toml`.
     pub modelo_en_uso: Option<String>,
     pub ahora: NaiveDateTime,
+    /// El registro de entregas del proyecto donde trabaja Programator, si se conoce la carpeta.
+    pub entregas: Option<PathBuf>,
 }
 
 /// Lo que dejó la propuesta.
@@ -54,7 +57,9 @@ pub fn proponer_y_escribir(entorno: &Entorno) -> Resultado<PropuestaHecha> {
         modelo_en_uso: entorno.modelo_en_uso.as_deref(),
     });
     let fecha = entorno.ahora.format(FORMATO_DEL_DIA).to_string();
-    let texto = redaccion::componer(&propuesta, &entorno.ruta_del_registro, &fecha);
+    let mut texto = redaccion::componer(&propuesta, &entorno.ruta_del_registro, &fecha);
+    let entregas = entorno.entregas.as_deref();
+    texto += &uso_real::seccion(&uso_real::leer(entregas), entregas);
     let retiradas = redaccion::escribir_retiradas(&redaccion::retiradas(&propuesta))?;
     let carpeta = mes::carpeta_del_mes(&entorno.carpeta_de_revisiones, entorno.ahora);
     ficheros::crear_carpeta(&carpeta)?;
@@ -117,6 +122,7 @@ mod pruebas {
             carpeta_de_revisiones: raiz.join("revisiones"),
             modelo_en_uso: None,
             ahora: a_las(hora),
+            entregas: None,
         }
     }
 
@@ -143,6 +149,7 @@ mod pruebas {
             "{texto}"
         );
         assert!(texto.contains("nuevo.gguf"), "{texto}");
+        assert!(texto.contains("## En uso real"), "{texto}");
         let retiradas =
             redaccion::leer_retiradas(&ficheros::leer(&mes.join(NOMBRE_DE_LAS_RETIRADAS)).unwrap())
                 .unwrap();
@@ -170,5 +177,42 @@ mod pruebas {
         let fallo = proponer_y_escribir(&sin_tarjeta).unwrap_err().to_string();
         assert!(fallo.contains("tarjeta"), "{fallo}");
         assert!(!raiz.path().join("revisiones").exists());
+    }
+}
+
+#[cfg(test)]
+mod pruebas_del_uso_real {
+    use super::*;
+    use crate::registro::modelo::Registro;
+
+    /// La propuesta cuenta lo del registro de entregas del proyecto que se le da.
+    #[test]
+    fn la_propuesta_lleva_las_cuentas_del_registro_de_entregas() {
+        let raiz = tempfile::tempdir().unwrap();
+        let entregas = raiz.path().join("entregas.toml");
+        ficheros::escribir(
+            &entregas,
+            "[[entrega]]\npropuesta = \"a.rs\"\nencargo = \"1\"\nnombre_del_encargo = \"n\"\nde = \"c.md\"\nmodelo = \"devstral\"\nfecha = \"f\"\nveredicto = \"pasa\"\nhuella = \"h\"\nestado = \"aceptada\"\nestado_lo_dio = \"programator\"\n",
+        )
+        .unwrap();
+        let registro = Registro { modelo: vec![] };
+        let entorno = Entorno {
+            registro: &registro,
+            ruta_del_registro: raiz.path().join("registro-de-modelos.toml"),
+            tarjeta: Some("RTX".to_string()),
+            carpeta_de_modelos: raiz.path().join("modelos"),
+            carpeta_de_revisiones: raiz.path().join("revisiones"),
+            modelo_en_uso: None,
+            ahora: chrono::NaiveDate::from_ymd_opt(2026, 11, 25)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            entregas: Some(entregas),
+        };
+
+        let hecha = proponer_y_escribir(&entorno).unwrap();
+
+        let texto = ficheros::leer(&hecha.ruta).unwrap();
+        assert!(texto.contains("| `devstral` | 1 | 1 | 0 |"), "{texto}");
     }
 }

@@ -66,8 +66,8 @@ mod pruebas {
 
     #[test]
     fn sin_ejecutable_el_motor_falta() {
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("llama-server.exe");
+        let carpeta = tempfile::tempdir().unwrap();
+        let binario = carpeta.path().join("llama-server.exe");
 
         assert_eq!(
             revisar_motor(&binario),
@@ -80,20 +80,20 @@ mod pruebas {
         // No es hipotético: el llama-server que instala Docker trae veinticuatro bibliotecas y
         // todas son ggml-cpu-*. Con él, --n-gpu-layers se acepta sin protestar y no carga una
         // sola capa.
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("llama-server.exe");
+        let carpeta = tempfile::tempdir().unwrap();
+        let binario = carpeta.path().join("llama-server.exe");
         std::fs::write(&binario, b"no importa el contenido").unwrap();
-        std::fs::write(dir.path().join("ggml-cpu-haswell.dll"), b"x").unwrap();
+        std::fs::write(carpeta.path().join("ggml-cpu-haswell.dll"), b"x").unwrap();
 
         assert_eq!(revisar_motor(&binario), MotorInstalado::SoloCpu);
     }
 
     #[test]
     fn con_biblioteca_de_cuda_al_lado_el_motor_esta_listo() {
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("llama-server.exe");
+        let carpeta = tempfile::tempdir().unwrap();
+        let binario = carpeta.path().join("llama-server.exe");
         std::fs::write(&binario, b"x").unwrap();
-        std::fs::write(dir.path().join("ggml-cuda.dll"), b"x").unwrap();
+        std::fs::write(carpeta.path().join("ggml-cuda.dll"), b"x").unwrap();
 
         assert_eq!(revisar_motor(&binario), MotorInstalado::ListoConCuda);
     }
@@ -104,20 +104,20 @@ mod pruebas {
         // bibliotecas. Buscando solo por el principio del nombre, una instalación de Linux
         // perfectamente válida se anunciaba como «SIN CUDA (solo CPU)»: se vio al instalar el
         // motor de verdad dentro de un Linux, y esta prueba existe para que no vuelva a pasar.
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("llama-server");
+        let carpeta = tempfile::tempdir().unwrap();
+        let binario = carpeta.path().join("llama-server");
         std::fs::write(&binario, b"x").unwrap();
-        std::fs::write(dir.path().join("libggml-cuda.so"), b"x").unwrap();
+        std::fs::write(carpeta.path().join("libggml-cuda.so"), b"x").unwrap();
 
         assert_eq!(revisar_motor(&binario), MotorInstalado::ListoConCuda);
     }
 
     #[test]
     fn el_nombre_de_la_biblioteca_no_distingue_mayusculas() {
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("llama-server.exe");
+        let carpeta = tempfile::tempdir().unwrap();
+        let binario = carpeta.path().join("llama-server.exe");
         std::fs::write(&binario, b"x").unwrap();
-        std::fs::write(dir.path().join("GGML-CUDA.DLL"), b"x").unwrap();
+        std::fs::write(carpeta.path().join("GGML-CUDA.DLL"), b"x").unwrap();
 
         assert_eq!(revisar_motor(&binario), MotorInstalado::ListoConCuda);
     }
@@ -134,8 +134,8 @@ mod pruebas {
     fn una_ruta_que_es_un_directorio_no_es_el_ejecutable() {
         // `is_file()` distingue de verdad: una carpeta llamada como el ejecutable existe, pero no
         // se puede lanzar. Decir «falta» es lo correcto.
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("llama-server.exe");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let binario = carpeta_temporal.path().join("llama-server.exe");
         std::fs::create_dir(&binario).unwrap();
 
         assert_eq!(

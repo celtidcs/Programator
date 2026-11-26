@@ -278,6 +278,7 @@ mod pruebas {
             maquina_de_comprobacion: None,
             capas_en_gpu: Some(34),
             vram_ocupada_mib: Some(14_000),
+            vram_calculada_mib: None,
             segundos_de_carga: Some(8.0),
             tarjeta: Some("NVIDIA de prueba".into()),
             sistema_de_comprobacion: None,

@@ -192,16 +192,16 @@ mod pruebas {
     use std::path::Path;
 
     fn ambito_con(ficheros: &[(&str, &str)]) -> (tempfile::TempDir, Ambito) {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         for (ruta, contenido) in ficheros {
-            let completa = dir.path().join(ruta);
+            let completa = carpeta.path().join(ruta);
             if let Some(padre) = completa.parent() {
                 std::fs::create_dir_all(padre).unwrap();
             }
             std::fs::write(completa, contenido).unwrap();
         }
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
-        (dir, ambito)
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
+        (carpeta, ambito)
     }
 
     #[test]
@@ -350,13 +350,13 @@ mod pruebas {
 
     #[test]
     fn la_ruta_del_fichero_se_resuelve_relativa_a_la_carpeta_de_trabajo() {
-        let (dir, ambito) = ambito_con(&[("sub/f.cs", "const Y = 42;\n")]);
+        let (carpeta, ambito) = ambito_con(&[("sub/f.cs", "const Y = 42;\n")]);
         let texto = "HARDCODEO | sub/f.cs | M | 9 | 42 | darle nombre";
 
         let corregido = corregir_lineas_de_auditoria(texto, &ambito);
 
         assert!(corregido.contains("| 1 (corregida; el modelo dijo 9) |"));
-        assert!(Path::new(dir.path()).join("sub/f.cs").exists());
+        assert!(Path::new(carpeta.path()).join("sub/f.cs").exists());
     }
 
     /// La línea tiene que ser un entero positivo: las líneas son base 1 y el 0 no se admite.

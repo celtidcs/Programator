@@ -1,7 +1,7 @@
 //! Acceso al canal `.gestor/canal/`. Este módulo sabe qué ficheros existen y de quién es cada uno;
 //! no decide qué escribir en ellos.
 
-use super::carpetas::{carpeta_del_canal, NOMBRE_DE_LA_GUIA};
+use super::carpetas::{carpeta_del_canal, FICHERO_DE_ESTADO, NOMBRE_DE_LA_GUIA};
 use super::encargo::Encargo;
 use super::respuesta::{neutralizar_para, Cabecera};
 use super::saneado::{
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// Nombres reservados del canal: ficheros de infraestructura que existen en `.gestor/canal/` pero no
 /// son buzones de ningún agente. Se descartan de forma insensible a mayúsculas.
-const NOMBRES_RESERVADOS: &[&str] = &["estado.md", "readme.md", "indice.md"];
+const NOMBRES_RESERVADOS: &[&str] = &[FICHERO_DE_ESTADO, "readme.md", "indice.md"];
 
 /// Prefijos de ficheros que están en el canal pero **no son buzones de nadie**: los históricos que
 /// se generan al archivar.
@@ -100,7 +100,18 @@ impl Canal {
 
     /// Ruta del fichero de hechos comprobables.
     pub fn ruta_estado(&self) -> PathBuf {
-        self.directorio.join("estado.md")
+        self.directorio.join(FICHERO_DE_ESTADO)
+    }
+
+    /// Cuánto hace que cambió el buzón `nombre` (su fecha de modificación). `None` si no se sabe:
+    /// no se deja mirar o la fecha cae en el futuro, como con un reloj desfasado.
+    pub fn edad_del_buzon(&self, nombre: &str) -> Option<std::time::Duration> {
+        std::fs::metadata(self.directorio.join(nombre))
+            .ok()?
+            .modified()
+            .ok()?
+            .elapsed()
+            .ok()
     }
 
     /// Lee los buzones de los demás agentes, en orden alfabético estable.
@@ -327,16 +338,41 @@ impl Canal {
     /// contra marcas falsas y saneado de cabeceras.
     pub fn publicar_entrega(
         &self,
-        propuesta: &str,
-        veredicto: &str,
+        entrega: &EntregaPublicada,
         leido: &ResumenLeido,
         ahora: &str,
     ) -> Resultado<()> {
-        let cuerpo = format!(
-            "He dejado la propuesta «{propuesta}» en disco.\n\n**Comprobación de las propuestas** (la hace el arnés, no el modelo):\n- {veredicto}"
-        );
-        self.publicar(&cuerpo, leido, ahora)
+        self.publicar(&cuerpo_de_la_entrega(entrega), leido, ahora)
     }
+}
+
+/// Lo que se publica al dejar una propuesta en disco.
+#[derive(Debug, Clone, Copy)]
+pub struct EntregaPublicada<'a> {
+    /// El nombre con que quedó.
+    pub propuesta: &'a str,
+    /// La línea de su comprobación.
+    pub veredicto: &'a str,
+    /// Cómo decir en qué quedó, al final; vacío si no se lleva registro.
+    pub confirmacion: &'a str,
+}
+
+/// El cuerpo del aviso de una propuesta dejada en disco.
+fn cuerpo_de_la_entrega(entrega: &EntregaPublicada) -> String {
+    let EntregaPublicada {
+        propuesta,
+        veredicto,
+        confirmacion,
+    } = entrega;
+    let mut cuerpo = format!(
+        "He dejado la propuesta «{propuesta}» en disco.\n\n**Comprobación de las propuestas** (la \
+         hace el arnés, no el modelo):\n- {veredicto}"
+    );
+    if !confirmacion.is_empty() {
+        cuerpo.push_str("\n\n");
+        cuerpo.push_str(confirmacion);
+    }
+    cuerpo
 }
 
 /// La marca de tiempo actual local en el formato que exige el protocolo: `2026-09-13 08:30`.
@@ -436,26 +472,34 @@ mod pruebas {
     use super::*;
 
     fn canal_de_prueba() -> (tempfile::TempDir, Canal) {
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor/canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let carpeta_del_canal = carpeta_temporal.path().join(".gestor/canal");
+        std::fs::create_dir_all(&carpeta_del_canal).unwrap();
         std::fs::write(
-            canal_dir.join("claude.md"),
+            carpeta_del_canal.join("claude.md"),
             "# Claude\ncontenido de Claude\n",
         )
         .unwrap();
-        std::fs::write(canal_dir.join("codex.md"), "# Codex\ncontenido de Codex\n").unwrap();
-        std::fs::write(canal_dir.join("programator.md"), "# Programator\nlo mío\n").unwrap();
-        std::fs::write(canal_dir.join("estado.md"), "# Estado\n").unwrap();
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
-        (dir, canal)
+        std::fs::write(
+            carpeta_del_canal.join("codex.md"),
+            "# Codex\ncontenido de Codex\n",
+        )
+        .unwrap();
+        std::fs::write(
+            carpeta_del_canal.join("programator.md"),
+            "# Programator\nlo mío\n",
+        )
+        .unwrap();
+        std::fs::write(carpeta_del_canal.join("estado.md"), "# Estado\n").unwrap();
+        let canal = Canal::nuevo(carpeta_temporal.path(), "Programator").unwrap();
+        (carpeta_temporal, canal)
     }
 
     /// Una carpeta «x.md» no se toma por buzón: su lectura tumbaría la de todos.
     #[test]
     fn una_carpeta_con_nombre_de_buzon_no_es_un_buzon() {
-        let (dir, canal) = canal_de_prueba();
-        std::fs::create_dir(dir.path().join(".gestor/canal/carpeta.md")).unwrap();
+        let (carpeta_temporal, canal) = canal_de_prueba();
+        std::fs::create_dir(carpeta_temporal.path().join(".gestor/canal/carpeta.md")).unwrap();
 
         let buzones = canal.buzones_ajenos().unwrap();
 
@@ -468,10 +512,11 @@ mod pruebas {
     #[cfg(unix)]
     #[test]
     fn un_buzon_que_es_un_enlace_a_un_fichero_se_lee() {
-        let (dir, canal) = canal_de_prueba();
-        let destino = dir.path().join("buzon-real.md");
+        let (carpeta, canal) = canal_de_prueba();
+        let destino = carpeta.path().join("buzon-real.md");
         std::fs::write(&destino, "# Gemini\ncontenido enlazado\n").unwrap();
-        std::os::unix::fs::symlink(&destino, dir.path().join(".gestor/canal/gemini.md")).unwrap();
+        std::os::unix::fs::symlink(&destino, carpeta.path().join(".gestor/canal/gemini.md"))
+            .unwrap();
 
         let buzones = canal.buzones_ajenos().unwrap();
 
@@ -502,9 +547,10 @@ mod pruebas {
         // La escribe el propio arnés en el canal. Sin reservarla, Programator leería su propia
         // guía como el buzón de un compañero y se la metería en el contexto en cada pasada:
         // gastaría ventana y se citaría a sí mismo como si fuera información ajena.
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         std::fs::write(
-            dir.path()
+            carpeta
+                .path()
                 .join(".gestor/canal")
                 .join("COMO-ENCARGAR-A-PROGRAMATOR.md"),
             "# Guía\n",
@@ -534,11 +580,11 @@ mod pruebas {
 
     #[test]
     fn crea_la_estructura_del_canal_si_la_carpeta_no_la_tiene() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
 
-        assert!(dir.path().join(".gestor/canal").is_dir());
+        assert!(carpeta.path().join(".gestor/canal").is_dir());
         assert!(canal.buzones_ajenos().unwrap().is_empty());
     }
 
@@ -547,17 +593,21 @@ mod pruebas {
         // El 23/09/2026 el encargo 009 se archivó a las 20:44 y se entregó a las 20:47: los
         // históricos viven dentro de la carpeta que el arnés sondea, así que archivar es volver
         // a encargar.
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor").join("canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
-        std::fs::write(canal_dir.join("claude.md"), "## Para Programator\n\nvivo").unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let carpeta_del_canal = carpeta_temporal.path().join(".gestor").join("canal");
+        std::fs::create_dir_all(&carpeta_del_canal).unwrap();
         std::fs::write(
-            canal_dir.join("historico-actas.md"),
+            carpeta_del_canal.join("claude.md"),
+            "## Para Programator\n\nvivo",
+        )
+        .unwrap();
+        std::fs::write(
+            carpeta_del_canal.join("historico-actas.md"),
             "## Para Programator\n\nya cerrado",
         )
         .unwrap();
 
-        let canal = Canal::nuevo(dir.path(), "programator").unwrap();
+        let canal = Canal::nuevo(carpeta_temporal.path(), "programator").unwrap();
         let buzones = canal.buzones_ajenos().unwrap();
 
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
@@ -566,13 +616,13 @@ mod pruebas {
 
     #[test]
     fn descarta_nombres_reservados_insensiblemente_a_mayusculas() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor/canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
-        std::fs::write(canal_dir.join("README.md"), "# Reglas\n").unwrap();
-        std::fs::write(canal_dir.join("INDICE.md"), "# Índice\n").unwrap();
-        std::fs::write(canal_dir.join("Claude.md"), "# Claude\ncontenido\n").unwrap();
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let carpeta_del_canal = carpeta.path().join(".gestor/canal");
+        std::fs::create_dir_all(&carpeta_del_canal).unwrap();
+        std::fs::write(carpeta_del_canal.join("README.md"), "# Reglas\n").unwrap();
+        std::fs::write(carpeta_del_canal.join("INDICE.md"), "# Índice\n").unwrap();
+        std::fs::write(carpeta_del_canal.join("Claude.md"), "# Claude\ncontenido\n").unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
 
         let buzones = canal.buzones_ajenos().unwrap();
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
@@ -593,12 +643,16 @@ mod pruebas {
 
     #[test]
     fn descarta_el_buzon_propio_insensiblemente_a_mayusculas() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor/canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
-        std::fs::write(canal_dir.join("Programator.md"), "# Programator\nlo mío\n").unwrap();
-        std::fs::write(canal_dir.join("Claude.md"), "# Claude\ncontenido\n").unwrap();
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let carpeta_del_canal = carpeta.path().join(".gestor/canal");
+        std::fs::create_dir_all(&carpeta_del_canal).unwrap();
+        std::fs::write(
+            carpeta_del_canal.join("Programator.md"),
+            "# Programator\nlo mío\n",
+        )
+        .unwrap();
+        std::fs::write(carpeta_del_canal.join("Claude.md"), "# Claude\ncontenido\n").unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
 
         let buzones = canal.buzones_ajenos().unwrap();
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
@@ -617,15 +671,19 @@ mod pruebas {
     fn otro_prefijo_de_archivo_si_es_un_buzon() {
         // Los históricos son los del canal, `historico-` e `histórico-`, y ningún otro. Un proyecto que archive con otro prefijo tiene que
         // renombrar: si no, sus ficheros se leen como buzones.
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor/canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
-        std::fs::write(canal_dir.join("claude.md"), "## Para Programator\n\nvivo").unwrap();
-        std::fs::write(canal_dir.join("historico-actas.md"), "ya cerrado").unwrap();
-        std::fs::write(canal_dir.join("histórico-claude.md"), "ya cerrado").unwrap();
-        std::fs::write(canal_dir.join("archivado-actas.md"), "otro prefijo").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let carpeta_del_canal = carpeta.path().join(".gestor/canal");
+        std::fs::create_dir_all(&carpeta_del_canal).unwrap();
+        std::fs::write(
+            carpeta_del_canal.join("claude.md"),
+            "## Para Programator\n\nvivo",
+        )
+        .unwrap();
+        std::fs::write(carpeta_del_canal.join("historico-actas.md"), "ya cerrado").unwrap();
+        std::fs::write(carpeta_del_canal.join("histórico-claude.md"), "ya cerrado").unwrap();
+        std::fs::write(carpeta_del_canal.join("archivado-actas.md"), "otro prefijo").unwrap();
 
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
         let buzones = canal.buzones_ajenos().unwrap();
 
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
@@ -634,14 +692,18 @@ mod pruebas {
 
     #[test]
     fn el_prefijo_del_historico_no_distingue_mayusculas() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal_dir = dir.path().join(".gestor/canal");
-        std::fs::create_dir_all(&canal_dir).unwrap();
-        std::fs::write(canal_dir.join("claude.md"), "## Para Programator\n\nvivo").unwrap();
-        std::fs::write(canal_dir.join("Historico-Actas.md"), "ya cerrado").unwrap();
-        std::fs::write(canal_dir.join("Histórico-Claude.md"), "ya cerrado").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let carpeta_del_canal = carpeta.path().join(".gestor/canal");
+        std::fs::create_dir_all(&carpeta_del_canal).unwrap();
+        std::fs::write(
+            carpeta_del_canal.join("claude.md"),
+            "## Para Programator\n\nvivo",
+        )
+        .unwrap();
+        std::fs::write(carpeta_del_canal.join("Historico-Actas.md"), "ya cerrado").unwrap();
+        std::fs::write(carpeta_del_canal.join("Histórico-Claude.md"), "ya cerrado").unwrap();
 
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
         let buzones = canal.buzones_ajenos().unwrap();
 
         let nombres: Vec<&str> = buzones.iter().map(|(n, _)| n.as_str()).collect();
@@ -650,7 +712,7 @@ mod pruebas {
 
     #[test]
     fn la_publicacion_lleva_latido_y_leido_aunque_el_modelo_no_los_escriba() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         let leido = ResumenLeido {
             entradas: vec![
                 ("claude.md".to_string(), "hasta su latido 14:00".to_string()),
@@ -667,7 +729,7 @@ mod pruebas {
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(buzon.contains(
             "
 LATIDO: 2026-09-13 16:20
@@ -683,7 +745,7 @@ LEÍDO: "
 
     #[test]
     fn la_publicacion_conserva_lo_que_ya_habia_en_el_buzon() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         let leido = ResumenLeido { entradas: vec![] };
 
         canal
@@ -691,7 +753,7 @@ LEÍDO: "
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(
             buzon.contains("lo mío"),
             "no puede perder el contenido anterior"
@@ -701,24 +763,27 @@ LEÍDO: "
 
     #[test]
     fn rotar_a_historico_mueve_mensajes_anteriores_y_deja_encabezado() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         canal.rotar_a_historico().unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(!buzon.contains("lo mío"));
         assert!(buzon.starts_with("# Programator"));
 
-        let hist =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-programator.md"))
-                .unwrap();
+        let hist = std::fs::read_to_string(
+            carpeta
+                .path()
+                .join(".gestor/canal/historico-programator.md"),
+        )
+        .unwrap();
         assert!(hist.contains("lo mío"));
     }
 
     #[test]
     fn rotar_a_historico_acumula_sucesivamente_en_historico() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
         let leido = ResumenLeido { entradas: vec![] };
 
         canal
@@ -728,13 +793,16 @@ LEÍDO: "
         canal.rotar_a_historico().unwrap();
 
         let buzon1 =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(!buzon1.contains("Primer mensaje."));
         assert!(buzon1.starts_with("# Programator"));
 
-        let hist1 =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-programator.md"))
-                .unwrap();
+        let hist1 = std::fs::read_to_string(
+            carpeta
+                .path()
+                .join(".gestor/canal/historico-programator.md"),
+        )
+        .unwrap();
         assert!(hist1.contains("Primer mensaje."));
 
         canal
@@ -743,9 +811,12 @@ LEÍDO: "
 
         canal.rotar_a_historico().unwrap();
 
-        let hist2 =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-programator.md"))
-                .unwrap();
+        let hist2 = std::fs::read_to_string(
+            carpeta
+                .path()
+                .join(".gestor/canal/historico-programator.md"),
+        )
+        .unwrap();
         assert!(hist2.contains("Primer mensaje."));
         assert!(hist2.contains("Segundo mensaje."));
 
@@ -761,8 +832,8 @@ LEÍDO: "
 
     #[test]
     fn la_publicacion_crea_el_buzon_con_encabezado_si_no_existia() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal = Canal::nuevo(dir.path(), "Programator").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Programator").unwrap();
         let leido = ResumenLeido { entradas: vec![] };
 
         canal
@@ -770,26 +841,28 @@ LEÍDO: "
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(buzon.starts_with("# Programator"));
         assert!(buzon.contains("Solo escribe Programator"));
     }
 
     #[test]
     fn la_publicacion_no_toca_ningun_buzon_ajeno() {
-        let (dir, canal) = canal_de_prueba();
-        let antes = std::fs::read_to_string(dir.path().join(".gestor/canal/claude.md")).unwrap();
+        let (carpeta, canal) = canal_de_prueba();
+        let antes =
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/claude.md")).unwrap();
         let leido = ResumenLeido { entradas: vec![] };
 
         canal.publicar("Algo.", &leido, "2026-09-13 16:20").unwrap();
 
-        let despues = std::fs::read_to_string(dir.path().join(".gestor/canal/claude.md")).unwrap();
+        let despues =
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/claude.md")).unwrap();
         assert_eq!(antes, despues, "la regla 1 del canal es inviolable");
     }
 
     #[test]
     fn neutraliza_latido_falsificado_en_el_cuerpo() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         let leido = ResumenLeido { entradas: vec![] };
 
         canal
@@ -801,7 +874,7 @@ LEÍDO: "
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
 
         // Las líneas del modelo que parecen marcas deben estar citadas
         let lineas: Vec<&str> = buzon.lines().collect();
@@ -833,7 +906,7 @@ LEÍDO: "
 
     #[test]
     fn neutraliza_saltos_de_linea_en_resumenes() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         let leido = ResumenLeido {
             entradas: vec![(
                 "fichero.md".to_string(),
@@ -846,7 +919,7 @@ LEÍDO: "
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
 
         // La línea LEÍDO: debe ser una sola línea
         let leido_linea = buzon
@@ -867,13 +940,13 @@ LEÍDO: "
 
     #[test]
     fn usa_sin_novedad_cuando_el_cuerpo_es_solo_espacios() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         let leido = ResumenLeido { entradas: vec![] };
 
         canal.publicar("   ", &leido, "2026-09-13 16:20").unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(
             buzon.contains(
                 "LATIDO: 2026-09-13 16:20
@@ -888,7 +961,7 @@ sin novedad
     /// `LATIDO: <fecha hora>`, sin negrita y con nada más detrás.
     #[test]
     fn la_intervencion_empieza_con_el_latido_del_canal() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
         let leido = ResumenLeido {
             entradas: vec![(
                 "claude.md".to_string(),
@@ -901,7 +974,7 @@ sin novedad
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         assert!(
             buzon.ends_with(
                 "\nLATIDO: 2026-11-13 15:40:07\nHecho el encargo.\n\
@@ -914,7 +987,7 @@ sin novedad
 
     #[test]
     fn neutraliza_el_latido_sin_negrita_falsificado_en_el_cuerpo() {
-        let (dir, canal) = canal_de_prueba();
+        let (carpeta, canal) = canal_de_prueba();
 
         canal
             .publicar(
@@ -925,7 +998,7 @@ sin novedad
             .unwrap();
 
         let buzon =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
         let latidos: Vec<&str> = buzon.lines().filter(|l| es_linea_de_latido(l)).collect();
         assert_eq!(latidos, ["LATIDO: 2026-11-13 15:40:07"], "{buzon}");
         assert!(buzon.contains("> LATIDO: 2099-01-01 00:00:00"));
@@ -961,10 +1034,10 @@ sin novedad
     /// rotar el buzón, las demás pruebas seguirían en verde.
     #[test]
     fn el_buzon_de_otro_nombre_se_crea_y_se_rota_con_su_cabecera() {
-        let dir = tempfile::tempdir().unwrap();
-        let canal = Canal::nuevo(dir.path(), "Cobalto").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let canal = Canal::nuevo(carpeta.path(), "Cobalto").unwrap();
         let leido = ResumenLeido { entradas: vec![] };
-        let buzon = dir.path().join(".gestor/canal/cobalto.md");
+        let buzon = carpeta.path().join(".gestor/canal/cobalto.md");
 
         canal
             .publicar("Primer mensaje.", &leido, "2026-11-23 16:00")
@@ -976,7 +1049,8 @@ sin novedad
         let rotado = std::fs::read_to_string(&buzon).unwrap();
         assert_eq!(rotado, encabezado("Cobalto"));
         let historico =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-cobalto.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/historico-cobalto.md"))
+                .unwrap();
         assert!(historico.contains("Primer mensaje."), "{historico}");
         assert!(!historico.contains("Solo escribe Cobalto"), "{historico}");
 
@@ -989,7 +1063,8 @@ sin novedad
         .unwrap();
         canal.rotar_a_historico().unwrap();
         let historico =
-            std::fs::read_to_string(dir.path().join(".gestor/canal/historico-cobalto.md")).unwrap();
+            std::fs::read_to_string(carpeta.path().join(".gestor/canal/historico-cobalto.md"))
+                .unwrap();
         assert!(historico.contains("## Apunte sin latido"), "{historico}");
     }
 

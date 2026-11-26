@@ -2,6 +2,7 @@
 //!
 //! Solo mide, no decide: si hay que reutilizar, esperar o arrancar otro lo decide quien llama.
 
+use crate::motor::clave::ClaveDelMotor;
 use crate::motor::url_local;
 use std::time::Duration;
 
@@ -22,15 +23,15 @@ pub enum EstadoServidor {
     /// (fallaría contra un puerto ya ocupado): quien llame decide qué avisar, según sepa si
     /// esperaba encontrar algo ahí o no.
     NoDisponible,
+    /// Hay un `llama-server` que pide una clave y no acepta la de Programator: no es suyo, o es uno
+    /// suyo cuya clave se perdió. No se puede usar ni arrancar otro encima, porque el puerto está
+    /// ocupado.
+    RechazaLaClave,
 }
 
 impl std::fmt::Display for EstadoServidor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Listo => write!(f, "el servidor está listo y responde"),
-            Self::Cargando => write!(f, "el servidor sigue cargando el modelo"),
-            Self::NoDisponible => write!(f, "el servidor no está disponible"),
-        }
+        f.write_str(crate::motor::mensajes::estado_del_servidor(self))
     }
 }
 
@@ -45,6 +46,17 @@ const TIEMPO_SALUD: Duration = Duration::from_secs(2);
 /// El código con que `/health` de `llama-server` dice que el modelo todavía se está cargando
 /// (`tools/server/README.md` de llama.cpp: «503 … Loading model»).
 const HTTP_SERVICIO_NO_DISPONIBLE: u16 = 503;
+
+/// El código con que `llama-server` rechaza una petición sin clave o con otra
+/// (`middleware_validate_api_key` en `tools/server/server-http.cpp` de b10993).
+const HTTP_NO_AUTORIZADO: u16 = 401;
+
+/// Lo que contestó `/props`.
+enum Propiedades {
+    DeLlamaServer,
+    Otras,
+    ClaveRechazada,
+}
 
 /// Campos de la respuesta JSON de `GET /props` que delatan a un `llama-server` de verdad. Basta con
 /// **uno cualquiera** de ellos.
@@ -78,20 +90,32 @@ fn son_props_de_llama_server(props: &serde_json::Value) -> bool {
 /// exige que conteste 200 con un cuerpo JSON que traiga `CAMPO_PROPS_LLAMA_SERVER`. Cualquier otra
 /// cosa —sin `/props`, con otro código, o con JSON que no sea el de `llama.cpp`— no es un
 /// `llama-server`.
-fn responde_props_de_llama_server_url(agente: &ureq::Agent, url_base: &str) -> bool {
-    let respuesta = match agente
-        .get(&format!("{url_base}{}", crate::motor::RUTA_PROPIEDADES))
-        .call()
-    {
+///
+/// `/props` pide la clave y `/health` no (son públicas solo `/health` y `/v1/health`), así que es
+/// aquí donde se sabe si el motor acepta la de Programator.
+fn responde_props_de_llama_server_url(
+    agente: &ureq::Agent,
+    url_base: &str,
+    clave: Option<&ClaveDelMotor>,
+) -> Propiedades {
+    let mut peticion = agente.get(&format!("{url_base}{}", crate::motor::RUTA_PROPIEDADES));
+    if let Some(clave) = clave {
+        peticion = peticion.header(CABECERA_DE_LA_CLAVE, &clave.cabecera());
+    }
+    let respuesta = match peticion.call() {
         Ok(respuesta) => respuesta,
-        Err(_) => return false,
+        Err(ureq::Error::StatusCode(HTTP_NO_AUTORIZADO)) => return Propiedades::ClaveRechazada,
+        Err(_) => return Propiedades::Otras,
     };
 
     match respuesta.into_body().read_json::<serde_json::Value>() {
-        Ok(json) => son_props_de_llama_server(&json),
-        Err(_) => false,
+        Ok(json) if son_props_de_llama_server(&json) => Propiedades::DeLlamaServer,
+        _ => Propiedades::Otras,
     }
 }
+
+/// La cabecera en que `llama-server` busca la clave, con el prefijo `Bearer `.
+pub const CABECERA_DE_LA_CLAVE: &str = "Authorization";
 
 /// El agente de `/health` y `/props`: `TIEMPO_SALUD` para todo, de la conexión a la respuesta,
 /// como `timeout` de `ureq` 2. Un 503 llega como `ureq::Error::StatusCode`.
@@ -102,8 +126,8 @@ fn agente_de_salud() -> ureq::Agent {
         .into()
 }
 
-/// Comprueba el estado de un servidor en una URL base dada.
-pub fn hay_servidor_url(url_base: &str) -> EstadoServidor {
+/// Comprueba el estado de un servidor en una URL base dada, con la clave que se le manda.
+pub fn hay_servidor_url(url_base: &str, clave: Option<&ClaveDelMotor>) -> EstadoServidor {
     let base = url_base.trim_end_matches('/');
     let agente = agente_de_salud();
 
@@ -116,10 +140,10 @@ pub fn hay_servidor_url(url_base: &str) -> EstadoServidor {
             // (`ureq-3.5.2/src/body/mod.rs`); sin esto, `/props` abriría otra conexión. Lo que
             // diga el cuerpo de `/health` no importa: el veredicto lo da `/props`.
             let _cuerpo_de_salud = respuesta.body_mut().read_to_vec();
-            if responde_props_de_llama_server_url(&agente, base) {
-                EstadoServidor::Listo
-            } else {
-                EstadoServidor::NoDisponible
+            match responde_props_de_llama_server_url(&agente, base, clave) {
+                Propiedades::DeLlamaServer => EstadoServidor::Listo,
+                Propiedades::ClaveRechazada => EstadoServidor::RechazaLaClave,
+                Propiedades::Otras => EstadoServidor::NoDisponible,
             }
         }
         Err(ureq::Error::StatusCode(HTTP_SERVICIO_NO_DISPONIBLE)) => EstadoServidor::Cargando,
@@ -151,8 +175,8 @@ pub fn hay_servidor_url(url_base: &str) -> EstadoServidor {
 /// «cualquier HTTP con 200 en `/health`». Ambas peticiones comparten el mismo plazo corto
 /// (`TIEMPO_SALUD`): dos peticiones de dos segundos siguen siendo baratas para algo que corre en
 /// cada arranque.
-pub fn hay_servidor(puerto: u16) -> EstadoServidor {
-    hay_servidor_url(&url_local(puerto))
+pub fn hay_servidor(puerto: u16, clave: Option<&ClaveDelMotor>) -> EstadoServidor {
+    hay_servidor_url(&url_local(puerto), clave)
 }
 
 #[cfg(test)]
@@ -166,6 +190,7 @@ mod pruebas {
             (EstadoServidor::Listo, "Listo"),
             (EstadoServidor::Cargando, "Cargando"),
             (EstadoServidor::NoDisponible, "NoDisponible"),
+            (EstadoServidor::RechazaLaClave, "RechazaLaClave"),
         ] {
             let texto = estado.to_string();
             assert!(texto.starts_with("el servidor "), "{texto}");
@@ -273,7 +298,7 @@ mod pruebas {
         );
         let (puerto, hilo) = servidor_de_prueba_con_secuencia(vec![salud, props]);
 
-        assert_eq!(hay_servidor(puerto), EstadoServidor::Listo);
+        assert_eq!(hay_servidor(puerto, None), EstadoServidor::Listo);
 
         assert_eq!(
             hilo.join().unwrap(),
@@ -289,7 +314,7 @@ mod pruebas {
 
         // Un 503 en `/health` basta para decir «Cargando»: no hace falta ni tiene sentido llamar
         // a `/props` para confirmar nada mientras el modelo sigue subiendo.
-        assert_eq!(hay_servidor(puerto), EstadoServidor::Cargando);
+        assert_eq!(hay_servidor(puerto, None), EstadoServidor::Cargando);
 
         hilo.join().unwrap();
     }
@@ -299,7 +324,7 @@ mod pruebas {
         let respuesta = "esto no es HTTP en absoluto\r\n\r\n".to_string();
         let (puerto, hilo) = servidor_de_prueba_que_responde(respuesta);
 
-        assert_eq!(hay_servidor(puerto), EstadoServidor::NoDisponible);
+        assert_eq!(hay_servidor(puerto, None), EstadoServidor::NoDisponible);
 
         hilo.join().unwrap();
     }
@@ -327,7 +352,7 @@ mod pruebas {
                 servidor_de_prueba_con_secuencia(vec![salud, respuesta_http(200, "OK", props)]);
 
             assert_eq!(
-                hay_servidor(puerto),
+                hay_servidor(puerto, None),
                 EstadoServidor::Listo,
                 "props con {props} debería bastar para reconocer a llama-server"
             );
@@ -342,7 +367,7 @@ mod pruebas {
         let props_ausente = respuesta_http(404, "Not Found", "");
         let (puerto, hilo) = servidor_de_prueba_con_secuencia(vec![salud, props_ausente]);
 
-        assert_eq!(hay_servidor(puerto), EstadoServidor::NoDisponible);
+        assert_eq!(hay_servidor(puerto, None), EstadoServidor::NoDisponible);
 
         hilo.join().unwrap();
     }
@@ -355,7 +380,70 @@ mod pruebas {
         let props_ajeno = respuesta_http(200, "OK", "{\"status\":\"healthy\",\"version\":\"1.0\"}");
         let (puerto, hilo) = servidor_de_prueba_con_secuencia(vec![salud, props_ajeno]);
 
-        assert_eq!(hay_servidor(puerto), EstadoServidor::NoDisponible);
+        assert_eq!(hay_servidor(puerto, None), EstadoServidor::NoDisponible);
+
+        hilo.join().unwrap();
+    }
+
+    /// Como `servidor_de_prueba_con_secuencia`, pero guarda cada petición entera, con sus
+    /// cabeceras, para ver qué clave llevó.
+    fn servidor_que_guarda_las_peticiones(
+        respuestas: Vec<String>,
+    ) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+
+        let escucha = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto = escucha.local_addr().unwrap().port();
+        let hilo = std::thread::spawn(move || {
+            let (mut conexion, _) = escucha.accept().unwrap();
+            let mut buffer = [0u8; 4096];
+            let mut peticiones = Vec::new();
+            for respuesta in respuestas {
+                let leidos = conexion.read(&mut buffer).unwrap_or(0);
+                peticiones.push(String::from_utf8_lossy(&buffer[..leidos]).to_string());
+                let _ = conexion.write_all(respuesta.as_bytes());
+            }
+            while matches!(conexion.read(&mut buffer), Ok(n) if n > 0) {}
+            peticiones
+        });
+        (puerto, hilo)
+    }
+
+    #[test]
+    fn las_propiedades_mandan_la_clave() {
+        let salud = respuesta_http(200, "OK", "{\"status\":\"ok\"}");
+        let props = respuesta_http(200, "OK", "{\"total_slots\":1}");
+        let (puerto, hilo) = servidor_que_guarda_las_peticiones(vec![salud, props]);
+
+        let clave = ClaveDelMotor::de_texto("clave-de-prueba");
+        assert_eq!(hay_servidor(puerto, Some(&clave)), EstadoServidor::Listo);
+
+        let peticiones = hilo.join().unwrap();
+        let de_props = peticiones[1].to_lowercase();
+        assert!(de_props.starts_with("get /props"), "{de_props}");
+        assert!(
+            de_props.contains("authorization: bearer clave-de-prueba"),
+            "{de_props}"
+        );
+    }
+
+    /// `llama-server` contesta 401 en `/props` cuando la clave falta o es otra; `/health` es
+    /// pública y contesta 200 igual.
+    #[test]
+    fn un_401_en_las_propiedades_es_que_rechaza_la_clave() {
+        let salud = respuesta_http(200, "OK", "{\"status\":\"ok\"}");
+        let rechazo = respuesta_http(
+            401,
+            "Unauthorized",
+            "{\"error\":{\"message\":\"Invalid API Key\",\"type\":\"authentication_error\",\"code\":401}}",
+        );
+        let (puerto, hilo) = servidor_de_prueba_con_secuencia(vec![salud, rechazo]);
+
+        let clave = ClaveDelMotor::de_texto("otra");
+        assert_eq!(
+            hay_servidor(puerto, Some(&clave)),
+            EstadoServidor::RechazaLaClave
+        );
 
         hilo.join().unwrap();
     }
@@ -366,7 +454,7 @@ mod pruebas {
         let puerto = escucha.local_addr().unwrap().port();
         drop(escucha);
 
-        assert_eq!(hay_servidor(puerto), EstadoServidor::NoDisponible);
+        assert_eq!(hay_servidor(puerto, None), EstadoServidor::NoDisponible);
     }
 
     #[test]
@@ -391,7 +479,7 @@ mod pruebas {
         });
 
         let inicio = std::time::Instant::now();
-        let estado = hay_servidor(puerto);
+        let estado = hay_servidor(puerto, None);
         let transcurrido = inicio.elapsed();
 
         assert_eq!(estado, EstadoServidor::NoDisponible);

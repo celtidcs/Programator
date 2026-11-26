@@ -3,23 +3,28 @@
 //! pasa al motor, cuenta el desenlace y compone la respuesta, que publica y cierra `cierre`.
 
 use super::cierre::{liberar_el_encargo, proponer_la_poda, publicar_el_desenlace, Atendido};
+use super::decisiones::{self, EntregaPedida};
 use super::instrucciones::leer_instrucciones;
 use super::pasada::Pasada;
-use super::publicacion::{self, con_avisos, con_denegaciones, con_veredictos, EntregaPedida};
+use super::publicacion::{self, con_avisos, con_denegaciones, con_veredictos};
+use super::sin_atender::fecha_de_ahora;
 use super::{Ajustes, ModeloPedido, Motores, ResumenPasada};
-use crate::arnes::ciclo::{atender_encargo, Desenlace};
+use crate::arnes::cancelacion::cancelaciones_nuevas_de;
+use crate::arnes::ciclo::{atender_encargo, CancelacionEnCurso, Desenlace, Limites};
 use crate::arnes::contexto::componer_contexto;
-use crate::arnes::espacio::ruta_de_la_conversacion;
+use crate::arnes::entregas::EncargoDeLaEntrega;
+use crate::arnes::espacio::{ruta_de_la_conversacion, ruta_de_las_entregas};
 use crate::arnes::herramientas::Repertorio;
-use crate::arnes::pendientes::Cola;
 use crate::arnes::registro::MotorRegistrado;
+use crate::arnes::registro_de_encargos::{EstadoDelEncargo, RegistroDeEncargos};
 use crate::arnes::Ambito;
 use crate::error::Resultado;
 use crate::motor::{Mensaje, Motor};
 use crate::motores::preparar::Procedencia;
-use crate::protocolo::{Canal, DetalleEncargo, Encargo, Latido};
+use crate::protocolo::respuesta::{identidad_del_buzon, nombre_corto};
+use crate::protocolo::{Canal, DetalleEncargo, Encargo, Latido, ResumenLeido};
 use chrono::{DateTime, Local};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// Cómo se marca el fichero del registro de una conversación: ordena por fecha al listarlos, con
 /// segundos porque dos encargos de la misma pasada pueden empezar en el mismo minuto.
@@ -33,7 +38,7 @@ pub(super) fn atender_con_el_modelo(
     motor: &mut dyn Motor,
     procedencia: Procedencia,
     encargos: Vec<(Encargo, ModeloPedido)>,
-    cola: &mut Cola,
+    fichas: &mut RegistroDeEncargos,
     resumen: &mut ResumenPasada,
 ) -> Resultado<()> {
     let mut atencion = Atencion::preparar(pasada, motores, motor, procedencia)?;
@@ -42,7 +47,7 @@ pub(super) fn atender_con_el_modelo(
     let ya_atendidos = resumen.atendidos + resumen.fallidos;
 
     for (indice, (encargo, pedido)) in encargos.into_iter().enumerate() {
-        atencion.atender(ya_atendidos + indice + 1, encargo, pedido, cola, resumen);
+        atencion.atender(ya_atendidos + indice + 1, encargo, pedido, fichas, resumen);
     }
 
     Ok(())
@@ -99,6 +104,9 @@ impl<'a, 'p> Atencion<'a, 'p> {
         let repertorio = Repertorio::nuevo(ambito, canal_repertorio, terminal)
             .con_ajustes_de_verificacion(ajustes.verificacion)
             .con_tope_de_lectura(ajustes.tope_lectura_bytes)
+            .con_tiempo_de_busqueda(std::time::Duration::from_secs(
+                ajustes.entregas.tiempo_de_busqueda_segundos,
+            ))
             .con_leido(leido.clone());
 
         Ok(Self {
@@ -121,18 +129,25 @@ impl<'a, 'p> Atencion<'a, 'p> {
         numero: usize,
         encargo: Encargo,
         pedido: ModeloPedido,
-        cola: &mut Cola,
+        fichas: &mut RegistroDeEncargos,
         resumen: &mut ResumenPasada,
     ) {
         let pasada = self.pasada;
         let ajustes = pasada.ajustes;
         let terminal = ajustes.terminal;
-        let detalle = DetalleEncargo::nuevo(&encargo.de, &encargo.texto);
-        Latido::en_atencion(Local::now(), ajustes.intervalo_segundos, detalle.clone())
+        let detalle = DetalleEncargo::del_encargo(&encargo);
+        Latido::en_atencion(Local::now(), detalle.clone())
             .guardar_con_aviso(pasada.ruta_latido, terminal);
 
         let mut avisos_del_encargo = avisos_de_la_eleccion(pedido, self.procedencia);
+        avisos_del_encargo.extend(crate::arnes::prioridad::aviso_de_la_prioridad(
+            &encargo.texto,
+        ));
+        if fichas.es_reatencion(&encargo) {
+            avisos_del_encargo.push(publicacion::aviso_de_reatencion());
+        }
 
+        let catalogo = catalogo_para(pasada, &encargo.de);
         let conversacion = componer_contexto(
             pasada.agente,
             &self.normas,
@@ -140,6 +155,7 @@ impl<'a, 'p> Atencion<'a, 'p> {
             pasada.deltas,
             &encargo,
             &self.recordatorio,
+            &catalogo,
         );
         // El desbordamiento no avisa por sí solo: el motor rechaza y reintenta, y desde fuera
         // parece que el arnés ha dejado de atender. Esto lo dice antes de que pase.
@@ -153,21 +169,43 @@ impl<'a, 'p> Atencion<'a, 'p> {
         // pasada, así que sin esto no se podría saber si fue ESTE encargo el que entregó algo.
         let propuestas_antes = self.repertorio.propuestas().len();
 
-        let desenlace = self.consultar_al_modelo(conversacion, numero);
+        self.repertorio.empezar_encargo(
+            EncargoDeLaEntrega {
+                encargo: encargo.id(),
+                nombre_del_encargo: nombre_corto(&encargo.texto, pasada.agente),
+                de: encargo.de.clone(),
+                modelo: self.motores.cargado(),
+            },
+            ruta_de_las_entregas(pasada.carpeta, pasada.agente),
+        );
+        let cancelacion = comprobar_la_cancelacion(pasada, &encargo, fichas);
+        let desenlace = self.consultar_al_modelo(conversacion, numero, cancelacion);
+        let leido = match desenlace {
+            Desenlace::Cancelado { .. } => anotar_las_cancelaciones(pasada, &encargo, fichas),
+            _ => pasada.leido.clone(),
+        };
+        let sin_empezar = matches!(
+            desenlace,
+            Desenlace::Cancelado {
+                sin_empezar: true,
+                ..
+            }
+        );
 
-        // Lo que costó en memoria, medido ya con el encargo terminado.
-        avisos_del_encargo.extend(self.motores.tras_el_encargo());
+        // Lo que costó en memoria, medido ya con el encargo terminado. Si no llegó a empezar, no
+        // costó nada: no se usó el modelo.
+        if !sin_empezar {
+            avisos_del_encargo.extend(self.motores.tras_el_encargo());
+        }
 
-        let pedida = publicacion::entrega_pedida(&encargo.texto);
+        let pedida = decisiones::entrega_pedida(&encargo.texto);
         contar_el_desenlace(pasada, &encargo, &desenlace, pedida, detalle);
 
-        let mut cuerpo = componer_la_respuesta(
-            &desenlace,
-            pedida,
-            self.repertorio.veredictos_no_publicados(),
-            self.repertorio.denegadas_del_encargo(),
-            &avisos_del_encargo,
-        );
+        let mut cuerpo = if sin_empezar {
+            publicacion::aviso_cancelado_sin_empezar(&nombre_corto(&encargo.texto, pasada.agente))
+        } else {
+            componer_la_respuesta(&desenlace, pedida, &self.repertorio, &avisos_del_encargo)
+        };
         if let Some(poda) =
             proponer_la_poda(pasada, &encargo, &desenlace, &mut self.contenidos_buzones)
         {
@@ -178,6 +216,7 @@ impl<'a, 'p> Atencion<'a, 'p> {
             encargo: &encargo,
             desenlace: &desenlace,
             propuestas_antes,
+            leido: &leido,
         };
         publicar_el_desenlace(
             pasada,
@@ -185,7 +224,7 @@ impl<'a, 'p> Atencion<'a, 'p> {
             &self.repertorio,
             &atendido,
             &cuerpo,
-            cola,
+            fichas,
             resumen,
         );
         liberar_el_encargo(pasada, &mut self.repertorio);
@@ -193,9 +232,18 @@ impl<'a, 'p> Atencion<'a, 'p> {
 
     /// Pasa la conversación al motor y devuelve cómo terminó. Si la configuración lo pide, el
     /// motor va envuelto para dejar escrita la conversación en su fichero.
-    fn consultar_al_modelo(&mut self, conversacion: Vec<Mensaje>, numero: usize) -> Desenlace {
+    fn consultar_al_modelo(
+        &mut self,
+        conversacion: Vec<Mensaje>,
+        numero: usize,
+        cancelacion: CancelacionEnCurso,
+    ) -> Desenlace {
         let pasada = self.pasada;
         let ajustes = pasada.ajustes;
+        let limites = Limites {
+            cancelacion: Some(cancelacion),
+            ..ajustes.limites.clone()
+        };
         if ajustes.registro_de_conversacion {
             let marca = marca_de_la_conversacion(Local::now(), numero);
             let fichero = ruta_de_la_conversacion(pasada.carpeta, pasada.agente, &marca);
@@ -205,14 +253,14 @@ impl<'a, 'p> Atencion<'a, 'p> {
                 &mut registrado,
                 &mut self.repertorio,
                 conversacion,
-                ajustes.limites,
+                &limites,
             )
         } else {
             atender_encargo(
                 &mut *self.motor,
                 &mut self.repertorio,
                 conversacion,
-                ajustes.limites,
+                &limites,
             )
         }
     }
@@ -229,6 +277,32 @@ fn avisos_de_la_eleccion(pedido: ModeloPedido, procedencia: Procedencia) -> Vec<
 }
 
 /// El aviso de que la conversación va justa de contexto, si va.
+/// El apartado «Lo que ya entregaste» para un encargo de `de`, con el límite de
+/// `[ciclo] entregas_en_contexto`. Sin registro, o si no se puede leer, no sale: es ayuda para el
+/// modelo, no algo sin lo que no se pueda atender.
+fn catalogo_para(pasada: &Pasada, de: &str) -> String {
+    let limite = pasada.ajustes.entregas_en_contexto;
+    let ruta = ruta_de_las_entregas(pasada.carpeta, pasada.agente);
+    if !ruta.exists() {
+        return String::new();
+    }
+    match crate::arnes::entregas::disco::leer(&ruta) {
+        Ok(leido) => {
+            if let Some(aviso) = leido.aviso {
+                pasada.ajustes.terminal.avisar(&aviso);
+            }
+            crate::arnes::entregas::catalogo::apartado(&leido.registro, de, limite)
+        }
+        Err(fallo) => {
+            pasada
+                .ajustes
+                .terminal
+                .avisar(&publicacion::mensaje_catalogo_sin_leer(&fallo));
+            String::new()
+        }
+    }
+}
+
 fn aviso_de_ocupacion(conversacion: &[Mensaje], ajustes: &Ajustes) -> Option<String> {
     crate::arnes::contexto::aviso_de_ocupacion(
         crate::arnes::contexto::tokens_estimados(conversacion, ajustes.bytes_por_token),
@@ -244,6 +318,62 @@ fn marca_de_la_conversacion(ahora: DateTime<Local>, numero: usize) -> String {
         ahora.format(FORMATO_DE_LA_MARCA_DE_LA_CONVERSACION),
         numero
     )
+}
+
+/// La comprobación que el ciclo hace antes de cada llamada al motor: relee el buzón de quien
+/// encargó, el único que puede cancelar, y mira si trae una cancelación de este encargo que el
+/// registro no conocía. Devuelve la identidad de su cabecera o, sin ella, el nombre del buzón.
+fn comprobar_la_cancelacion(
+    pasada: &Pasada,
+    encargo: &Encargo,
+    fichas: &RegistroDeEncargos,
+) -> CancelacionEnCurso {
+    let ruta = pasada.canal.ruta_del_fichero(&encargo.de);
+    let agente = pasada.agente.to_string();
+    let encargo = encargo.clone();
+    let conocidos = ids_conocidos(fichas);
+    CancelacionEnCurso::con(move || {
+        let contenido = std::fs::read_to_string(&ruta).ok()?;
+        if cancelaciones_nuevas_de(&encargo, &contenido, &agente, &conocidos).is_empty() {
+            return None;
+        }
+        Some(
+            identidad_del_buzon(&contenido)
+                .map(|identidad| identidad.to_string())
+                .unwrap_or_else(|| encargo.de.clone()),
+        )
+    })
+}
+
+/// Las cancelaciones que cortaron el encargo quedan atendidas con él: su respuesta es la del
+/// encargo cancelado, y la pasada siguiente no las vuelve a contestar. Devuelve lo leído con el
+/// buzón de quien canceló hasta donde se leyó ahora, que es lo que dice la respuesta.
+fn anotar_las_cancelaciones(
+    pasada: &Pasada,
+    encargo: &Encargo,
+    fichas: &mut RegistroDeEncargos,
+) -> ResumenLeido {
+    let ruta = pasada.canal.ruta_del_fichero(&encargo.de);
+    let Ok(contenido) = std::fs::read_to_string(ruta) else {
+        return pasada.leido.clone();
+    };
+    let conocidos = ids_conocidos(fichas);
+    let fecha = fecha_de_ahora();
+    for cancelacion in cancelaciones_nuevas_de(encargo, &contenido, pasada.agente, &conocidos) {
+        fichas.anotar(&cancelacion, &fecha, EstadoDelEncargo::Pendiente);
+        fichas.terminar(&cancelacion, EstadoDelEncargo::Atendido, &fecha);
+    }
+    // No se guardan aquí: el cierre del encargo, justo después, guarda todas las fichas cambiadas
+    // (`guardado::terminar_y_guardar` o, si no se publica, `dejar_pendiente`).
+    publicacion::con_lo_leido_despues(pasada.leido, &encargo.de, &contenido)
+}
+
+fn ids_conocidos(fichas: &RegistroDeEncargos) -> BTreeSet<String> {
+    fichas
+        .fichas()
+        .iter()
+        .map(|ficha| ficha.id.clone())
+        .collect()
 }
 
 /// Cuenta en el latido o en la terminal lo que el desenlace tiene de anómalo: un aborto deja el
@@ -266,7 +396,7 @@ fn contar_el_desenlace(
         )
         .guardar_con_aviso(pasada.ruta_latido, terminal);
     } else if let Desenlace::SinEntrega(texto) = desenlace {
-        if publicacion::avisa_sin_entrega(pedida, texto) {
+        if decisiones::avisa_sin_entrega(pedida, texto) {
             terminal.avisar(&publicacion::aviso_sin_entrega_en_la_terminal(&encargo.de));
         }
     } else if let Desenlace::SinPublicar { propuestas, .. } = desenlace {
@@ -282,24 +412,32 @@ fn contar_el_desenlace(
     }
 }
 
-/// La respuesta a un encargo, antes de la poda: el desenlace, los veredictos que quedaron sin
-/// publicar, lo que el arnés denegó y los avisos del encargo.
+/// La respuesta a un encargo, antes de la poda: el desenlace, lo que dejó si publicó, los
+/// veredictos que quedaron sin publicar, lo que el arnés denegó y los avisos del encargo.
 fn componer_la_respuesta(
     desenlace: &Desenlace,
     pedida: EntregaPedida,
-    veredictos_no_publicados: &[String],
-    denegadas: &[String],
+    repertorio: &Repertorio,
     avisos: &[String],
 ) -> String {
     // Los tres desenlaces se publican, no solo el bueno. El protocolo exige registrar la
     // parada: un agente que calla cuando algo le sale mal es peor que uno
     // que falla. Si no hubo entrega con herramientas, se antepone un aviso visible.
-    let cuerpo_base = publicacion::cuerpo_base_desenlace(desenlace, pedida);
+    let mut cuerpo = publicacion::cuerpo_base_desenlace(desenlace, pedida);
 
-    // **El cuerpo lo redacta el modelo; el veredicto de sus propuestas, no.** Las propuestas se
-    // publican de inmediato en el buzón al entregarse (visto en uso real). Al cierre del
-    // encargo sólo se adjuntan veredictos si quedó alguno sin publicar por un fallo previo.
-    let cuerpo = con_veredictos(&cuerpo_base, veredictos_no_publicados);
-    let cuerpo = con_denegaciones(&cuerpo, denegadas);
+    // **El cuerpo lo redacta el modelo; lo que dejó el encargo, no.** Los demás desenlaces ya
+    // nombran lo que quedó en disco.
+    if let Desenlace::Publicado(_) = desenlace {
+        cuerpo.push_str("\n\n");
+        cuerpo.push_str(&publicacion::lo_que_dejo_el_encargo(
+            repertorio.lo_que_dejo_el_encargo(),
+        ));
+    }
+
+    // Las propuestas se publican de inmediato en el buzón al entregarse (visto en uso real). Al
+    // cierre del encargo sólo se adjuntan veredictos si quedó alguno sin publicar por un fallo
+    // previo.
+    let cuerpo = con_veredictos(&cuerpo, repertorio.veredictos_no_publicados());
+    let cuerpo = con_denegaciones(&cuerpo, repertorio.denegadas_del_encargo());
     con_avisos(&cuerpo, avisos)
 }

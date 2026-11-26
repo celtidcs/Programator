@@ -228,8 +228,8 @@ mod pruebas {
 
     #[test]
     fn registrar_crea_el_fichero_y_la_carpeta_si_no_existen() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("sub").join("encaje-historico.log");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("sub").join("encaje-historico.log");
 
         registrar(&ruta, "primera línea").unwrap();
 
@@ -239,8 +239,8 @@ mod pruebas {
 
     #[test]
     fn registrar_dos_veces_acumula_sin_sobrescribir() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("encaje-historico.log");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("encaje-historico.log");
 
         registrar(&ruta, "primer arranque").unwrap();
         registrar(&ruta, "segundo arranque").unwrap();

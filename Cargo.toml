@@ -1,6 +1,6 @@
 [package]
 name = "programator"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Arnés que convierte un modelo local en un agente del canal .gestor"
 license = "GPL-3.0-or-later"
@@ -27,6 +27,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # El espacio libre del disco antes de descargar un modelo (`revision::descarga`), en Windows y en
 # Linux. Solo `available_space`, que no necesita ninguna característica.
 fs4 = { version = "1.1.0", default-features = false }
+# Los bytes al azar de la clave del motor (`motor::clave`). La misma versión que ya trae `ring`,
+# así que no entra ningún crate nuevo.
+getrandom = "0.2.17"
 
 # Solo para construir en Windows: incrusta el icono y los datos de versión en el .exe. No entra
 # en el binario como código, únicamente lo fabrica.

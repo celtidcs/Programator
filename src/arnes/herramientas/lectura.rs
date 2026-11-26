@@ -6,17 +6,24 @@
 
 use super::mensajes;
 
+/// Si un texto se recortó para caber en el tope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Recorte {
+    Entero,
+    Recortado,
+}
+
 /// Recorta `texto` a lo sumo a `tope` bytes sin partir un carácter multibyte por la mitad: baja
 /// hasta el límite de carácter válido más cercano. Devuelve también si hubo recorte.
-pub(super) fn recortar_por_caracter(texto: &str, tope: usize) -> (&str, bool) {
+pub(super) fn recortar_por_caracter(texto: &str, tope: usize) -> (&str, Recorte) {
     if texto.len() <= tope {
-        return (texto, false);
+        return (texto, Recorte::Entero);
     }
     let mut corte = tope;
     while corte > 0 && !texto.is_char_boundary(corte) {
         corte -= 1;
     }
-    (&texto[..corte], true)
+    (&texto[..corte], Recorte::Recortado)
 }
 
 /// Lo que separa el número de línea del texto cuando se piden números (`numerar`).
@@ -83,6 +90,17 @@ pub(super) fn indices_de_lineas(contenido: &str) -> Vec<(usize, usize)> {
     lineas
 }
 
+/// Qué parte del fichero queda tras acotar por líneas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AlcanceDeLaLectura {
+    /// El fichero entero, sin rango pedido.
+    Entero,
+    /// Un rango de líneas que existe.
+    Rango,
+    /// Se pidió un rango y empieza después de la última línea (o el fichero está vacío).
+    TrasElFinal,
+}
+
 /// Resultado de acotar el contenido de un fichero por líneas.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct AcotacionLineas<'a> {
@@ -90,8 +108,7 @@ pub(super) struct AcotacionLineas<'a> {
     pub total_lineas: usize,
     pub linea_desde: usize,
     pub linea_hasta: usize,
-    pub acotado: bool,
-    pub fuera_de_rango: bool,
+    pub alcance: AlcanceDeLaLectura,
 }
 
 /// Acota el contenido por rango de líneas (base 1) preservando exactamente los bytes y finales de línea.
@@ -109,8 +126,11 @@ pub(super) fn acotar_por_lineas(
             total_lineas: 0,
             linea_desde: 1,
             linea_hasta: 0,
-            acotado: false,
-            fuera_de_rango: desde.is_some() || hasta.is_some(),
+            alcance: if desde.is_some() || hasta.is_some() {
+                AlcanceDeLaLectura::TrasElFinal
+            } else {
+                AlcanceDeLaLectura::Entero
+            },
         };
     }
 
@@ -121,8 +141,7 @@ pub(super) fn acotar_por_lineas(
             total_lineas,
             linea_desde: d,
             linea_hasta: d,
-            acotado: true,
-            fuera_de_rango: true,
+            alcance: AlcanceDeLaLectura::TrasElFinal,
         };
     }
 
@@ -144,29 +163,14 @@ pub(super) fn acotar_por_lineas(
         total_lineas,
         linea_desde: d,
         linea_hasta: h,
-        acotado: !es_completo,
-        fuera_de_rango: false,
+        alcance: if es_completo {
+            AlcanceDeLaLectura::Entero
+        } else {
+            AlcanceDeLaLectura::Rango
+        },
     }
 }
 
-/// Deja un fichero en condiciones de entrar en la conversación:
-/// - Empieza diciendo cuántas líneas tiene el fichero y, si se indicaron (`desde_linea`,
-///   `hasta_linea`), cuáles se muestran.
-/// - Con `numerar`, antepone a cada línea su número real; sin él, el texto va intacto.
-/// - Lo recorta al tope indicado si excede la capacidad configurada.
-/// - Si lo recortó, le dice al modelo cuánto ocupa de verdad, para que sepa que está viendo un trozo.
-///
-/// **El contenido va tal cual, y eso es deliberado: no lo sanees aquí.** Hubo una versión que
-/// le pasaba `neutralizar_marcas` por si el fichero llevaba líneas que fingieran ser marcas
-/// del arnés. Era defensa en profundidad redundante y cobraba un precio real. Redundante
-/// porque la defensa contra marcas falsas ya vive en `Canal::publicar`, que es el **único**
-/// punto por el que el texto del modelo entra al canal, y ahí sí es efectiva: lo que el modelo
-/// lea aquí no llega a un fichero compartido sin pasar por allí. Y el precio es que
-/// `neutralizar_marcas` normaliza los finales de línea (`\r\n` a `\n`) y se come el salto
-/// final, porque está hecha con `lines()` y `join("\n")`. Esta herramienta existe para que el
-/// modelo lea código **y lo reescriba**, en un proyecto de Windows: corromper así el fichero
-/// que tiene que manipular metería diferencias fantasma de CRLF en sus propuestas. Por la
-/// misma razón tampoco se usa `citar`, que le pondría un `> ` a cada línea.
 /// Si la lectura antepone a cada línea su número. Es un tipo propio y no un `bool`, que se
 /// perdería suelto entre los demás argumentos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,6 +192,24 @@ impl Numeracion {
     }
 }
 
+/// Deja un fichero en condiciones de entrar en la conversación:
+/// - Empieza diciendo cuántas líneas tiene el fichero y, si se indicaron (`desde_linea`,
+///   `hasta_linea`), cuáles se muestran.
+/// - Con `numerar`, antepone a cada línea su número real; sin él, el texto va intacto.
+/// - Lo recorta al tope indicado si excede la capacidad configurada.
+/// - Si lo recortó, le dice al modelo cuánto ocupa de verdad, para que sepa que está viendo un trozo.
+///
+/// **El contenido va tal cual, y eso es deliberado: no lo sanees aquí.** Hubo una versión que
+/// le pasaba `neutralizar_marcas` por si el fichero llevaba líneas que fingieran ser marcas
+/// del arnés. Era defensa en profundidad redundante y cobraba un precio real. Redundante
+/// porque la defensa contra marcas falsas ya vive en `Canal::publicar`, que es el **único**
+/// punto por el que el texto del modelo entra al canal, y ahí sí es efectiva: lo que el modelo
+/// lea aquí no llega a un fichero compartido sin pasar por allí. Y el precio es que
+/// `neutralizar_marcas` normaliza los finales de línea (`\r\n` a `\n`) y se come el salto
+/// final, porque está hecha con `lines()` y `join("\n")`. Esta herramienta existe para que el
+/// modelo lea código **y lo reescriba**, en un proyecto de Windows: corromper así el fichero
+/// que tiene que manipular metería diferencias fantasma de CRLF en sus propuestas. Por la
+/// misma razón tampoco se usa `citar`, que le pondría un `> ` a cada línea.
 pub(super) fn preparar_lectura(
     ruta: &str,
     contenido: &str,
@@ -198,7 +220,7 @@ pub(super) fn preparar_lectura(
 ) -> String {
     let acotacion = acotar_por_lineas(contenido, desde_linea, hasta_linea);
 
-    if acotacion.fuera_de_rango {
+    if acotacion.alcance == AlcanceDeLaLectura::TrasElFinal {
         return mensajes::rango_tras_el_final(ruta, acotacion.total_lineas, acotacion.linea_desde);
     }
 
@@ -209,16 +231,16 @@ pub(super) fn preparar_lectura(
     };
     let (trozo, recortado) = recortar_por_caracter(&mostrado, tope);
 
-    let mut salida = if acotacion.acotado {
+    let mut salida = if acotacion.alcance == AlcanceDeLaLectura::Rango {
         encabezado_del_rango(ruta, &acotacion)
     } else {
         encabezado_del_fichero_entero(ruta, acotacion.total_lineas)
     };
     salida.push_str(trozo);
 
-    if recortado {
+    if recortado == Recorte::Recortado {
         let ocupacion = mostrado.len();
-        if acotacion.acotado {
+        if acotacion.alcance == AlcanceDeLaLectura::Rango {
             salida.push_str(&mensajes::fragmento_recortado(ruta, ocupacion, tope));
         } else {
             salida.push_str(&mensajes::fichero_recortado(ruta, ocupacion, tope));
@@ -295,7 +317,7 @@ mod pruebas {
         let contenido = "€".repeat(tope);
 
         let (trozo, recortado) = recortar_por_caracter(&contenido, tope);
-        assert!(recortado);
+        assert_eq!(recortado, Recorte::Recortado);
         assert_eq!(trozo.chars().count(), cabida);
         assert!(trozo.len() <= tope);
         assert!(trozo.chars().all(|c| c == '€'));
@@ -305,7 +327,7 @@ mod pruebas {
     fn texto_que_no_supera_tope_no_se_recorta() {
         let texto = "código corto";
         let (trozo, recortado) = recortar_por_caracter(texto, 100);
-        assert!(!recortado);
+        assert_eq!(recortado, Recorte::Entero);
         assert_eq!(trozo, texto);
     }
 
@@ -343,8 +365,7 @@ mod pruebas {
         assert_eq!(acotado.total_lineas, 4);
         assert_eq!(acotado.linea_desde, 2);
         assert_eq!(acotado.linea_hasta, 3);
-        assert!(acotado.acotado);
-        assert!(!acotado.fuera_de_rango);
+        assert_eq!(acotado.alcance, AlcanceDeLaLectura::Rango);
     }
 
     #[test]
@@ -360,7 +381,7 @@ mod pruebas {
     fn acotar_por_lineas_avisa_si_desde_supera_total() {
         let contenido = "uno\ndos\n";
         let acotado = acotar_por_lineas(contenido, Some(10), None);
-        assert!(acotado.fuera_de_rango);
+        assert_eq!(acotado.alcance, AlcanceDeLaLectura::TrasElFinal);
         assert_eq!(acotado.total_lineas, 2);
 
         let preparado = preparar_lectura(

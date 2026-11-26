@@ -1,19 +1,19 @@
 //! El cierre de un encargo que atendió el modelo: la propuesta de poda del buzón de origen, la
-//! publicación del desenlace con lo que pasa en la cola y en el latido, y la liberación de sus
-//! veredictos y sus reservas.
+//! publicación del desenlace con lo que pasa en el registro de encargos y en el latido, y la
+//! liberación de sus veredictos y sus reservas.
 
 use super::pasada::Pasada;
 use super::publicacion::{self, propuesta_de_poda_publicada, relativa_a};
 use super::respuesta::responder;
-use super::sin_atender::dejar_pendiente;
+use super::sin_atender::{dejar_pendiente, fecha_de_ahora};
 use super::{Motores, ResumenPasada};
 use crate::arnes::ciclo::Desenlace;
 use crate::arnes::herramientas::Repertorio;
-use crate::arnes::pendientes::Cola;
+use crate::arnes::registro_de_encargos::{EstadoDelEncargo, RegistroDeEncargos};
 use crate::protocolo::encargo::Forma;
 use crate::protocolo::{
     guardar_propuesta_poda, nombre_del_buzon, proponer_poda_por_cierre, retirar_reserva, Encargo,
-    Latido,
+    Latido, ResumenLeido,
 };
 use crate::terminal::Terminal;
 use chrono::Local;
@@ -77,6 +77,9 @@ pub(super) struct Atendido<'e> {
     /// Cuántas propuestas había en el repertorio antes de este encargo: el repertorio es de toda
     /// la pasada, y sin esto no se sabría si fue este encargo el que entregó algo.
     pub(super) propuestas_antes: usize,
+    /// Lo leído que dice su respuesta: el de la pasada o, si leyó una cancelación que llegó
+    /// mientras se atendía, el que llega hasta ella.
+    pub(super) leido: &'e ResumenLeido,
 }
 
 /// Publica el desenlace de un encargo y deja la cola y el latido según cómo fue. Lo publicado
@@ -88,27 +91,32 @@ pub(super) fn publicar_el_desenlace(
     repertorio: &Repertorio,
     atendido: &Atendido,
     cuerpo: &str,
-    cola: &mut Cola,
+    fichas: &mut RegistroDeEncargos,
     resumen: &mut ResumenPasada,
 ) {
     let Atendido {
         encargo,
         desenlace,
         propuestas_antes,
+        leido,
     } = *atendido;
     let terminal = pasada.ajustes.terminal;
     // Decisión 6: el desenlace sale al canal únicamente por `Canal::publicar`.
     match responder(
         pasada.canal,
         cuerpo,
-        pasada.leido,
+        leido,
         encargo,
         pasada.recibido_a,
         terminal,
     ) {
         Ok(()) => {
             resumen.atendidos += 1;
-            cola.quitar(encargo);
+            let estado = match desenlace {
+                Desenlace::Cancelado { .. } => EstadoDelEncargo::Cancelado,
+                _ => EstadoDelEncargo::Atendido,
+            };
+            super::guardado::terminar_y_guardar(pasada, fichas, encargo, estado, &fecha_de_ahora());
             // Publicada la respuesta, ya no se está atendiendo: antes seguía en «atendiendo»
             // hasta el final de la vuelta. Si hay otro encargo, su latido de atención lo
             // sobrescribe enseguida. Un encargo abortado deja el latido en error, que es lo que
@@ -127,7 +135,7 @@ pub(super) fn publicar_el_desenlace(
             // y se sigue con el siguiente.
             resumen.fallidos += 1;
             let propuestas_de_este_encargo = repertorio.propuestas().len() - propuestas_antes;
-            if publicacion::fallo_de_cierre_pierde_el_encargo(
+            if super::decisiones::fallo_de_cierre_pierde_el_encargo(
                 propuestas_de_este_encargo,
                 repertorio.veredictos_no_publicados().len(),
             ) {
@@ -138,7 +146,7 @@ pub(super) fn publicar_el_desenlace(
                     &fallo,
                 ));
                 let motivo = publicacion::motivo_sin_publicar(&fallo);
-                dejar_pendiente(pasada, cola, encargo, &motivo, resumen);
+                dejar_pendiente(pasada, fichas, encargo, &motivo, resumen);
             } else {
                 // Las propuestas de este encargo ya habían salido al canal al entregarse
                 // (`Canal::publicar_entrega`, incidencia C2): lo único que no se pudo publicar
@@ -151,7 +159,13 @@ pub(super) fn publicar_el_desenlace(
                         &fallo,
                     ),
                 );
-                cola.quitar(encargo);
+                super::guardado::terminar_y_guardar(
+                    pasada,
+                    fichas,
+                    encargo,
+                    EstadoDelEncargo::Atendido,
+                    &fecha_de_ahora(),
+                );
             }
         }
     }
@@ -184,6 +198,7 @@ mod pruebas {
 
     fn encargo(forma: Forma) -> Encargo {
         Encargo {
+            latido: None,
             de: "claude.md".to_string(),
             texto: "## Para Programator\nHaz algo.\n".to_string(),
             forma,

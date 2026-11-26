@@ -29,6 +29,14 @@ pub(super) fn motivo_para_el_modelo(solicitada: &str, fallo: &Error) -> String {
     }
 }
 
+/// No se pudo mirar si el proyecto ya tenía la propuesta tal cual.
+pub(super) fn mensaje_fallo_buscar_lo_que_ya_estaba(fallo: &Error) -> String {
+    format!(
+        "⚠️ No se pudo mirar si el proyecto ya tenía un fichero igual a la propuesta: {fallo}. Si \
+         lo tenía, se deducirá que se aceptó aunque nadie la haya aplicado."
+    )
+}
+
 /// Redacta el aviso emitido cuando la propuesta se ha guardado en disco pero falla su publicación intermedia en el canal.
 pub(super) fn mensaje_fallo_publicar_entrega(nombre_propuesta: &str, error: &Error) -> String {
     format!(
@@ -37,6 +45,15 @@ pub(super) fn mensaje_fallo_publicar_entrega(nombre_propuesta: &str, error: &Err
          El arnés intentará adjuntar su veredicto al cierre del encargo; el trabajo no se ha perdido.\n\
          Qué hacer: no es necesario reintentar la acción ahora; si el fallo persiste al concluir el encargo, \
          comprueba los permisos del canal."
+    )
+}
+
+/// No se pudo anotar la propuesta en el registro de entregas: la propuesta sí está en disco.
+pub(super) fn mensaje_fallo_anotar_entrega(nombre_propuesta: &str, error: &Error) -> String {
+    format!(
+        "⚠️ No se pudo anotar «{nombre_propuesta}» en el registro de entregas: {error}.\n\
+         Consecuencia: la propuesta SÍ está escrita en disco en la carpeta de candidatos, pero \
+         Programator no la contará entre lo que ya entregó."
     )
 }
 

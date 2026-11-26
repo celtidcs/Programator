@@ -144,7 +144,7 @@ pub(super) fn pasar_con_el_motor<'a>(
 fn modelo_que_se_mide(config: &Config) -> Resultado<(PathBuf, String)> {
     let Some(modelo) = &config.motor.modelo else {
         return Err(Error::ConfiguracionDelMotor(
-            "el banco necesita «motor.modelo» para saber qué modelo mide".into(),
+            crate::banco::mensajes::banco_sin_modelo(),
         ));
     };
     let ruta_modelo = config.resolver(modelo);

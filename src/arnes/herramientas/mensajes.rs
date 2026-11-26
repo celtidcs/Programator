@@ -90,7 +90,7 @@ pub(super) fn verificacion_pendiente(cual: &str, motivo: &str) -> String {
 /// La línea con que la respuesta cuenta una denegación: la herramienta y la primera línea del
 /// motivo, recortada como las demás líneas del canal.
 pub(super) fn denegada_para_el_canal(herramienta: &str, motivo: &str) -> String {
-    let primera = motivo.lines().map(str::trim).find(|l| !l.is_empty());
+    let primera = crate::protocolo::encargo::primera_linea_con_texto(motivo);
     let primera = crate::arnes::verificacion::en_una_linea_del_canal(primera.unwrap_or_default());
     format!("`{herramienta}`: {primera}")
 }
@@ -98,6 +98,14 @@ pub(super) fn denegada_para_el_canal(herramienta: &str, motivo: &str) -> String 
 /// Una propuesta cuyo nombre la sacaría de la carpeta de las propuestas.
 pub(super) fn saldria_de_la_carpeta(nombre: &str, carpeta: &str) -> String {
     format!("«{nombre}» saldría de {carpeta}/")
+}
+
+/// El nombre pedido cae en la carpeta reservada del archivo de propuestas.
+pub(super) fn nombre_reservado(nombre: &str, reservada: &str) -> String {
+    format!(
+        "«{nombre}» no vale: «{reservada}» está reservado para las propuestas ya resueltas. Usa \
+         otro nombre"
+    )
 }
 
 /// No se pudo crear la carpeta de la propuesta.
@@ -108,6 +116,11 @@ pub(super) fn carpeta_no_creada(causa: &std::io::Error) -> String {
 /// No se pudo escribir la propuesta.
 pub(super) fn propuesta_no_escrita(causa: &dyn std::fmt::Display) -> String {
     format!("no se pudo escribir: {causa}")
+}
+
+/// Una propuesta en la lista de lo que dejó un encargo: su nombre y su veredicto en pocas palabras.
+pub(super) fn linea_de_lo_que_dejo(nombre: &str, veredicto: &str) -> String {
+    format!("«{nombre}», {veredicto}")
 }
 
 /// La propuesta quedó escrita, con lo que dijo su comprobación.

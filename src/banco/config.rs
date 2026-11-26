@@ -134,14 +134,10 @@ impl ConfigBanco {
 
     fn validar(&self) -> Resultado<()> {
         if self.semillas.is_empty() {
-            return Err(Error::Banco(
-                "banco.toml: «semillas» no puede estar vacía".into(),
-            ));
+            return Err(Error::Banco(super::mensajes::sin_semillas()));
         }
         if self.tiempo_maximo_encargo_segundos == 0 {
-            return Err(Error::Banco(
-                "banco.toml: «tiempo_maximo_encargo_segundos» tiene que ser mayor que 0".into(),
-            ));
+            return Err(Error::Banco(super::mensajes::sin_tiempo_por_encargo()));
         }
         if self.comprobacion_retirada.is_some() {
             return Err(Error::Banco(
@@ -261,8 +257,8 @@ mod pruebas {
     }
 
     fn config_de_programator(capas: &str) -> Config {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("programator.toml");
         std::fs::write(
             &ruta,
             format!("[motor]\nmodelo = \"modelos/x.gguf\"\ncapas_gpu = {capas}\n"),

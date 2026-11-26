@@ -66,12 +66,12 @@ mod pruebas {
     /// configuración en general: de eso depende el consejo que acompaña al fallo de arranque.
     #[test]
     fn una_carpeta_que_no_existe_es_un_fallo_de_la_carpeta() {
-        let dir = tempfile::tempdir().unwrap();
-        let toml = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let toml = carpeta.path().join("programator.toml");
         std::fs::write(&toml, "[motor]\nmodelo = \"m.gguf\"\n").unwrap();
         let config = Config::cargar(&toml).unwrap();
         let orden = Orden::Ejecutar {
-            ruta: Some(dir.path().join("no-existe").display().to_string()),
+            ruta: Some(carpeta.path().join("no-existe").display().to_string()),
         };
 
         let fallo = resolver_la_carpeta(&orden, &config).unwrap_err();

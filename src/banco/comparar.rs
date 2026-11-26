@@ -109,6 +109,7 @@ mod pruebas {
             maquina_de_comprobacion: None,
             capas_en_gpu: Some(34),
             vram_ocupada_mib: None,
+            vram_calculada_mib: None,
             segundos_de_carga: None,
             tarjeta: None,
             sistema_de_comprobacion: None,
@@ -127,9 +128,13 @@ mod pruebas {
         }
     }
 
-    /// Una tanda guardada en `<dir>/resultados/<nombre>` con una pasada de E01 y la semilla 42.
-    fn tanda_en_disco(dir: &Path, nombre: &str, conversacion: &str) -> std::path::PathBuf {
-        let carpeta = dir.join(CARPETA_DE_RESULTADOS).join(nombre);
+    /// Una tanda guardada en `<carpeta>/resultados/<nombre>` con una pasada de E01 y la semilla 42.
+    fn tanda_en_disco(
+        carpeta_temporal: &Path,
+        nombre: &str,
+        conversacion: &str,
+    ) -> std::path::PathBuf {
+        let carpeta = carpeta_temporal.join(CARPETA_DE_RESULTADOS).join(nombre);
         std::fs::create_dir_all(&carpeta).unwrap();
         let guardadas = PasadasDeTanda {
             tanda: datos(),
@@ -158,9 +163,9 @@ mod pruebas {
 
     #[test]
     fn dos_tandas_guardadas_con_la_misma_conversacion_son_repeticion() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = tanda_en_disco(dir.path(), "a", "{\"vuelta\":1}\n");
-        let b = tanda_en_disco(dir.path(), "b", "{\"vuelta\":1}\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let a = tanda_en_disco(carpeta.path(), "a", "{\"vuelta\":1}\n");
+        let b = tanda_en_disco(carpeta.path(), "b", "{\"vuelta\":1}\n");
 
         let veredicto = comparacion::comparar(
             &leer_para_comparar(&a, AGENTE).unwrap(),
@@ -172,9 +177,9 @@ mod pruebas {
 
     #[test]
     fn una_conversacion_distinta_en_disco_no_es_repeticion() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = tanda_en_disco(dir.path(), "a", "{\"vuelta\":1}\n");
-        let b = tanda_en_disco(dir.path(), "b", "{\"vuelta\":1,\"otro\":true}\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let a = tanda_en_disco(carpeta.path(), "a", "{\"vuelta\":1}\n");
+        let b = tanda_en_disco(carpeta.path(), "b", "{\"vuelta\":1,\"otro\":true}\n");
 
         let veredicto = comparacion::comparar(
             &leer_para_comparar(&a, AGENTE).unwrap(),
@@ -186,8 +191,8 @@ mod pruebas {
 
     #[test]
     fn una_carpeta_fuera_de_resultados_no_se_toma_por_una_tanda() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
-        assert!(leer_para_comparar(dir.path(), AGENTE).is_err());
+        assert!(leer_para_comparar(carpeta.path(), AGENTE).is_err());
     }
 }

@@ -29,6 +29,16 @@ pub fn juntar_con_y(mut partes: Vec<String>) -> String {
     }
 }
 
+/// Los nombres entre comillas latinas y separados por comas: «a», «b». La única forma de listar
+/// nombres de ficheros o de modelos en los avisos.
+pub fn lista_entre_comillas(nombres: &[String]) -> String {
+    nombres
+        .iter()
+        .map(|nombre| format!("«{nombre}»"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;

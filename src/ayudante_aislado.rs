@@ -26,28 +26,52 @@ pub fn mensaje_del_fallo(motivo: &str) -> String {
     format!("Programator no pudo aislar la orden, y no la lanzó: {motivo}")
 }
 
+/// El ayudante se lanzó sin orden detrás.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn mensaje_sin_orden() -> String {
+    "no hay orden que lanzar".to_string()
+}
+
+/// La señal de arranque no llegó por la entrada estándar.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn mensaje_sin_senal(causa: &dyn std::fmt::Display) -> String {
+    format!("no llegó la señal de arranque: {causa}")
+}
+
+/// La orden aislada no se pudo lanzar.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn mensaje_no_se_lanzo(programa: &str, causa: &dyn std::fmt::Display) -> String {
+    format!("no se pudo lanzar «{programa}»: {causa}")
+}
+
+/// Fuera de Windows no hay ayudante aislado.
+#[cfg_attr(windows, allow(dead_code))]
+fn mensaje_solo_en_windows() -> String {
+    "--lanzar-aislado solo existe en Windows".to_string()
+}
+
 /// Hace el trabajo del ayudante y devuelve el código con que debe salir, o el motivo del fallo.
 #[cfg(windows)]
 pub fn lanzar_aislado(orden: &[String]) -> Result<i32, String> {
     use std::io::Read;
 
     let Some((programa, argumentos)) = orden.split_first() else {
-        return Err("no hay orden que lanzar".into());
+        return Err(mensaje_sin_orden());
     };
     let mut senal = [0u8; 1];
     std::io::stdin()
         .read_exact(&mut senal)
-        .map_err(|causa| format!("no llegó la señal de arranque: {causa}"))?;
+        .map_err(|causa| mensaje_sin_senal(&causa))?;
     crate::aislamiento_windows::bajar_mi_integridad().map_err(|fallo| fallo.to_string())?;
     let estado = std::process::Command::new(programa)
         .args(argumentos)
         .status()
-        .map_err(|causa| format!("no se pudo lanzar «{programa}»: {causa}"))?;
+        .map_err(|causa| mensaje_no_se_lanzo(programa, &causa))?;
     Ok(estado.code().unwrap_or(CODIGO_AISLAMIENTO_FALLIDO))
 }
 
 /// Fuera de Windows no hay integridad baja: la configuración ya lo rechaza antes de llegar aquí.
 #[cfg(not(windows))]
 pub fn lanzar_aislado(_orden: &[String]) -> Result<i32, String> {
-    Err("--lanzar-aislado solo existe en Windows".into())
+    Err(mensaje_solo_en_windows())
 }

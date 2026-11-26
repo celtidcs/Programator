@@ -2,6 +2,7 @@
 //! capa, solo cómo leer un entero, una cadena o saltarse un array sin perder la posición ni superar
 //! el presupuesto de bytes de la cabecera.
 
+use super::mensajes;
 use super::{
     error_gguf, LIMITE_BYTES_METADATOS, LIMITE_ELEMENTOS_LISTA, LIMITE_LONGITUD_CADENA,
     LIMITE_PROFUNDIDAD_LISTA,
@@ -80,9 +81,7 @@ impl<R: Read> LectorAcotado<R> {
         if self.leidos.saturating_add(adicionales) > LIMITE_BYTES_METADATOS {
             return Err(error_gguf(
                 ruta,
-                format!(
-                    "la cabecera supera el límite de {LIMITE_BYTES_METADATOS} bytes admitidos para metadatos"
-                ),
+                mensajes::cabecera_demasiado_grande(LIMITE_BYTES_METADATOS),
             ));
         }
         Ok(())
@@ -92,7 +91,7 @@ impl<R: Read> LectorAcotado<R> {
         self.comprobar_presupuesto(destino.len() as u64, ruta)?;
         self.interior
             .read_exact(destino)
-            .map_err(|causa| error_gguf(ruta, format!("fichero truncado o ilegible: {causa}")))?;
+            .map_err(|causa| error_gguf(ruta, mensajes::fichero_truncado(&causa)))?;
         self.leidos += destino.len() as u64;
         Ok(())
     }
@@ -151,27 +150,14 @@ impl<R: Read> LectorAcotado<R> {
         if longitud > LIMITE_LONGITUD_CADENA {
             return Err(error_gguf(
                 ruta,
-                format!(
-                    "una cadena de la cabecera dice medir {longitud} bytes, más del límite de {LIMITE_LONGITUD_CADENA}"
-                ),
+                mensajes::cadena_demasiado_larga(longitud, LIMITE_LONGITUD_CADENA),
             ));
         }
-        let longitud = usize::try_from(longitud).map_err(|_| {
-            error_gguf(
-                ruta,
-                format!(
-                    "una cadena de la cabecera dice medir {longitud} bytes, más de lo que cabe"
-                ),
-            )
-        })?;
+        let longitud = usize::try_from(longitud)
+            .map_err(|_| error_gguf(ruta, mensajes::cadena_que_no_cabe(longitud)))?;
         let mut bytes = vec![0u8; longitud];
         self.leer_exacto(&mut bytes, ruta)?;
-        String::from_utf8(bytes).map_err(|causa| {
-            error_gguf(
-                ruta,
-                format!("una cadena de la cabecera no es UTF-8 válido: {causa}"),
-            )
-        })
+        String::from_utf8(bytes).map_err(|causa| error_gguf(ruta, mensajes::cadena_no_utf8(&causa)))
     }
 
     /// Lee y consume un valor de tipo `tipo`, descartando su contenido si no es una cadena o un
@@ -218,25 +204,21 @@ impl<R: Read> LectorAcotado<R> {
         if profundidad >= LIMITE_PROFUNDIDAD_LISTA {
             return Err(error_gguf(
                 ruta,
-                format!(
-                    "arrays anidados más allá del límite de {LIMITE_PROFUNDIDAD_LISTA} niveles"
-                ),
+                mensajes::listas_demasiado_hondas(LIMITE_PROFUNDIDAD_LISTA),
             ));
         }
         let codigo_elemento = self.leer_u32(ruta)?;
         let tipo_elemento = TipoValor::desde_codigo(codigo_elemento).ok_or_else(|| {
             error_gguf(
                 ruta,
-                format!("tipo de elemento de array desconocido: código {codigo_elemento}"),
+                mensajes::tipo_de_elemento_desconocido(codigo_elemento),
             )
         })?;
         let longitud = self.leer_u64(ruta)?;
         if longitud > LIMITE_ELEMENTOS_LISTA {
             return Err(error_gguf(
                 ruta,
-                format!(
-                    "un array de la cabecera dice tener {longitud} elementos, más del límite de {LIMITE_ELEMENTOS_LISTA}"
-                ),
+                mensajes::lista_demasiado_larga(longitud, LIMITE_ELEMENTOS_LISTA),
             ));
         }
         for _ in 0..longitud {

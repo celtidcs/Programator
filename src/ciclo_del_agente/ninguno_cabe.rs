@@ -22,7 +22,7 @@ pub(super) fn avisar_de_que_ninguno_cabe(
             .carpeta_de_instalacion()
             .join(programator::config::NOMBRE_DEL_FICHERO_DE_CONFIGURACION),
         &disponibles.carpeta,
-        !identidades.is_empty(),
+        programator::revision::mensajes::PermisoDeRevision::de(&identidades),
     );
     let linea = linea_para_varios(
         &identidades,

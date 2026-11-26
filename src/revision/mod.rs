@@ -34,6 +34,7 @@ pub mod redaccion;
 pub mod reponer;
 pub mod retirada;
 pub mod traer;
+pub mod uso_real;
 
 use crate::unidades::BYTES_POR_MIB;
 /// Las fechas de la API son ISO 8601 (`2025-12-09T21:25:08.000Z`); el día son los diez primeros

@@ -127,8 +127,8 @@ mod pruebas {
 
     #[test]
     fn sin_fichero_no_hay_nada_probado_y_se_guarda_donde_se_lee() {
-        let dir = tempfile::tempdir().unwrap();
-        let mes = dir.path().join("2026-11");
+        let carpeta = tempfile::tempdir().unwrap();
+        let mes = carpeta.path().join("2026-11");
         assert_eq!(cargar(&mes).unwrap(), Probados::default());
 
         let mut probados = Probados::default();

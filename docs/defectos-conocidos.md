@@ -5,7 +5,7 @@ Este documento recoge de forma explícita los defectos conocidos, las pruebas no
 
 Pruebas ignoradas en la suite automatizada
 
-La suite mecánica del proyecto contiene cinco pruebas marcadas con el atributo «#[ignore]». No se ejecutan durante la verificación ordinaria con cargo test porque tocan la máquina real: las dos primeras, el hardware; y las tres últimas, la seguridad de Windows (tests/aislamiento_windows.rs: dos crean procesos de integridad baja, una de ellas en una carpeta donde el usuario solo tiene permiso de modificar, y la tercera lee la tabla de conexiones de un Job; se ejecutan a mano en una máquina Windows de pruebas, nunca en el equipo de uso diario, con la orden cargo test --test aislamiento_windows -- --ignored). La de la carpeta donde solo se puede modificar no reproduce de verdad ese caso si se lanza desde una sesión de administrador: los privilegios de tomar posesión y de restaurar le dan el permiso que le faltaría, y pasa aunque se quite la corrección; sin ellos, pero con el testigo aún en integridad alta, falla incluso con ella, porque la carpeta la crea un administrador. Para medirlo haría falta un usuario estándar cuya carpeta solo tenga permiso de modificar. La corrección está comprobada en uso real, en una unidad con ese permiso. Las de hardware son las dos que siguen.
+La suite mecánica del proyecto contiene seis pruebas marcadas con el atributo «#[ignore]». No se ejecutan durante la verificación ordinaria con cargo test porque tocan la máquina real: las dos primeras, el hardware; y las cuatro últimas, la seguridad de Windows (tests/aislamiento_windows.rs: dos crean procesos de integridad baja, una de ellas en una carpeta donde el usuario solo tiene permiso de modificar; la tercera lee la tabla de conexiones de un Job, y la cuarta comprueba que las órdenes aisladas de preparar corren con integridad baja; se ejecutan a mano en una máquina Windows de pruebas, nunca en el equipo de uso diario, con la orden cargo test --test aislamiento_windows -- --ignored). La de la carpeta donde solo se puede modificar no reproduce de verdad ese caso si se lanza desde una sesión de administrador: los privilegios de tomar posesión y de restaurar le dan el permiso que le faltaría, y pasa aunque se quite la corrección; sin ellos, pero con el testigo aún en integridad alta, falla incluso con ella, porque la carpeta la crea un administrador. Para medirlo haría falta un usuario estándar cuya carpeta solo tenga permiso de modificar. La corrección está comprobada en uso real, en una unidad con ese permiso. Las de hardware son las dos que siguen.
 
 La primera es la detección de tarjeta gráfica, en src/motor/hardware.rs. La prueba imprime_lo_que_ve_describir_gpu_en_esta_maquina imprime lo que Programator ve de la tarjeta, su nombre y su memoria VRAM total y libre, preguntando a nvidia-smi y, en Windows, si no contesta, al sistema gráfico. No comprueba nada por sí sola: lo que imprime se compara a mano con lo que se sabe de la tarjeta, y por eso solo tiene sentido en una máquina con tarjeta gráfica, no en los entornos de integración continua, que no tienen ninguna.
 
@@ -40,70 +40,81 @@ Lo normal es que la orden falle sola, porque el programa no encuentra la red. En
 Cómo mitigarlo: las comprobaciones de un encargo no deben poder pasar con la conexión fallida. Si el encargo pide conectarse, el servidor de sus pruebas comprueba que la conexión llegó. Ese servidor sí se alcanza: unshare --net crea el 127.0.0.1 del espacio apagado, y el envoltorio de serie lo enciende antes de cada orden; si no puede encenderlo, el banco lo dice al empezar. Hoy ningún encargo lo necesita.
 
 
-En Linux funciona el programa, pero no se ha probado contra una tarjeta gráfica
+En Linux, el motor no lleva .exe
 
-Programator se desarrolla en Windows. Desde la versión 0.10.0 el código también compila y pasa la norma mecánica completa en Linux, y eso no es una suposición ni una comprobación de escritorio: la suite entera se ha ejecutado dentro de un Linux de verdad, con el formato verificado, clippy sin un solo aviso y todas las pruebas en verde. La integración continua lo repite en los dos sistemas en cada cambio, así que si alguna vez dejara de cumplirse, se vería.
-
-Lo que esa comprobación no demuestra es que funcione contra una tarjeta gráfica, porque la máquina donde se ejecuta no tiene ninguna. Nadie ha arrancado todavía Programator en un Linux con una NVIDIA delante.
-
-En concreto, lo que queda sin probar en esa combinación son dos cosas. La primera es la medición de la tarjeta, que en los dos sistemas sale de preguntarle a nvidia-smi y descomponer su respuesta; en Windows, además, si nvidia-smi no contesta, se pregunta al sistema gráfico. El análisis de esa respuesta sí está probado, con ocho casos que cubren una tarjeta, dos tarjetas, líneas ilegibles, tarjetas que dicen no saber su memoria y cifras incoherentes; lo que no se ha probado en Linux es la llamada en sí, contra un controlador instalado. La segunda es el motor de inferencia cargando el modelo en una tarjeta bajo Linux, que es la misma junta que en Windows tampoco verifica ninguna prueba automática.
-
-Consecuencia para quien lo use: si la medición fallara, Programator diría que no sabe cuánta memoria hay, que es la respuesta prudente y no un fallo. A partir de ahí no podría decidir cuántas capas del modelo caben en la tarjeta.
-
-Cómo sortearlo mientras tanto: fijar el número de capas a mano en lugar de dejarlo en automático, cambiando la clave capas_gpu de la sección [motor] de "auto" a un número. Conviene empezar bajo e ir subiendo hasta que el motor se queje por falta de memoria. La siguiente orden, escrita en la terminal, enseña exactamente lo que Programator intenta leer:
-
-nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader,nounits
-
-Si ahí sale algo razonable y el programa sigue diciendo que no sabe, es un defecto y conviene contarlo.
-
-Hay un detalle de la configuración que se olvida con facilidad: la clave binario de la sección [motor] viene escrita para Windows y termina en .exe. En Linux hay que dejarla en herramientas/llama-server, sin extensión, o el arranque fallará diciendo que no encuentra el motor.
+Programator funciona en Linux con una tarjeta NVIDIA: se probó el 25/11/2026 en Ubuntu 26.04 con una GTX 1070 Ti y el llama-server oficial con CUDA 12.8, con las mismas pruebas manuales que en Windows. Hay un detalle de la configuración que se olvida con facilidad: la clave binario de la sección [motor] viene escrita para Windows y termina en .exe. En Linux hay que dejarla en herramientas/llama-server, sin extensión, o el arranque fallará diciendo que no encuentra el motor.
 
 
 Limitaciones estructurales pendientes de evolución
 
-Durante una jornada de trabajo real sobre un proyecto de verdad (23 de septiembre de 2026), se identificaron cuatro limitaciones del protocolo de comunicación que actualmente permanecen pospuestas para no alterar de forma abrupta el contrato con los agentes coordinadores.
+Durante una jornada de trabajo real sobre un proyecto de verdad (23 de septiembre de 2026), se identificaron cuatro limitaciones del protocolo de comunicación. La primera, que un encargo se reconocía por dónde caía en el buzón y no por sí mismo, quedó resuelta en la 1.2.0 con el registro de encargos, sin cambiar lo que escriben los agentes. La segunda, que no había prioridades ni forma de cancelar un encargo, también quedó resuelta en la 1.2.0, con el límite que se explica más abajo. La tercera y la cuarta, que el modelo no sabía qué había entregado antes y que nadie llevaba la cuenta de en qué quedaba cada propuesta, se resolvieron en la 1.2.0 con el registro de entregas, también con un límite, que se explica al final.
 
 
-Limitación 1: detección de encargos por marcas en archivo continuo en lugar de archivos individuales
+Cancelar un encargo en curso solo surte efecto entre dos llamadas al modelo
 
-Actualmente, los encargos se redactan dentro del archivo de buzón de cada agente, en una línea que lleva Para Programator, con la P mayúscula y en cualquier punto de la línea, o, en la forma antigua que se sigue atendiendo, bajo un encabezado «## Para Programator». El arnés rastrea los avances de lectura midiendo el desplazamiento en bytes dentro del archivo, junto con una huella de lo ya leído.
+Desde la 1.2.0 un encargo puede llevar una línea Prioridad: alta, normal o baja, y quien encargó algo puede retirarlo con un encargo nuevo, Para Programator: cancelar: seguido de la etiqueta, el nombre o el identificador del encargo. Si el encargo aún no se ha atendido, se cancela sin gastar el modelo. Si ya se está atendiendo, el ciclo es de un solo hilo y una respuesta del modelo puede tardar minutos: Programator no corta una respuesta a medias, sino que comprueba si hay una cancelación antes de cada llamada al modelo y, si la hay, no hace la siguiente.
 
-Consecuencia para el usuario: si un usuario o agente edita el contenido anterior de un buzón en lugar de añadir una sección al final, o si la herramienta de edición altera los saltos de línea del archivo, la huella deja de cuadrar y Programator relee el buzón entero, y vuelve a atender los encargos que sigan escritos en él aunque ya los hubiera atendido. Y si lo nuevo se añade dentro de una sección ya leída, sin su propia línea Para Programator, se pasa por alto.
+Consecuencia para el usuario: entre que se escribe la cancelación y que el encargo se corta pasa, como mucho, lo que tarde la respuesta del modelo que está en marcha. Lo que el encargo ya hubiera dejado como propuestas sigue en disco y la respuesta lo enumera.
 
-Cómo mitigarlo: redactar siempre cada nuevo encargo al final del buzón, en una intervención nueva que empiece con su «LATIDO:» y con su línea Para Programator, sin modificar el historial previo.
-
-
-Limitación 2: sin prioridades ni cancelación de encargos
-
-Desde la 1.0.0 hay una cola de pendientes, .gestor/<agente>/pendientes.toml, para los encargos que no se pudieron atender porque el modelo no cargó a tiempo, el motor se cerró o la entrega no se pudo publicar; cada pasada atiende primero lo que hay en ella, y un encargo sale de la cola al publicarse su respuesta o al cerrarse tras ciclo.intentos_por_encargo intentos fallidos. Dentro de una pasada, los encargos se agrupan por el modelo que piden, empezando por el que ya está cargado, para cargar lo menos posible. Fuera de eso, los encargos se atienden uno tras otro, en el orden en que se detectan. No existe un mecanismo para definir prioridades, cancelar un encargo que ya ha entrado en procesamiento o reorganizar la cola a mano.
-
-Consecuencia para el usuario: si se publica un encargo erróneo, el modelo consumirá tiempo de inferencia en la tarjeta gráfica hasta completar el ciclo o agotar el cupo de herramientas, demorando la atención de encargos posteriores.
-
-Cómo mitigarlo: verificar cuidadosamente los requisitos y el alcance de cada encargo antes de publicarlo en el buzón.
-
-Un caso concreto de esta limitación: si en la misma vuelta hay encargos para el modelo y una petición de revisión, y el modelo todavía está cargando, la revisión también espera a que termine la carga, aunque no lo necesita. La pasada se corta sin dar por leído el canal para no perder ningún encargo, y contestar la revisión en ese momento haría que se contestara dos veces. La espera es la de la carga del modelo, de unos segundos a un par de minutos. Queda para una versión posterior.
+Cómo mitigarlo: no hace falta hacer nada; si la espera importa, el modelo se puede detener cerrando Programator, y el encargo queda pendiente para la siguiente vez.
 
 
-Limitación 3: falta de catálogo persistente de entregas previas
+Un buzón escrito a trozos lentos puede dar un encargo cortado
 
-Programator inicia cada ciclo de inferencia sin memoria de las sesiones anteriores. El arnés no mantiene un índice estructurado de las propuestas aprobadas o entregadas en días previos, por lo que el modelo no conoce las funciones o tipos que él mismo generó en encargos anteriores a menos que se le indique leer los archivos correspondientes.
+Programator no lee las novedades de un buzón que ha cambiado hace menos de un segundo y medio (la clave buzon_estable_tras_ms de la sección ciclo): las deja para la vuelta siguiente y atiende los demás buzones. Así no toma por encargo una línea que su dueño todavía está escribiendo. Pero si quien escribe se queda parado a media línea más tiempo que ese plazo, lo cortado se lee como un encargo nuevo y se atiende, y después se atiende también el entero, porque los dos se reconocen por su texto. Y a la inversa, un buzón que cambia sin parar, a menos de un segundo y medio cada vez, no se lee mientras siga así.
 
-Consecuencia para el usuario: el modelo puede sugerir nombres duplicados o reinventar estructuras ya entregadas si el encargo no le instruye explícitamente a inspeccionar el código preexistente mediante la herramienta leer_fichero.
+Consecuencia para el usuario: con un editor que guarda a cada pulsación, o con un agente que escribe su bandeja a trozos y con pausas, puede llegar una respuesta a un encargo a medias, seguida de la del entero.
 
-Cómo mitigarlo: incluir en las instrucciones del encargo la indicación de comprobar los archivos relevantes del proyecto antes de escribir código nuevo.
+Cómo mitigarlo: escribir cada intervención de una vez, como hacen los agentes, o subir buzon_estable_tras_ms en programator.toml.
 
 
-Limitación 4: seguimiento de estado por propuesta ausente
+Un cierre brusco justo después de responder puede repetir una respuesta
 
-Las propuestas generadas por el modelo se depositan en el directorio .gestor/candidatos/programator/ como archivos aislados. El sistema no dispone de un registro que clasifique automáticamente si una propuesta fue finalmente aceptada, rechazada o sustituida por una versión posterior.
+Cuando Programator responde un encargo, primero publica la respuesta en su buzón y después anota en su registro de encargos que ya está atendido, las dos cosas en el mismo instante. Si el programa muere justo entre las dos escrituras, por ejemplo porque se cierra desde el Administrador de tareas o se va la luz, al volver a abrirlo el encargo sigue constando como pendiente y se atiende otra vez. El orden es deliberado: es preferible responder dos veces que perder una respuesta, porque lo primero se ve y lo segundo no. Lo que resuelve Programator sin el modelo, como una cancelación o una revisión de modelos, va en el orden contrario, porque repetirlo no aporta nada: si muere en medio, el encargo queda atendido sin respuesta.
 
-Consecuencia para el usuario: el directorio de candidatos acumula propuestas a lo largo de las sesiones, obligando al equipo humano o al agente coordinador a realizar un seguimiento manual de cuáles han sido integradas en el proyecto.
+Consecuencia para el usuario: en el peor caso, una segunda respuesta al mismo encargo, con su propuesta duplicada. Hasta la 1.2.0 la ventana era toda la vuelta del ciclo, que con varios encargos podía durar minutos; ahora son unos milisegundos.
 
-Cómo mitigarlo: limpiar periódicamente el directorio de candidatos o archivar las propuestas que hayan sido definitivamente descartadas tras la verificación.
+Cómo mitigarlo: no hace falta hacer nada. Si llega a pasar, basta con ignorar la segunda respuesta y su propuesta.
+
+
+Preparar una propuesta baja dependencias sin aislar
+
+Las órdenes previas de la sección preparacion, las que bajan dependencias antes de compilar, se lanzan sin aislar y con red, porque las aisladas no la tienen. Programator no puede saber qué hace una orden: confía en que las previas solo descarguen, como cargo fetch, que no ejecuta los build.rs.
+
+Consecuencia para el usuario: una orden previa que ejecute código del proyecto, como un npm install con scripts de instalación, lo ejecuta con red y con todos los permisos del usuario, fuera del aislamiento.
+
+Cómo mitigarlo: poner como previas solo órdenes que descargan sin ejecutar nada (cargo fetch; npm install con --ignore-scripts) y dejar lo demás en las aisladas.
+
+
+En Windows, las órdenes aisladas de preparar tienen red
+
+En Windows, el aislamiento de las órdenes de preparar es el de las pruebas ocultas del banco: integridad baja y un Job. La integridad baja impide escribir fuera de la copia, pero no corta la red. Programator vigila las conexiones de los procesos del Job y las cuenta en la respuesta, pero no las impide.
+
+Consecuencia para el usuario: el código de una propuesta preparada en Windows puede conectarse a la red mientras se compila o se prueba, aunque no pueda escribir en el resto del equipo.
+
+Cómo mitigarlo: leer en la respuesta la línea de los intentos de conexión, y preparar en Linux, donde las órdenes aisladas no tienen red, lo que no sea de fiar.
+
+
+Lo que el modelo dice de su propia entrega no es fiable
+
+En la prueba de uso real de la 1.2.0, el 26/11/2026, Devstral Small 2 24B atendió nueve encargos con el modelo. Cinco entregas cumplieron todo lo medido, pero el modelo falló de cinco maneras que Programator no puede evitar, porque son de lo que escribe. Escribió en un fichero .py la lista de cumplimiento en prosa en lugar del código. Validó fechas con int(), que deja pasar signos, espacios, guiones bajos y cifras que no son ASCII, y aseguró que solo aceptaba la forma AAAA-MM-DD. En una función que recorta textos usó tres puntos en lugar del carácter de puntos suspensivos que se le pidió y devolvía textos más largos de lo pedido. En un encargo de dos partes hizo la primera y publicó sin hacer la segunda. Y en varias respuestas dijo que cumplía todos los requisitos o que lo había verificado compilando, cosa que no puede hacer.
+
+Consecuencia para el usuario: la respuesta del modelo no basta para saber si la entrega sirve.
+
+Cómo mitigarlo: creer las líneas que escribe el arnés, que nombran cada propuesta con su comprobación y dicen si el encargo no dejó ninguna; configurar un comprobador para la extensión; pedir los requisitos en una lista; y probar la entrega antes de aceptarla.
+
+
+Programator solo deduce que se aceptó una propuesta copiada tal cual
+
+Desde la 1.2.0 cada propuesta queda anotada en .gestor/programator/entregas.toml, con su encargo, el modelo que la escribió, su comprobación y su estado, y el modelo recibe en cada encargo la lista de lo que ya entregó y en qué quedó. El estado lo dice el agente que encargó, con Para Programator: aceptada: o rechazada: seguido del nombre de la propuesta, y si no dice nada lo deduce Programator: la da por aceptada si encuentra en el proyecto un fichero con el mismo nombre y el mismo contenido, sin contar los saltos de línea, y por sustituida si después entregó otra para el mismo nombre. Lo que pasa treinta días sin nada queda sin confirmar, y lo resuelto sale de la carpeta de candidatos a su subcarpeta archivo.
+
+Consecuencia para el usuario: una propuesta que se aplica con cambios, o con otro nombre, no se puede deducir. Se queda como pendiente de revisión hasta que el agente lo diga o pasen los treinta días, y mientras tanto el modelo la ve como «propuesto, sin confirmar» y no como aceptada. La búsqueda de lo aceptado recorre el proyecto, y para no hacerlo en cada pasada se hace como mucho una vez cada sesenta minutos, así que una copia tarda hasta una hora en notarse.
+
+Cómo mitigarlo: decir en qué quedó cada propuesta, como explica la línea con que termina su aviso en el canal. El intervalo de la búsqueda y el plazo de los treinta días se cambian en la sección entregas de programator.toml.
 
 
 Incidencia sobre la primera pasada del canal
 
 Conviene dejar constancia de que una incidencia observada en aquella jornada de uso real ha quedado descartada como defecto. La guía de usuario sugería erróneamente que en cada inicio del programa se ignoraban los textos preexistentes en el canal.
 
-Hoy la instantánea inicial solo se plantea al arrancar sin registro de lectura, .gestor/<agente>/lectura.json, y solo descarta lo anterior si Programator ya respondió alguna vez en ese canal, es decir, si su propio buzón tiene alguna intervención con su LATIDO. En un proyecto donde nunca ha respondido, que es el caso de un proyecto nuevo, la instantánea no da nada por visto y Programator atiende todo encargo dirigido a él, aunque se publicara antes de arrancar; da igual abrir antes el agente o Programator. El caso en que lo anterior se descarta es, por tanto, el de un canal con respuestas previas cuyo registro de lectura se ha perdido. En cualquier arranque con registro, Programator conserva su memoria de lectura y atiende cualquier encargo publicado con posterioridad a la última revisión.
+Hoy la instantánea inicial solo se plantea al arrancar sin registro de lectura, .gestor/<agente>/lectura.json, y solo descarta lo anterior si Programator ya respondió alguna vez en ese canal, es decir, si su propio buzón tiene alguna intervención con su LATIDO. En un proyecto donde nunca ha respondido, que es el caso de un proyecto nuevo, la instantánea no da nada por visto y Programator atiende todo encargo dirigido a él, aunque se publicara antes de arrancar; da igual abrir antes el agente o Programator. El caso en que lo anterior se descarta es, por tanto, el de un canal con respuestas previas cuyo registro de lectura se ha perdido; lo descartado queda anotado como visto en el registro de encargos, y no se atiende aunque su buzón cambie después. En cualquier arranque con registro, Programator conserva su memoria y atiende cualquier encargo que no tenga ficha, se escriba donde se escriba dentro del buzón.

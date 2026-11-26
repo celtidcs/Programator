@@ -38,12 +38,15 @@ mod pruebas {
 
     #[test]
     fn la_misma_carpeta_aunque_se_escriba_distinto_es_la_instalacion() {
-        let dir = tempfile::tempdir().unwrap();
-        let con_rodeo = dir.path().join("sub").join("..");
-        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let con_rodeo = carpeta.path().join("sub").join("..");
+        std::fs::create_dir(carpeta.path().join("sub")).unwrap();
 
-        assert_eq!(donde(dir.path(), dir.path()), Donde::EnLaInstalacion);
-        assert_eq!(donde(&con_rodeo, dir.path()), Donde::EnLaInstalacion);
+        assert_eq!(
+            donde(carpeta.path(), carpeta.path()),
+            Donde::EnLaInstalacion
+        );
+        assert_eq!(donde(&con_rodeo, carpeta.path()), Donde::EnLaInstalacion);
     }
 
     /// El aviso no enseña la forma larga de la ruta, con «\\?\» delante.

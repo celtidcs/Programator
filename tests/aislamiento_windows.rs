@@ -125,3 +125,74 @@ fn se_marca_una_carpeta_donde_el_usuario_solo_puede_modificar() {
 
     assert!(el_ayudante_puede_escribir(&marcada.join("dentro.txt")));
 }
+
+/// F6 de la 1.2.0: las órdenes aisladas de `preparar:` corren con integridad baja. Escriben en la
+/// copia, que va marcada, y no fuera; las previas, sin aislar, sí escriben fuera.
+#[test]
+#[ignore = "crea procesos de integridad baja: se ejecuta a mano en una máquina Windows de pruebas, nunca en el equipo de uso diario"]
+fn las_ordenes_aisladas_de_la_preparacion_corren_con_integridad_baja() {
+    use programator::arnes::preparacion::ordenes::{ejecutar, Ejecucion};
+    use programator::banco::comprobacion::lanzador::{FormaDeLanzar, LanzadorLocal, Topes};
+    use programator::config::preparacion::OrdenesDeLaExtension;
+    use std::time::Duration;
+
+    let copia = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let fuera = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    marcar_carpeta_de_integridad_baja(copia.path()).unwrap();
+    let escribir = |variable: &str| -> Vec<String> {
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("Set-Content -LiteralPath $env:{variable} -Value x"),
+        ]
+        .map(String::from)
+        .to_vec()
+    };
+    let ordenes = OrdenesDeLaExtension {
+        previas: vec![escribir("DESTINO_PREVIA")],
+        formatear: Vec::new(),
+        aisladas: vec![escribir("DESTINO_DENTRO"), escribir("DESTINO_FUERA")],
+    };
+    let ruta = |carpeta: &Path, nombre: &str| carpeta.join(nombre).display().to_string();
+    let previas = [(
+        "DESTINO_PREVIA".to_string(),
+        ruta(fuera.path(), "previa.txt"),
+    )];
+    let aisladas = [
+        (
+            "DESTINO_DENTRO".to_string(),
+            ruta(copia.path(), "dentro.txt"),
+        ),
+        (
+            "DESTINO_FUERA".to_string(),
+            ruta(fuera.path(), "aislada.txt"),
+        ),
+    ];
+    let ejecucion = Ejecucion {
+        copia: copia.path(),
+        fichero: &copia.path().join("dentro.txt"),
+        tiempo: Duration::from_secs(60),
+        entorno_de_las_previas: &previas,
+        entorno_de_las_aisladas: &aisladas,
+        envoltorio: &[],
+    };
+    let ayudante = std::path::PathBuf::from(env!("CARGO_BIN_EXE_programator"));
+    let mut sin_aislar = LanzadorLocal::nuevo(FormaDeLanzar::Directa);
+    let mut aislado = LanzadorLocal::nuevo(FormaDeLanzar::Aislada(Topes {
+        procesos_maximos: 8,
+        memoria_maxima_mib: 512,
+        vigilar_red_cada: Duration::from_millis(50),
+    }))
+    .con_el_ayudante(ayudante);
+
+    let resultados = ejecutar(&ordenes, &ejecucion, &mut sin_aislar, &mut aislado);
+
+    assert!(resultados[0].paso(), "{:?}", resultados[0]);
+    assert!(fuera.path().join("previa.txt").exists());
+    assert!(resultados[1].paso(), "{:?}", resultados[1]);
+    assert!(copia.path().join("dentro.txt").exists());
+    assert!(!resultados[2].paso(), "{:?}", resultados[2]);
+    assert!(!fuera.path().join("aislada.txt").exists());
+}

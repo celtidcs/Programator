@@ -42,11 +42,13 @@ pub fn evaluar_reintento(
     espera: Duration,
 ) -> DecisionReintento {
     match salud {
-        EstadoServidor::NoDisponible => DecisionReintento::Abortar(mensajes::motor_no_disponible(
-            reintentos_realizados,
-            salud,
-            error,
-        )),
+        EstadoServidor::NoDisponible | EstadoServidor::RechazaLaClave => {
+            DecisionReintento::Abortar(mensajes::motor_no_disponible(
+                reintentos_realizados,
+                salud,
+                error,
+            ))
+        }
         EstadoServidor::Listo | EstadoServidor::Cargando => {
             if reintentos_realizados < max_reintentos {
                 DecisionReintento::Reintentar {
@@ -68,6 +70,24 @@ pub fn evaluar_reintento(
 mod pruebas {
     use super::*;
     use crate::error::Error;
+
+    /// Sin reintentos en bucle: otra llamada con la misma clave daría el mismo 401.
+    #[test]
+    fn un_motor_que_rechaza_la_clave_no_se_reintenta() {
+        let error = Error::MotorSinRespuesta("401".into());
+        let decision = evaluar_reintento(
+            0,
+            2,
+            EstadoServidor::RechazaLaClave,
+            &error,
+            Duration::from_millis(50),
+        );
+
+        assert!(
+            matches!(decision, DecisionReintento::Abortar(_)),
+            "{decision:?}"
+        );
+    }
 
     #[test]
     fn primer_fallo_con_servidor_listo_decide_reintentar() {

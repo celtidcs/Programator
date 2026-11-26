@@ -57,6 +57,12 @@ pub enum Error {
 
     #[error("cola de encargos pendientes: {0}")]
     Pendientes(String),
+
+    #[error("registro de encargos: {0}")]
+    RegistroDeEncargos(String),
+
+    #[error("registro de entregas: {0}")]
+    RegistroDeEntregas(String),
 }
 
 /// Alias corto para los resultados del proyecto.

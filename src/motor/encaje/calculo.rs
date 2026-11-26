@@ -3,32 +3,84 @@
 //! reparto. No abre ningún fichero: la lectura del GGUF la hace quien llama.
 
 use super::cache::{kv_por_capa, tipo_de_cache};
+use super::en_cpu::{self, pesos_en_la_tarjeta, EnCpu};
 use super::reparto::{coste_de_la_decision, decidir};
 use super::Encaje;
 use crate::config::MotorConfig;
+use crate::motor::gguf::tensores::PesoDelModelo;
 use crate::motor::gguf::{InformeGguf, MetadatosModelo};
 use crate::motor::mensajes;
 use crate::unidades::BYTES_POR_MIB;
 
+/// Lo que sale del cálculo: la decisión, lo que costó tomarla y qué parte de las capas se deja en
+/// la CPU.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Calculo {
+    pub(super) encaje: Encaje,
+    /// El coste en bytes que le costó a `decidir` tomar la decisión, `None` cuando no hubo pesos
+    /// con los que calcular ninguno: `redactar_aviso` necesita esa cifra y no tiene acceso a los
+    /// pesos ni a la caché.
+    pub(super) coste: Option<u64>,
+    pub(super) en_cpu: EnCpu,
+}
+
 /// Calcula el caché y decide. Cada dato que falte produce un `NoCalculable` con **ese** motivo
-/// escrito, no uno genérico: quien lea el aviso tiene que saber qué arreglar. Devuelve, junto con
-/// la decisión, el coste en bytes que le costó a `decidir` tomarla —`None` cuando no hubo pesos con
-/// los que calcular ninguno—, porque `redactar_aviso` necesita esa cifra y no tiene acceso a
-/// `informe.pesos` ni a `kv`.
+/// escrito, no uno genérico: quien lea el aviso tiene que saber qué arreglar.
+///
+/// Lo que va a la CPU se descuenta antes de decidir: la caché entera con `cache_en_cpu`, y de cada
+/// capa los expertos o las FFN que digan `expertos_en_cpu` y `ffn_en_cpu`, con `"auto"` ya
+/// resuelto.
 pub(super) fn calcular_con_el_informe(
     config: &MotorConfig,
     informe: &InformeGguf,
     vram_libre: u64,
-) -> (Encaje, Option<u64>) {
+) -> Calculo {
     let kv = match kv_de_todas_las_conversaciones(config, &informe.metadatos) {
         Ok(kv) => kv,
-        Err(motivo) => return (Encaje::NoCalculable { motivo }, None),
+        Err(motivo) => {
+            return Calculo {
+                encaje: Encaje::NoCalculable { motivo },
+                coste: None,
+                en_cpu: EnCpu::sin_calcular(&config.reparto),
+            }
+        }
     };
+    // Con la caché en la memoria del equipo, las capas de la tarjeta no reservan nada para ella.
+    let kv_en_la_tarjeta = if config.reparto.cache_en_cpu { 0 } else { kv };
 
     let margen = config.margen_vram_mib.saturating_mul(BYTES_POR_MIB);
-    let encaje = decidir(&informe.pesos, kv, vram_libre, margen);
-    let coste = coste_de_la_decision(&encaje, &informe.pesos, kv);
-    (encaje, coste)
+    let decide = |pesos: &PesoDelModelo| decidir(pesos, kv_en_la_tarjeta, vram_libre, margen);
+    let en_cpu = en_cpu::resolver(&config.reparto, &informe.pesos, decide);
+    let pesos = pesos_en_la_tarjeta(&informe.pesos, en_cpu);
+    let encaje = decide(&pesos);
+    let coste = coste_de_la_decision(&encaje, &pesos, kv_en_la_tarjeta);
+    Calculo {
+        encaje,
+        coste,
+        en_cpu,
+    }
+}
+
+/// Los bytes de tarjeta que el cálculo atribuye a una carga ya hecha: `capas` capas en la tarjeta,
+/// como se pasan a `--n-gpu-layers`, y `en_cpu` en la CPU. Es la cifra con la que se compara lo
+/// que ocupó de verdad. `None` si falta algún dato para calcularla.
+pub(super) fn vram_de_la_carga(
+    config: &MotorConfig,
+    informe: &InformeGguf,
+    capas: u32,
+    en_cpu: EnCpu,
+) -> Option<u64> {
+    let kv = kv_de_todas_las_conversaciones(config, &informe.metadatos).ok()?;
+    let kv_en_la_tarjeta = if config.reparto.cache_en_cpu { 0 } else { kv };
+    let pesos = pesos_en_la_tarjeta(&informe.pesos, en_cpu);
+    let total = u32::try_from(pesos.por_capa.len()).ok()?;
+    // El mismo convenio que `capas_para_llama`: pasar del número de capas sube también la salida.
+    let encaje = match capas {
+        0 => return Some(0),
+        n if n > total => Encaje::Completo { total },
+        en_gpu => Encaje::Parcial { en_gpu, total },
+    };
+    coste_de_la_decision(&encaje, &pesos, kv_en_la_tarjeta)
 }
 
 /// Bytes de caché KV por capa, sumadas todas las conversaciones en paralelo. `Err` trae el motivo,
@@ -37,15 +89,18 @@ fn kv_de_todas_las_conversaciones(
     config: &MotorConfig,
     metadatos: &MetadatosModelo,
 ) -> Result<u64, String> {
-    let cache = tipo_de_cache(&config.cache_kv)
-        .ok_or_else(|| mensajes::cache_desconocida(&config.cache_kv))?;
+    let claves = tipo_de_cache(config.cache_k())
+        .ok_or_else(|| mensajes::cache_desconocida(config.cache_k()))?;
+    let valores = tipo_de_cache(config.cache_v())
+        .ok_or_else(|| mensajes::cache_desconocida(config.cache_v()))?;
     let (embedding, cabezas, cabezas_kv) = geometria_de_atencion(metadatos)?;
 
     let kv_de_una_secuencia = kv_por_capa(
         config.contexto as u64,
         cabezas_kv,
         embedding / cabezas,
-        cache,
+        claves,
+        valores,
     )
     .ok_or_else(|| mensajes::CACHE_DESBORDADA.to_string())?;
 

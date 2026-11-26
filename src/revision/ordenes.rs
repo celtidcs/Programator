@@ -75,8 +75,24 @@ pub fn proponer_con(config: &Config, modelo_en_uso: Option<String>) -> Resultado
         carpeta_de_revisiones: config.resolver(&config.revision.carpeta),
         modelo_en_uso,
         ahora: chrono::Local::now().naive_local(),
+        entregas: ruta_de_las_entregas_del_proyecto(config),
     };
     proponer::proponer_y_escribir(&entorno)
+}
+
+/// El registro de entregas del proyecto donde trabaja Programator: el de la carpeta de
+/// `[carpeta] ruta` o, si no la hay, el de la última carpeta en que se trabajó.
+fn ruta_de_las_entregas_del_proyecto(config: &Config) -> Option<std::path::PathBuf> {
+    let carpeta = config
+        .carpeta
+        .ruta
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| crate::carpeta::recordada(config.carpeta_de_instalacion()))?;
+    Some(crate::arnes::espacio::ruta_de_las_entregas(
+        &carpeta,
+        &config.agente.nombre,
+    ))
 }
 
 /// Retira un modelo de la carpeta de modelos, que no puede ser el de la configuración.

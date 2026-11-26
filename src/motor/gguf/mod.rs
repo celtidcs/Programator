@@ -13,6 +13,7 @@
 //! pertenece cada uno.
 
 mod lector;
+mod mensajes;
 pub(super) mod tensores;
 
 use crate::error::{Error, Resultado};
@@ -85,18 +86,12 @@ struct Cabecera {
 fn leer_cabecera_de<R: Read>(lector: &mut LectorAcotado<R>, ruta: &Path) -> Resultado<Cabecera> {
     let magia = lector.leer_u32(ruta)?;
     if magia != MAGIA_GGUF {
-        return Err(error_gguf(
-            ruta,
-            "número mágico inválido: no empieza por «GGUF», no es un fichero GGUF".into(),
-        ));
+        return Err(error_gguf(ruta, mensajes::sin_numero_magico()));
     }
 
     let version = lector.leer_u32(ruta)?;
     if !VERSIONES_SOPORTADAS.contains(&version) {
-        return Err(error_gguf(
-            ruta,
-            format!("versión de GGUF desconocida: {version}"),
-        ));
+        return Err(error_gguf(ruta, mensajes::version_desconocida(version)));
     }
 
     // Antes se descartaba. Ahora hace falta, y se acota aquí mismo: la prueba del contador
@@ -105,9 +100,7 @@ fn leer_cabecera_de<R: Read>(lector: &mut LectorAcotado<R>, ruta: &Path) -> Resu
     if numero_tensores > LIMITE_NUMERO_TENSORES {
         return Err(error_gguf(
             ruta,
-            format!(
-                "la cabecera dice tener {numero_tensores} tensores, más del límite de {LIMITE_NUMERO_TENSORES}"
-            ),
+            mensajes::demasiados_tensores(numero_tensores, LIMITE_NUMERO_TENSORES),
         ));
     }
 
@@ -115,9 +108,7 @@ fn leer_cabecera_de<R: Read>(lector: &mut LectorAcotado<R>, ruta: &Path) -> Resu
     if numero_claves > LIMITE_NUMERO_CLAVES {
         return Err(error_gguf(
             ruta,
-            format!(
-                "la cabecera dice tener {numero_claves} pares clave-valor, más del límite de {LIMITE_NUMERO_CLAVES}"
-            ),
+            mensajes::demasiadas_claves(numero_claves, LIMITE_NUMERO_CLAVES),
         ));
     }
 
@@ -128,7 +119,7 @@ fn leer_cabecera_de<R: Read>(lector: &mut LectorAcotado<R>, ruta: &Path) -> Resu
         let tipo = TipoValor::desde_codigo(codigo_tipo).ok_or_else(|| {
             error_gguf(
                 ruta,
-                format!("tipo de valor desconocido para la clave «{clave}»: código {codigo_tipo}"),
+                mensajes::tipo_de_valor_desconocido(&clave, codigo_tipo),
             )
         })?;
         let valor = lector.consumir_valor(tipo, 0, ruta)?;
@@ -188,12 +179,7 @@ pub fn leer_modelo(ruta: &Path) -> Resultado<InformeGguf> {
     let fin_absoluto = pesos
         .inicio_datos
         .checked_add(pesos.fin_datos)
-        .ok_or_else(|| {
-            error_gguf(
-                ruta,
-                "el bloque de datos desborda al sumar su inicio y su tamaño".into(),
-            )
-        })?;
+        .ok_or_else(|| error_gguf(ruta, mensajes::bloque_de_datos_desbordado()))?;
     let tamano_fichero = std::fs::metadata(ruta)
         .map_err(|causa| Error::Lectura {
             ruta: ruta.to_path_buf(),

@@ -1,15 +1,14 @@
-//! Funciones puras de formateo y composición de textos para el canal.
+//! Funciones puras de formateo y composición de textos para el canal. Lo que se decide antes de
+//! redactar (qué entrega pedía un encargo, si se reatiende tras un fallo de cierre) está en
+//! `decisiones`.
 //!
 //! Separa la lógica de formateo de la persistencia y del ciclo:
 //! - Añade la cola de comprobación de propuestas del arnés si las hay.
 //! - Añade avisos de contexto si se sobrepasa el umbral configurado.
 //! - Compone el resumen de lo leído describiendo hasta qué latido se leyó cada buzón ajeno.
 
+use super::decisiones::{avisa_sin_entrega, EntregaPedida, VERBO_DE_PROPUESTA};
 use crate::protocolo::ResumenLeido;
-
-/// El verbo con el que el modelo deja un fichero. Un encargo que no lo nombra no pide ningún
-/// fichero.
-const VERBO_DE_PROPUESTA: &str = crate::arnes::ficha::verbo::ESCRIBIR_PROPUESTA;
 
 /// Las herramientas con que el modelo entrega, como se nombran en los avisos: «publicar» o
 /// «escribir_propuesta», sacadas de sus constantes para que el texto no se quede atrás si cambian.
@@ -18,30 +17,6 @@ fn herramientas_de_entrega() -> String {
         "«{}» o «{VERBO_DE_PROPUESTA}»",
         crate::arnes::ficha::verbo::PUBLICAR
     )
-}
-
-/// Si el encargo pide dejar un fichero: nombra el verbo de las propuestas.
-pub(super) fn entrega_pedida(texto_del_encargo: &str) -> EntregaPedida {
-    if texto_del_encargo.contains(VERBO_DE_PROPUESTA) {
-        EntregaPedida::Fichero
-    } else {
-        EntregaPedida::Libre
-    }
-}
-
-/// Qué entrega pide un encargo. Es un tipo propio y no un `bool`, para que cada caso tenga nombre.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum EntregaPedida {
-    /// Nombra `escribir_propuesta`: una respuesta en texto no basta.
-    Fichero,
-    /// No pide nada concreto: si el modelo responde en texto, esa es la entrega.
-    Libre,
-}
-
-/// Si un encargo que terminó sin herramientas de entrega merece el aviso: cuando pedía un fichero
-/// o cuando el modelo no dijo nada. Si no pedía fichero y respondió en texto, esa es su entrega.
-pub(super) fn avisa_sin_entrega(pedida: EntregaPedida, texto: &str) -> bool {
-    pedida == EntregaPedida::Fichero || texto.trim().is_empty()
 }
 
 /// El aviso en la terminal de un encargo que terminó sin invocar ninguna herramienta de entrega.
@@ -95,7 +70,74 @@ pub(super) fn cuerpo_base_desenlace(
         }
         crate::arnes::ciclo::Desenlace::Abortado(motivo)
         | crate::arnes::ciclo::Desenlace::FueraDePlazo(motivo) => motivo.clone(),
+        crate::arnes::ciclo::Desenlace::Cancelado {
+            a_peticion_de,
+            propuestas,
+            ..
+        } => aviso_cancelado_en_curso(a_peticion_de, propuestas),
     }
+}
+
+/// Lo que dejó un encargo que publicó, como lo cuenta el arnés y no el modelo: cada propuesta con
+/// su nombre en disco y su veredicto, o que no dejó ninguna. Uso real del 26/11: la respuesta del
+/// modelo nombró «fechas.py», que no compilaba, y la entrega buena era «fechas-002.py»; en otro
+/// encargo publicó sin dejar el fichero que se le pedía y nadie lo dijo.
+pub(super) fn lo_que_dejo_el_encargo(lineas: &[String]) -> String {
+    if lineas.is_empty() {
+        return "Este encargo no dejó ninguna propuesta: si pedía un fichero, no está.".to_string();
+    }
+    format!(
+        "Lo que dejó este encargo, según el arnés: {}.",
+        lineas.join("; ")
+    )
+}
+
+/// El aviso de que el encargo ya se había atendido y se vuelve a atender porque cambió su texto.
+pub(super) fn aviso_de_reatencion() -> String {
+    "Segunda atención: el texto de este encargo cambió después de atenderlo, y se ha vuelto a \
+     atender entero."
+        .to_string()
+}
+
+/// La respuesta de un encargo cancelado antes de su primera llamada al modelo: no llegó a empezar.
+/// Es la misma que la de una cancelación de lo que aún esperaba.
+pub(super) fn aviso_cancelado_sin_empezar(nombre: &str) -> String {
+    crate::arnes::cancelacion::respuesta(
+        nombre,
+        &crate::arnes::cancelacion::Resolucion::Cancelados(vec![nombre.to_string()]),
+    )
+}
+
+/// Lo leído, con el buzón `buzon` ya leído hasta `contenido`: la respuesta a un encargo cancelado
+/// leyó la cancelación, que llegó después de empezar la pasada (uso real del 26/11: su LEÍDO se
+/// quedaba en el latido anterior).
+pub(super) fn con_lo_leido_despues(
+    leido: &ResumenLeido,
+    buzon: &str,
+    contenido: &str,
+) -> ResumenLeido {
+    let hasta = hasta_donde_se_leyo(contenido);
+    let mut entradas = leido.entradas.clone();
+    match entradas.iter_mut().find(|(nombre, _)| nombre == buzon) {
+        Some(entrada) => entrada.1 = hasta,
+        None => entradas.push((buzon.to_string(), hasta)),
+    }
+    ResumenLeido { entradas }
+}
+
+/// La respuesta de un encargo que se canceló mientras se atendía: quién lo pidió y lo que ya
+/// había dejado en disco, que no se borra.
+pub(super) fn aviso_cancelado_en_curso(a_peticion_de: &str, propuestas: &[String]) -> String {
+    let dejado = if propuestas.is_empty() {
+        "No llegó a dejar ninguna propuesta.".to_string()
+    } else {
+        let lista = crate::arnes::ciclo::lista_entre_comillas(propuestas);
+        format!("Lo que ya había dejado sigue en disco, como propuestas de este encargo: {lista}.")
+    };
+    format!(
+        "Cancelado a petición de {a_peticion_de} mientras se atendía: se cortó antes de la \
+         siguiente llamada al modelo. {dejado}"
+    )
 }
 
 /// El aviso de un encargo cuya última respuesta cortó el motor. Dice que no fue el modelo quien
@@ -219,22 +261,6 @@ pub(super) fn mensaje_fallo_publicar_desenlace(
     )
 }
 
-/// ¿Debe el fallo al publicar el **cierre** de un encargo impedir que el registro avance?
-///
-/// Si el encargo entregó al menos una propuesta y todos sus veredictos ya habían salido al canal
-/// por la vía inmediata (`Canal::publicar_entrega` al escribir la propuesta, visto en uso
-/// real), el fallo se queda en el resumen de cierre: la entrega ya quedó anotada. Reatender
-/// el encargo solo produciría una segunda respuesta que contradice a la primera —exactamente lo que
-/// se vio en uso real, dos pasadas sobre el mismo encargo 027-bis, la segunda sin
-/// entrega y peor que la primera. Si no hubo ninguna propuesta (p. ej. `SinEntrega` o `Abortado`), o
-/// si queda algún veredicto sin publicar, el fallo sí pierde información real y hay que reintentar.
-pub(super) fn fallo_de_cierre_pierde_el_encargo(
-    propuestas_de_este_encargo: usize,
-    veredictos_pendientes: usize,
-) -> bool {
-    propuestas_de_este_encargo == 0 || veredictos_pendientes > 0
-}
-
 /// Redacta el aviso emitido cuando el cierre de un encargo no se pudo publicar, pero su entrega
 /// ya había quedado anotada en el canal y por eso el registro avanza de todos modos.
 pub(super) fn mensaje_fallo_publicar_cierre_con_entrega_ya_registrada(
@@ -253,6 +279,50 @@ pub(super) fn mensaje_fallo_publicar_cierre_con_entrega_ya_registrada(
 
 /// Redacta el aviso de un encargo de revisión cuyo resultado no se pudo publicar. El registro
 /// avanza igual, porque lo hecho está en disco y repetirlo serían horas de banco.
+/// No se pudo leer el registro de entregas para contarle al modelo lo que ya entregó.
+pub(super) fn mensaje_catalogo_sin_leer(fallo: &crate::error::Error) -> String {
+    format!(
+        "⚠️ No se pudo leer el registro de entregas ({fallo}): el modelo atiende el encargo sin \
+         saber lo que ya entregó en este proyecto."
+    )
+}
+
+/// No se pudo deducir en qué quedaron las propuestas: lo deducido se queda como estaba.
+pub(super) fn mensaje_entregas_sin_poner_al_dia(fallo: &crate::error::Error) -> String {
+    format!(
+        "⚠️ No se pudo poner al día el registro de entregas: {fallo}. Lo que ya estaba anotado \
+         sigue igual; se vuelve a intentar en la pasada siguiente."
+    )
+}
+
+/// No se pudo publicar la respuesta a una cancelación o a una confirmación: lo hecho sigue
+/// hecho.
+pub(super) fn mensaje_fallo_publicar_lo_resuelto(
+    solicitante: &str,
+    fallo: &crate::error::Error,
+) -> String {
+    format!(
+        "⚠️ No se pudo publicar en el canal la respuesta a la cancelación o la confirmación de \
+         «{solicitante}»: {fallo}.\nConsecuencia: lo cancelado o lo confirmado queda anotado y \
+         el encargo no se repite."
+    )
+}
+
+/// El registro de entregas no se pudo leer o guardar al confirmar una propuesta.
+/// No se pudieron borrar las copias de `preparar:` que sobran.
+pub(super) fn mensaje_copias_sin_limpiar(fallo: &crate::error::Error) -> String {
+    format!(
+        "⚠️ No se pudieron borrar las copias de preparar que ya sobran: {fallo}. Se vuelve a \
+         intentar en la pasada siguiente."
+    )
+}
+
+pub(super) fn mensaje_entregas_sin_leer(fallo: &crate::error::Error) -> String {
+    format!(
+        "⚠️ No se ha anotado nada: el registro de entregas no se pudo leer o guardar ({fallo})."
+    )
+}
+
 pub(super) fn mensaje_fallo_publicar_revision(
     solicitante: &str,
     fallo: &crate::error::Error,
@@ -359,12 +429,12 @@ pub(super) fn mensaje_fallo_publicar_aviso_pendiente(fallo: &crate::error::Error
 
 /// La línea de la terminal cuando la cola de pendientes no se pudo guardar: el registro de
 /// lectura no avanza, para que los encargos nuevos se vuelvan a detectar.
-pub(super) fn mensaje_cola_sin_guardar(fallo: &crate::error::Error) -> String {
+pub(super) fn mensaje_registro_de_encargos_sin_guardar(fallo: &crate::error::Error) -> String {
     format!(
-        "⚠️ No se pudo guardar la cola de encargos pendientes: {fallo}.\n\
-         Consecuencia: el registro de lectura no avanza, así que los encargos de esta vuelta se \
-         volverán a detectar; alguno puede recibir dos respuestas.\n\
-         Qué hacer: comprueba los permisos de la carpeta del agente en `.gestor/`."
+        "⚠️ No se pudo guardar el registro de encargos: {fallo}.\n\
+         Consecuencia: los encargos atendidos en esta vuelta cuyo estado no se guardó siguen \
+         pendientes en disco y se volverán a atender; alguno puede recibir dos respuestas.\n\
+         Qué hacer: comprueba los permisos de la carpeta «encargos» del agente en `.gestor/`."
     )
 }
 
@@ -502,27 +572,25 @@ mod pruebas {
     }
 
     #[test]
-    fn el_encargo_pide_fichero_si_nombra_escribir_propuesta() {
-        assert_eq!(
-            entrega_pedida("Para Programator: usa escribir_propuesta para a.rs"),
-            EntregaPedida::Fichero
-        );
-        assert_eq!(
-            entrega_pedida("Para Programator: ¿cuántas líneas tiene a.rs?"),
-            EntregaPedida::Libre
-        );
-        assert!(avisa_sin_entrega(EntregaPedida::Fichero, "texto"));
-        assert!(avisa_sin_entrega(EntregaPedida::Libre, " "));
-        assert!(!avisa_sin_entrega(EntregaPedida::Libre, "texto"));
-    }
-
-    #[test]
     fn cuerpo_base_desenlace_publicado_devuelve_cuerpo_tal_cual() {
         let desenlace = crate::arnes::ciclo::Desenlace::Publicado("Solución lista.".to_string());
         assert_eq!(
             cuerpo_base_desenlace(&desenlace, EntregaPedida::Fichero),
             "Solución lista."
         );
+    }
+
+    /// Los nombres van escritos aquí a propósito, sin sus constantes: son lo que lee el agente.
+    #[test]
+    fn los_avisos_sin_entrega_nombran_las_dos_herramientas() {
+        let nombres = "«publicar» o «escribir_propuesta»";
+        let desenlace = crate::arnes::ciclo::Desenlace::SinEntrega(String::new());
+
+        let terminal = aviso_sin_entrega_en_la_terminal("Claude 1");
+        let canal = cuerpo_base_desenlace(&desenlace, EntregaPedida::Libre);
+
+        assert!(terminal.contains(nombres), "{terminal}");
+        assert!(canal.contains(nombres), "{canal}");
     }
 
     #[test]
@@ -595,21 +663,6 @@ mod pruebas {
             "{aviso}"
         );
         assert!(aviso.contains("quedaron en disco"), "{aviso}");
-    }
-
-    #[test]
-    fn un_fallo_de_cierre_sin_propuestas_de_este_encargo_pierde_el_encargo() {
-        assert!(fallo_de_cierre_pierde_el_encargo(0, 0));
-    }
-
-    #[test]
-    fn un_fallo_de_cierre_con_veredictos_sin_publicar_pierde_el_encargo() {
-        assert!(fallo_de_cierre_pierde_el_encargo(1, 1));
-    }
-
-    #[test]
-    fn un_fallo_de_cierre_con_la_propuesta_ya_anotada_no_pierde_el_encargo() {
-        assert!(!fallo_de_cierre_pierde_el_encargo(1, 0));
     }
 
     #[test]

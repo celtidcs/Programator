@@ -2,6 +2,7 @@
 //! Esa ignorancia deliberada es lo que permite probar todo lo demás sin encender la GPU.
 
 pub mod cabida;
+pub mod clave;
 pub mod consumo;
 pub mod continuidad;
 pub mod declaracion;

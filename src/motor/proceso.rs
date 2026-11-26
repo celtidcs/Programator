@@ -14,10 +14,11 @@ mod salud;
 
 pub use cierre::registrar_cierre_ordenado;
 pub use instalacion::{revisar_motor, MotorInstalado};
-pub use salud::{hay_servidor, hay_servidor_url, EstadoServidor};
+pub use salud::{hay_servidor, hay_servidor_url, EstadoServidor, CABECERA_DE_LA_CLAVE};
 
 use crate::config::MotorConfig;
 use crate::error::{Error, Resultado};
+use crate::motor::clave::{ClaveDelMotor, VARIABLE_DE_LA_CLAVE};
 use crate::motor::mensajes;
 use cierre::{matar_y_esperar, registrar_para_cierre_ordenado, tomar_hijo, Compartido};
 use linea_de_arranque::linea_de_arranque;
@@ -31,6 +32,8 @@ pub struct ServidorLocal {
     hijo: Compartido,
     modelo: PathBuf,
     capas_gpu: u32,
+    /// Lo que se pidió dejar en la CPU al lanzarlo.
+    en_cpu: crate::motor::encaje::EnCpu,
     vram_libre_antes: Option<u64>,
     vram_ocupada_mib: Option<u64>,
 }
@@ -39,14 +42,18 @@ impl ServidorLocal {
     /// Lanza el servidor. Si el binario no existe, falla nombrando la ruta buscada.
     ///
     /// `capas_gpu` es la resolución ya calculada por `encaje::resolver`, no `config.capas_gpu`:
-    /// ver la documentación de `linea_de_arranque`. `vram_libre_antes` es la VRAM libre, en
-    /// bytes, medida justo antes de lanzarlo; con ella se calcula después lo que ocupa.
+    /// ver la documentación de `linea_de_arranque`; `en_cpu`, igual, con `"auto"` ya resuelto.
+    /// `vram_libre_antes` es la VRAM libre, en
+    /// bytes, medida justo antes de lanzarlo; con ella se calcula después lo que ocupa. `clave` es
+    /// la que exigirá el motor en cada petición.
     pub fn arrancar(
         config: &MotorConfig,
         binario: &Path,
         modelo: &Path,
         capas_gpu: u32,
+        en_cpu: crate::motor::encaje::EnCpu,
         vram_libre_antes: Option<u64>,
+        clave: &ClaveDelMotor,
     ) -> Resultado<Self> {
         if !binario.exists() {
             return Err(Error::ConfiguracionDelMotor(mensajes::sin_binario(binario)));
@@ -55,13 +62,13 @@ impl ServidorLocal {
         // La línea de arranque empieza siempre por el binario: se lanza el binario con el resto.
         // Antes se partía la lista y su rama vacía, que no puede darse, repetía el texto de «no se
         // encontró el binario».
-        let argumentos = linea_de_arranque(config, binario, modelo, capas_gpu);
-        let hijo = Command::new(binario)
-            .args(argumentos.iter().skip(1))
+        let argumentos = linea_de_arranque(config, binario, modelo, capas_gpu, en_cpu);
+        let hijo = orden_del_motor(binario, &argumentos, clave)
             .spawn()
             .map_err(|e| Error::ConfiguracionDelMotor(mensajes::no_se_lanzo(binario, &e)))?;
 
-        let servidor = Self::desde_hijo(hijo, modelo, capas_gpu, vram_libre_antes);
+        let mut servidor = Self::desde_hijo(hijo, modelo, capas_gpu, vram_libre_antes);
+        servidor.en_cpu = en_cpu;
         registrar_para_cierre_ordenado(&servidor.hijo);
         Ok(servidor)
     }
@@ -78,6 +85,7 @@ impl ServidorLocal {
             hijo: Arc::new(Mutex::new(Some(hijo))),
             modelo: modelo.to_path_buf(),
             capas_gpu,
+            en_cpu: crate::motor::encaje::EnCpu::default(),
             vram_libre_antes,
             vram_ocupada_mib: None,
         }
@@ -106,6 +114,11 @@ impl ServidorLocal {
         self.capas_gpu
     }
 
+    /// Las capas cuyos expertos y FFN se pidieron dejar en la CPU al lanzarlo.
+    pub fn en_cpu(&self) -> crate::motor::encaje::EnCpu {
+        self.en_cpu
+    }
+
     /// La VRAM libre, en bytes, justo antes de lanzarlo; `None` si no se pudo medir.
     pub fn vram_libre_antes(&self) -> Option<u64> {
         self.vram_libre_antes
@@ -130,9 +143,69 @@ impl Drop for ServidorLocal {
     }
 }
 
+/// La orden que lanza el motor, sin lanzarla. `Command::new` ya pone el binario como primer
+/// elemento de la línea del proceso, así que de la línea de arranque, que empieza por el binario,
+/// solo se pasa lo que le sigue: repetirlo daría a `llama-server` su propia ruta como argumento.
+///
+/// La clave va en el entorno del hijo y no en la línea: los argumentos de un proceso los puede ver
+/// cualquier usuario del equipo; su entorno, no.
+fn orden_del_motor(binario: &Path, linea: &[String], clave: &ClaveDelMotor) -> Command {
+    let mut orden = Command::new(binario);
+    orden
+        .args(linea.iter().skip(1))
+        .env(VARIABLE_DE_LA_CLAVE, clave.texto());
+    orden
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn la_orden_del_motor_no_repite_el_binario() {
+        let binario = Path::new("herramientas/llama-server.exe");
+        let linea = linea_de_arranque(
+            &config_de_prueba(),
+            binario,
+            Path::new("m.gguf"),
+            99,
+            crate::motor::encaje::EnCpu::default(),
+        );
+
+        let orden = orden_del_motor(binario, &linea, &ClaveDelMotor::de_texto("k"));
+        let argumentos: Vec<_> = orden.get_args().collect();
+
+        assert_eq!(orden.get_program(), binario.as_os_str());
+        assert_eq!(argumentos.first(), Some(&std::ffi::OsStr::new("--model")));
+        assert_eq!(argumentos.len(), linea.len() - 1);
+    }
+
+    #[test]
+    fn el_hijo_recibe_la_clave_en_el_entorno_y_no_en_la_linea() {
+        let binario = Path::new("herramientas/llama-server.exe");
+        let linea = linea_de_arranque(
+            &config_de_prueba(),
+            binario,
+            Path::new("m.gguf"),
+            99,
+            crate::motor::encaje::EnCpu::default(),
+        );
+        let clave = ClaveDelMotor::de_texto("clave-de-prueba");
+
+        let orden = orden_del_motor(binario, &linea, &clave);
+
+        let entorno: Vec<_> = orden.get_envs().collect();
+        assert_eq!(
+            entorno,
+            [(
+                std::ffi::OsStr::new(VARIABLE_DE_LA_CLAVE),
+                Some(std::ffi::OsStr::new("clave-de-prueba"))
+            )]
+        );
+        assert!(!orden
+            .get_args()
+            .any(|argumento| argumento.to_string_lossy().contains("clave-de-prueba")));
+    }
 
     /// La configuración del motor de las pruebas de este módulo y de sus submódulos.
     pub(super) fn config_de_prueba() -> crate::config::MotorConfig {
@@ -154,21 +227,25 @@ mod pruebas {
             vram_maxima_mib: None,
             espera_de_carga_segundos: crate::config::ESPERA_DE_CARGA_POR_DEFECTO_SEGUNDOS,
             atencion_rapida: crate::config::AtencionRapida::default(),
+            clave: crate::config::ClaveConfigurada::Auto,
+            reparto: Default::default(),
         }
     }
 
     /// Sin el binario del motor, el fallo es del motor y sale antes de lanzar nada.
     #[test]
     fn sin_binario_el_fallo_es_del_motor() {
-        let dir = tempfile::tempdir().unwrap();
-        let binario = dir.path().join("no-existe-llama-server");
+        let carpeta = tempfile::tempdir().unwrap();
+        let binario = carpeta.path().join("no-existe-llama-server");
 
         let fallo = ServidorLocal::arrancar(
             &config_de_prueba(),
             &binario,
-            &dir.path().join("m.gguf"),
+            &carpeta.path().join("m.gguf"),
             0,
+            crate::motor::encaje::EnCpu::default(),
             None,
+            &ClaveDelMotor::de_texto("k"),
         )
         .err()
         .unwrap();
@@ -192,7 +269,9 @@ mod pruebas {
             std::path::Path::new("no/existe/llama-server.exe"),
             std::path::Path::new("x.gguf"),
             99,
+            crate::motor::encaje::EnCpu::default(),
             None,
+            &ClaveDelMotor::de_texto("k"),
         )
         .unwrap_err();
 

@@ -1,5 +1,6 @@
 //! Todo lo que la revisión de modelos dice por pantalla o deja escrito para el usuario.
 
+use crate::concordancia::lista_entre_comillas;
 use std::path::Path;
 
 use super::ausentes::Util;
@@ -28,6 +29,26 @@ use crate::informe::en_gib;
 use crate::motor::fichero_de_modelo::con_extension;
 use crate::plataforma::NOMBRE_DEL_EJECUTABLE;
 use crate::registro::modelo::CodigoPuntuadoCon;
+
+/// Una lista de `[revision]` que está vacía, y qué pasaría con ella así.
+pub fn lista_vacia(clave: &str, consecuencia: &str) -> String {
+    format!("«[revision] {clave}» está vacía: {consecuencia}")
+}
+
+/// Una clave de `[revision]` que vale 0, y qué pasaría con ella así.
+pub fn clave_a_cero(clave: &str, consecuencia: &str) -> String {
+    format!("«[revision] {clave}» es 0: {consecuencia}")
+}
+
+/// La consulta de búsqueda al catálogo, tal como se nombra en su fallo.
+pub fn la_busqueda(texto: &str) -> String {
+    format!("la búsqueda «{texto}»")
+}
+
+/// La consulta del detalle de un repositorio, tal como se nombra en su fallo.
+pub fn el_detalle_de(repositorio: &str) -> String {
+    format!("el detalle de «{repositorio}»")
+}
 
 /// Sin la VRAM no se puede descartar nada con criterio.
 pub fn sin_tarjeta() -> String {
@@ -471,15 +492,34 @@ pub fn revision_fuera_de_la_instalacion(instalacion: &Path) -> String {
     )
 }
 
+/// Si alguien del equipo puede pedir la revisión de modelos: si `[revision]
+/// identidades_que_ordenan` nombra a alguien.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermisoDeRevision {
+    Alguien,
+    Nadie,
+}
+
+impl PermisoDeRevision {
+    /// [`PermisoDeRevision::Alguien`] si la lista de quienes pueden pedirla no está vacía.
+    pub fn de<T>(identidades: &[T]) -> Self {
+        if identidades.is_empty() {
+            Self::Nadie
+        } else {
+            Self::Alguien
+        }
+    }
+}
+
 /// Qué hacer cuando no hay modelos o ninguno cabe, según dónde se esté y si alguien tiene permiso
 /// para pedir la revisión.
 pub fn que_hacer_sin_modelos(
     donde: &Donde,
     configuracion: &Path,
     carpeta_de_modelos: &str,
-    hay_identidades: bool,
+    permiso: PermisoDeRevision,
 ) -> String {
-    let como = como_pedir_la_revision(donde, configuracion, hay_identidades);
+    let como = como_pedir_la_revision(donde, configuracion, permiso);
     let o_a_mano =
         format!("También puedes dejar tú un modelo que quepa en «{carpeta_de_modelos}».");
     match donde {
@@ -490,7 +530,7 @@ pub fn que_hacer_sin_modelos(
 
 {o_a_mano}"
         ),
-        Donde::EnLaInstalacion if !hay_identidades => format!(
+        Donde::EnLaInstalacion if permiso == PermisoDeRevision::Nadie => format!(
             "Programator no descarga nada por su cuenta. Para buscar, descargar y probar modelos \
              que quepan, {como}.
 
@@ -510,9 +550,9 @@ pub fn que_hacer_sin_modelos(
 pub fn como_pedir_la_revision(
     donde: &Donde,
     configuracion: &Path,
-    hay_identidades: bool,
+    permiso: PermisoDeRevision,
 ) -> String {
-    let permiso = format!(
+    let dar_permiso = format!(
         "dale permiso al agente que la lleve con «identidades_que_ordenan = [\"<su identidad>\"]» \
          en la sección [revision] de «{}»",
         configuracion.display()
@@ -520,7 +560,7 @@ pub fn como_pedir_la_revision(
     match donde {
         // Con alguien ya en la lista no se pide darle permiso: en el banco de pruebas se leía como
         // si faltara, con la lista ya puesta.
-        Donde::Fuera { instalacion } if hay_identidades => format!(
+        Donde::Fuera { instalacion } if permiso == PermisoDeRevision::Alguien => format!(
             "cierra este Programator, ábrelo en «{}» junto con uno de los agentes que nombra \
              «identidades_que_ordenan» en la sección [revision] de «{}» y pídele allí \
              «{PEDIDO_DE_BUSQUEDA}»",
@@ -529,11 +569,11 @@ pub fn como_pedir_la_revision(
         ),
         Donde::Fuera { instalacion } => format!(
             "cierra este Programator, ábrelo junto con el agente que quieras que la lleve en \
-             «{}», {permiso} y pídele allí «{PEDIDO_DE_BUSQUEDA}»",
+             «{}», {dar_permiso} y pídele allí «{PEDIDO_DE_BUSQUEDA}»",
             instalacion.display()
         ),
-        Donde::EnLaInstalacion if !hay_identidades => {
-            format!("{permiso} y pídele «{PEDIDO_DE_BUSQUEDA}»")
+        Donde::EnLaInstalacion if permiso == PermisoDeRevision::Nadie => {
+            format!("{dar_permiso} y pídele «{PEDIDO_DE_BUSQUEDA}»")
         }
         Donde::EnLaInstalacion => format!("pide «{PEDIDO_DE_BUSQUEDA}»"),
     }
@@ -696,14 +736,6 @@ fn con_mayuscula(texto: &str) -> String {
     }
 }
 
-fn lista_entre_comillas(elementos: &[String]) -> String {
-    elementos
-        .iter()
-        .map(|e| format!("«{e}»"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// Una consulta a Hugging Face falló y la revisión no dejó nada escrito.
 pub(crate) fn consulta_fallida_sin_escribir(cual: &str, causa: &str) -> String {
     format!("{cual} falló, y no se ha escrito nada: {causa}")
@@ -778,6 +810,18 @@ pub(crate) fn retiradas_que_no_se_entienden(causa: &dyn std::fmt::Display) -> St
 mod pruebas {
     use super::*;
 
+    #[test]
+    fn hay_permiso_si_la_lista_nombra_a_alguien() {
+        assert_eq!(
+            PermisoDeRevision::de(&["Claude 1".to_string()]),
+            PermisoDeRevision::Alguien
+        );
+        assert_eq!(
+            PermisoDeRevision::de::<String>(&[]),
+            PermisoDeRevision::Nadie
+        );
+    }
+
     /// La alternativa de dejar un modelo a mano va en su propio párrafo, detrás de una línea en
     /// blanco.
     #[test]
@@ -786,7 +830,7 @@ mod pruebas {
             &Donde::EnLaInstalacion,
             Path::new("programator.toml"),
             "modelos",
-            false,
+            PermisoDeRevision::Nadie,
         );
 
         assert!(
@@ -921,8 +965,11 @@ También puedes dejar tú un modelo"
         let fuera = Donde::Fuera {
             instalacion: PathBuf::from("C:/programator"),
         };
-        let como =
-            como_pedir_la_revision(&fuera, Path::new("C:/programator/programator.toml"), true);
+        let como = como_pedir_la_revision(
+            &fuera,
+            Path::new("C:/programator/programator.toml"),
+            PermisoDeRevision::Alguien,
+        );
         let texto =
             aviso_de_los_que_faltan(&[util("a", vec![diagnostico()], false, true)], &como, "m")
                 .unwrap();
@@ -952,7 +999,12 @@ También puedes dejar tú un modelo"
             instalacion: "inst".into(),
         };
 
-        let desde_fuera = que_hacer_sin_modelos(&fuera, configuracion, "inst/modelos", true);
+        let desde_fuera = que_hacer_sin_modelos(
+            &fuera,
+            configuracion,
+            "inst/modelos",
+            PermisoDeRevision::Alguien,
+        );
         assert!(
             desde_fuera.contains("ábrelo en «inst» junto con uno de los agentes"),
             "{desde_fuera}"
@@ -964,7 +1016,12 @@ También puedes dejar tú un modelo"
         );
         assert!(!desde_fuera.contains("dale permiso"), "{desde_fuera}");
 
-        let fuera_sin_nadie = que_hacer_sin_modelos(&fuera, configuracion, "inst/modelos", false);
+        let fuera_sin_nadie = que_hacer_sin_modelos(
+            &fuera,
+            configuracion,
+            "inst/modelos",
+            PermisoDeRevision::Nadie,
+        );
         assert!(
             fuera_sin_nadie.contains("ábrelo junto con el agente"),
             "{fuera_sin_nadie}"
@@ -978,7 +1035,7 @@ También puedes dejar tú un modelo"
             &Donde::EnLaInstalacion,
             configuracion,
             "inst/modelos",
-            false,
+            PermisoDeRevision::Nadie,
         );
         assert!(!sin_permiso.contains("ábrelo"), "{sin_permiso}");
         assert!(
@@ -986,8 +1043,12 @@ También puedes dejar tú un modelo"
             "{sin_permiso}"
         );
 
-        let con_permiso =
-            que_hacer_sin_modelos(&Donde::EnLaInstalacion, configuracion, "inst/modelos", true);
+        let con_permiso = que_hacer_sin_modelos(
+            &Donde::EnLaInstalacion,
+            configuracion,
+            "inst/modelos",
+            PermisoDeRevision::Alguien,
+        );
         assert!(
             !con_permiso.contains("identidades_que_ordenan"),
             "{con_permiso}"
@@ -1266,7 +1327,7 @@ También puedes dejar tú un modelo"
         assert!(texto.ends_with("de «programator.toml»."), "{texto}");
     }
 
-    const GIB: u64 = 1024 * 1024 * 1024;
+    use crate::revision::pruebas_comunes::GIB;
 
     #[test]
     fn el_que_no_cabe_dice_lo_que_pesa_y_lo_que_cabe() {

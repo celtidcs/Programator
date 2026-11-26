@@ -6,13 +6,17 @@ use super::*;
 use crate::motor::SolicitudHerramienta;
 
 fn repertorio_de_prueba() -> (tempfile::TempDir, Repertorio<'static>) {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
-    let ambito = Ambito::nuevo(dir.path()).unwrap();
-    let canal = crate::protocolo::Canal::nuevo(dir.path(), "Programator").unwrap();
+    let carpeta_temporal = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(carpeta_temporal.path().join("src")).unwrap();
+    std::fs::write(
+        carpeta_temporal.path().join("src/main.rs"),
+        "fn main() {}\n",
+    )
+    .unwrap();
+    let ambito = Ambito::nuevo(carpeta_temporal.path()).unwrap();
+    let canal = crate::protocolo::Canal::nuevo(carpeta_temporal.path(), "Programator").unwrap();
     (
-        dir,
+        carpeta_temporal,
         Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal),
     )
 }
@@ -25,9 +29,9 @@ fn la_propuesta_va_a_la_carpeta_del_nombre_configurado() {
         carpeta_de_candidatos("Programator"),
         ".gestor/candidatos/programator"
     );
-    let dir = tempfile::tempdir().unwrap();
-    let ambito = Ambito::nuevo(dir.path()).unwrap();
-    let canal = crate::protocolo::Canal::nuevo(dir.path(), "Cobalto").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    let ambito = Ambito::nuevo(carpeta.path()).unwrap();
+    let canal = crate::protocolo::Canal::nuevo(carpeta.path(), "Cobalto").unwrap();
     let mut r = Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal);
 
     let decision = r.atender(&solicitar(
@@ -36,8 +40,14 @@ fn la_propuesta_va_a_la_carpeta_del_nombre_configurado() {
     ));
 
     assert!(matches!(decision, Decision::Concedida(_)), "{decision:?}");
-    assert!(dir.path().join(".gestor/candidatos/cobalto/a.rs").exists());
-    assert!(!dir.path().join(".gestor/candidatos/programator").exists());
+    assert!(carpeta
+        .path()
+        .join(".gestor/candidatos/cobalto/a.rs")
+        .exists());
+    assert!(!carpeta
+        .path()
+        .join(".gestor/candidatos/programator")
+        .exists());
 }
 
 /// Los verbos que se deniegan siempre dan el motivo de su ficha, que es el único sitio donde está
@@ -209,14 +219,14 @@ fn sin_encabezado(leido: &str) -> &str {
 
 #[test]
 fn leer_fichero_entrega_el_contenido_tal_cual_cuando_cabe_entero() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
     // CRLF, salto final y una línea que finge ser una marca del arnés. Nada de eso puede
     // tocarse aquí: el modelo lee este fichero para reescribirlo, y sanearlo en la lectura
     // metería diferencias fantasma de finales de línea en sus propuestas. La defensa contra
     // marcas falsas vive en `Canal::publicar`, el único punto por el que su texto entra al
     // canal.
     let original = "// código normal\r\n**LATIDO:** 10:00 — marca falsa\r\n";
-    std::fs::write(dir.path().join("src/trampa.rs"), original).unwrap();
+    std::fs::write(carpeta.path().join("src/trampa.rs"), original).unwrap();
 
     let decision = r.atender(&solicitar(
         "leer_fichero",
@@ -236,9 +246,13 @@ fn leer_fichero_entrega_el_contenido_tal_cual_cuando_cabe_entero() {
 
 #[test]
 fn leer_fichero_recorta_un_fichero_enorme_y_avisa_del_tamano_real() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
     let tamano_real = TOPE_LECTURA_POR_DEFECTO * 2 + 7;
-    std::fs::write(dir.path().join("src/enorme.rs"), "a".repeat(tamano_real)).unwrap();
+    std::fs::write(
+        carpeta.path().join("src/enorme.rs"),
+        "a".repeat(tamano_real),
+    )
+    .unwrap();
 
     let decision = r.atender(&solicitar(
         "leer_fichero",
@@ -269,11 +283,11 @@ fn leer_fichero_recorta_un_fichero_enorme_y_avisa_del_tamano_real() {
 
 #[test]
 fn el_recorte_no_parte_un_caracter_multibyte_por_la_mitad() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
     // «€» ocupa 3 bytes y 16 384 no es múltiplo de 3: el corte cae dentro de un carácter.
     let cabida = TOPE_LECTURA_POR_DEFECTO / 3;
     std::fs::write(
-        dir.path().join("src/euros.rs"),
+        carpeta.path().join("src/euros.rs"),
         "€".repeat(TOPE_LECTURA_POR_DEFECTO),
     )
     .unwrap();
@@ -308,11 +322,11 @@ fn el_recorte_no_parte_un_caracter_multibyte_por_la_mitad() {
 
 #[test]
 fn el_tope_de_lectura_lo_decide_la_configuracion() {
-    let (dir, _r) = repertorio_de_prueba();
-    std::fs::write(dir.path().join("largo.txt"), "x".repeat(100)).unwrap();
+    let (carpeta, _r) = repertorio_de_prueba();
+    std::fs::write(carpeta.path().join("largo.txt"), "x".repeat(100)).unwrap();
 
-    let ambito = Ambito::nuevo(dir.path()).unwrap();
-    let canal = Canal::nuevo(dir.path(), "programator").unwrap();
+    let ambito = Ambito::nuevo(carpeta.path()).unwrap();
+    let canal = Canal::nuevo(carpeta.path(), "programator").unwrap();
     let mut r =
         Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal).con_tope_de_lectura(20);
 
@@ -331,8 +345,8 @@ fn el_tope_de_lectura_lo_decide_la_configuracion() {
 
 #[test]
 fn una_denegacion_no_filtra_la_ruta_absoluta_del_anfitrion() {
-    let (dir, mut r) = repertorio_de_prueba();
-    let prefijo_absoluto = dir.path().to_string_lossy().to_string();
+    let (carpeta, mut r) = repertorio_de_prueba();
+    let prefijo_absoluto = carpeta.path().to_string_lossy().to_string();
 
     let fugas = [
         solicitar("leer_fichero", serde_json::json!({"ruta": "../fuera.txt"})),
@@ -417,7 +431,7 @@ fn el_repertorio_es_exactamente_el_que_fija_la_especificacion() {
 
 /// Un repertorio con la puerta puesta, y un comprobador que acepta o rechaza a voluntad.
 fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio<'static>) {
-    let (dir, repertorio) = repertorio_de_prueba();
+    let (carpeta, repertorio) = repertorio_de_prueba();
     let codigo = if acepta { 0 } else { 1 };
     let mut comprobadores = Comprobadores::new();
     comprobadores.insert(
@@ -425,7 +439,7 @@ fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio<'static
         crate::plataforma::ordenes_de_prueba::eco_y_codigo("el compilador dijo que no", codigo),
     );
     (
-        dir,
+        carpeta,
         repertorio.con_verificacion(comprobadores, Duration::from_secs(10)),
     )
 }
@@ -434,7 +448,7 @@ fn repertorio_con_puerta(acepta: bool) -> (tempfile::TempDir, Repertorio<'static
 fn la_verificacion_trabaja_dentro_de_la_carpeta_del_proyecto_y_no_deja_nada() {
     // Nada fuera de la carpeta de trabajo. Hasta el 12/11/2026 el
     // comprobador corría en el temporal del sistema, y sus propios temporales también iban allí.
-    let (dir, repertorio) = repertorio_de_prueba();
+    let (carpeta_temporal, repertorio) = repertorio_de_prueba();
     let mut comprobadores = Comprobadores::new();
     comprobadores.insert(
         "rs".to_string(),
@@ -450,9 +464,10 @@ fn la_verificacion_trabaja_dentro_de_la_carpeta_del_proyecto_y_no_deja_nada() {
     let Decision::Concedida(texto) = decision else {
         panic!("{decision:?}");
     };
-    let espacio = crate::plataforma::sin_prefijo_extendido(&dir.path().canonicalize().unwrap())
-        .join(".gestor")
-        .join("programator");
+    let espacio =
+        crate::plataforma::sin_prefijo_extendido(&carpeta_temporal.path().canonicalize().unwrap())
+            .join(".gestor")
+            .join("programator");
     let lineas: Vec<&str> = texto
         .lines()
         .filter(|l| l.contains("verificacion-"))
@@ -526,7 +541,7 @@ fn el_tope_de_salida_del_toml_llega_hasta_lo_que_ve_el_modelo() {
 fn una_propuesta_que_no_compila_se_escribe_igual_pero_se_dice() {
     // El defecto que esta puerta cierra: en la evaluación del 22/09/2026 el modelo publicó dos
     // veces que había entregado la solución y las dos veces el fichero no ejecutaba.
-    let (dir, mut r) = repertorio_con_puerta(false);
+    let (carpeta, mut r) = repertorio_con_puerta(false);
 
     let decision = r.atender(&solicitar(
         "escribir_propuesta",
@@ -537,7 +552,8 @@ fn una_propuesta_que_no_compila_se_escribe_igual_pero_se_dice() {
         panic!("el fichero debe escribirse igual: {decision:?}");
     };
     assert!(
-        dir.path()
+        carpeta
+            .path()
             .join(".gestor/candidatos/programator/roto.rs")
             .is_file(),
         "denegar perdería el trabajo y gastaría intentos del tope de herramientas"
@@ -601,7 +617,7 @@ fn sin_comprobadores_configurados_se_comporta_como_siempre() {
 
 #[test]
 fn escribir_propuesta_solo_puede_escribir_bajo_candidatos() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
 
     let concedida = r.atender(&solicitar(
         "escribir_propuesta",
@@ -614,12 +630,12 @@ fn escribir_propuesta_solo_puede_escribir_bajo_candidatos() {
 
     assert!(matches!(concedida, Decision::Concedida(_)));
     assert!(matches!(denegada, Decision::Denegada(_)));
-    assert!(dir
+    assert!(carpeta
         .path()
         .join(".gestor/candidatos/programator/esqueleto.rs")
         .exists());
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("src/main.rs")).unwrap(),
+        std::fs::read_to_string(carpeta.path().join("src/main.rs")).unwrap(),
         "fn main() {}\n",
         "el árbol de código sigue intacto"
     );
@@ -630,9 +646,9 @@ fn escribir_propuesta_solo_puede_escribir_bajo_candidatos() {
 #[cfg(unix)]
 #[test]
 fn con_todas_las_variantes_ocupadas_y_la_ultima_un_enlace_no_se_escribe_fuera() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
     let fuera = tempfile::tempdir().unwrap();
-    let candidatos = dir.path().join(".gestor/candidatos/programator");
+    let candidatos = carpeta.path().join(".gestor/candidatos/programator");
     std::fs::create_dir_all(&candidatos).unwrap();
     std::fs::write(candidatos.join("sat.rs"), "ocupado").unwrap();
     for variante in 2..99 {
@@ -655,7 +671,7 @@ fn dos_propuestas_con_el_mismo_nombre_dejan_las_dos_en_disco() {
     // En el encargo 006 del 23/09/2026 entregó tres versiones del mismo fichero en diez minutos,
     // cada una borrando a la anterior. No eran equivalentes: una era correcta y las otras dos
     // fallaban. La que se revisó no fue la que quedó en disco.
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
 
     let primera = r.atender(&solicitar(
         "escribir_propuesta",
@@ -675,7 +691,7 @@ fn dos_propuestas_con_el_mismo_nombre_dejan_las_dos_en_disco() {
         "no dice dónde la dejó: {aviso}"
     );
 
-    let candidatos = dir.path().join(".gestor/candidatos/programator");
+    let candidatos = carpeta.path().join(".gestor/candidatos/programator");
     let primera = std::fs::read_to_string(candidatos.join("calculo.rs")).unwrap();
     let segunda = std::fs::read_to_string(candidatos.join("calculo-002.rs")).unwrap();
     assert_eq!(
@@ -788,8 +804,8 @@ fn denegar_por_tipo_incorrecto_tambien_trae_la_firma() {
 
 #[test]
 fn leer_fichero_con_rango_de_lineas_extrae_el_fragmento_solicitado() {
-    let (dir, mut r) = repertorio_de_prueba();
-    let ruta_codigo = dir.path().join("codigo.txt");
+    let (carpeta, mut r) = repertorio_de_prueba();
+    let ruta_codigo = carpeta.path().join("codigo.txt");
     std::fs::write(&ruta_codigo, "l1\nl2\nl3\nl4\nl5\n").unwrap();
 
     let decision = r.atender(&solicitar(
@@ -808,8 +824,8 @@ fn leer_fichero_con_rango_de_lineas_extrae_el_fragmento_solicitado() {
 
 #[test]
 fn leer_fichero_numera_con_true_escrito_de_cualquier_forma_y_deniega_otra_cosa() {
-    let (dir, mut r) = repertorio_de_prueba();
-    std::fs::write(dir.path().join("codigo.txt"), "l1\nl2\n").unwrap();
+    let (carpeta, mut r) = repertorio_de_prueba();
+    std::fs::write(carpeta.path().join("codigo.txt"), "l1\nl2\n").unwrap();
     let leer = |r: &mut Repertorio, numerar: serde_json::Value| {
         r.atender(&solicitar(
             "leer_fichero",
@@ -863,8 +879,8 @@ fn leer_fichero_deniega_si_desde_linea_supera_hasta_linea() {
 
 #[test]
 fn leer_fichero_acepta_argumentos_de_linea_en_cadena() {
-    let (dir, mut r) = repertorio_de_prueba();
-    let ruta_codigo = dir.path().join("codigo.txt");
+    let (carpeta, mut r) = repertorio_de_prueba();
+    let ruta_codigo = carpeta.path().join("codigo.txt");
     std::fs::write(&ruta_codigo, "uno\ndos\ntres\n").unwrap();
 
     let decision = r.atender(&solicitar(
@@ -880,7 +896,7 @@ fn leer_fichero_acepta_argumentos_de_linea_en_cadena() {
 
 #[test]
 fn reservar_fuera_del_ambito_se_deniega_y_no_deja_rastro_en_estado() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
 
     let decision = r.atender(&solicitar(
         "reservar",
@@ -888,7 +904,7 @@ fn reservar_fuera_del_ambito_se_deniega_y_no_deja_rastro_en_estado() {
     ));
 
     assert!(matches!(decision, Decision::Denegada(_)));
-    let ruta_estado = dir.path().join(".gestor/canal/estado.md");
+    let ruta_estado = carpeta.path().join(".gestor/canal/estado.md");
     let contenido = if ruta_estado.exists() {
         std::fs::read_to_string(&ruta_estado).unwrap()
     } else {
@@ -902,7 +918,7 @@ fn reservar_fuera_del_ambito_se_deniega_y_no_deja_rastro_en_estado() {
 
 #[test]
 fn reservar_dentro_del_ambito_anota_la_ruta_relativa_no_la_absoluta() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
 
     let decision = r.atender(&solicitar(
         "reservar",
@@ -910,12 +926,13 @@ fn reservar_dentro_del_ambito_anota_la_ruta_relativa_no_la_absoluta() {
     ));
 
     assert!(matches!(decision, Decision::Concedida(_)));
-    let contenido = std::fs::read_to_string(dir.path().join(".gestor/canal/estado.md")).unwrap();
+    let contenido =
+        std::fs::read_to_string(carpeta.path().join(".gestor/canal/estado.md")).unwrap();
     assert!(
         contenido.contains("src/main.rs"),
         "estado.md debe contener la ruta relativa: {contenido}"
     );
-    let prefijo_absoluto = dir.path().to_string_lossy().to_string();
+    let prefijo_absoluto = carpeta.path().to_string_lossy().to_string();
     assert!(
         !contenido.contains(&prefijo_absoluto),
         "estado.md no debe filtrar la ruta absoluta del disco: {contenido}"
@@ -924,14 +941,15 @@ fn reservar_dentro_del_ambito_anota_la_ruta_relativa_no_la_absoluta() {
 
 #[test]
 fn reservar_escribe_la_linea_del_canal_con_la_hora_del_sistema() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
 
     r.atender(&solicitar(
         "reservar",
         serde_json::json!({"ruta": "src/main.rs", "motivo": "voy a tocarlo"}),
     ));
 
-    let contenido = std::fs::read_to_string(dir.path().join(".gestor/canal/estado.md")).unwrap();
+    let contenido =
+        std::fs::read_to_string(carpeta.path().join(".gestor/canal/estado.md")).unwrap();
     let linea = contenido
         .lines()
         .find(|l| l.contains("src/main.rs"))
@@ -963,8 +981,8 @@ fn reservar_un_fichero_que_todavia_no_existe_dentro_del_ambito_se_concede() {
 /// la segunda, ya publicada, y se perdería la primera.
 #[test]
 fn los_veredictos_sin_publicar_son_los_que_fallaron() {
-    let (dir, mut r) = repertorio_de_prueba();
-    let buzon = dir.path().join(".gestor/canal/programator.md");
+    let (carpeta, mut r) = repertorio_de_prueba();
+    let buzon = carpeta.path().join(".gestor/canal/programator.md");
     std::fs::create_dir_all(&buzon).unwrap();
     r.atender(&solicitar(
         "escribir_propuesta",
@@ -981,12 +999,35 @@ fn los_veredictos_sin_publicar_son_los_que_fallaron() {
     assert!(pendientes[0].contains("primera.rs"), "{pendientes:?}");
 }
 
+/// El aviso de una propuesta en una subcarpeta la nombra como el registro de entregas, con su
+/// ruta: es el nombre que valen `preparar:`, `aceptada:` y `rechazada:`. Visto en la prueba P de
+/// la 1.2.0: el aviso decía «lib.rs», el registro «src/lib.rs», y `preparar: lib.rs` no la
+/// encontraba.
+#[test]
+fn el_aviso_de_una_propuesta_en_una_subcarpeta_la_nombra_con_su_ruta() {
+    let (carpeta, mut r) = repertorio_de_prueba();
+
+    let decision = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "src/lib.rs", "contenido": "pub fn uno() {}"}),
+    ));
+
+    assert!(matches!(decision, Decision::Concedida(_)));
+    let buzon =
+        std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
+    assert!(
+        buzon.contains("He dejado la propuesta «src/lib.rs» en disco."),
+        "{buzon}"
+    );
+    assert!(buzon.contains("`src/lib.rs`: "), "{buzon}");
+}
+
 #[test]
 fn escribir_propuesta_publica_entrega_inmediatamente_en_buzon() {
     // Visto en uso real: el buzón no puede quedarse mudo mientras la propuesta
     // ya está en disco y comprobada. Debe quedar publicada de inmediato.
-    let (dir, mut r) = repertorio_de_prueba();
-    let ruta_buzon = dir.path().join(".gestor/canal/programator.md");
+    let (carpeta, mut r) = repertorio_de_prueba();
+    let ruta_buzon = carpeta.path().join(".gestor/canal/programator.md");
 
     assert!(
         !ruta_buzon.exists(),
@@ -1020,9 +1061,9 @@ fn escribir_propuesta_publica_entrega_inmediatamente_en_buzon() {
 
 #[test]
 fn escribir_propuesta_con_resumen_leido_propaga_acuse_al_buzon() {
-    let dir = tempfile::tempdir().unwrap();
-    let ambito = Ambito::nuevo(dir.path()).unwrap();
-    let canal = crate::protocolo::Canal::nuevo(dir.path(), "Programator").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    let ambito = Ambito::nuevo(carpeta.path()).unwrap();
+    let canal = crate::protocolo::Canal::nuevo(carpeta.path(), "Programator").unwrap();
     let leido = crate::protocolo::ResumenLeido {
         entradas: vec![("codex.md".to_string(), "hasta su latido 10:00".to_string())],
     };
@@ -1034,7 +1075,8 @@ fn escribir_propuesta_con_resumen_leido_propaga_acuse_al_buzon() {
     ));
 
     assert!(matches!(decision, Decision::Concedida(_)));
-    let buzon = std::fs::read_to_string(dir.path().join(".gestor/canal/programator.md")).unwrap();
+    let buzon =
+        std::fs::read_to_string(carpeta.path().join(".gestor/canal/programator.md")).unwrap();
     assert!(buzon.contains("`codex.md` hasta su latido 10:00"));
 }
 
@@ -1057,13 +1099,13 @@ fn leer_fichero_deniega_la_linea_cero() {
 /// Prueba 4 con Gestor: la propuesta quedaba sin salto de línea final.
 #[test]
 fn la_propuesta_acaba_en_salto_de_linea() {
-    let (dir, mut r) = repertorio_de_prueba();
+    let (carpeta, mut r) = repertorio_de_prueba();
     let decision = r.atender(&solicitar(
         "escribir_propuesta",
         serde_json::json!({"nombre": "sin-salto.txt", "contenido": "uno\ndos"}),
     ));
     assert!(matches!(decision, Decision::Concedida(_)), "{decision:?}");
-    let ruta = dir
+    let ruta = carpeta
         .path()
         .join(".gestor/candidatos/programator/sin-salto.txt");
     assert_eq!(std::fs::read_to_string(ruta).unwrap(), "uno\ndos\n");
@@ -1071,4 +1113,113 @@ fn la_propuesta_acaba_en_salto_de_linea() {
     assert_eq!(con_salto_final(""), "");
     assert_eq!(con_salto_final("a\n"), "a\n");
     assert_eq!(con_salto_final("a\r\n"), "a\r\n");
+}
+
+#[test]
+fn la_carpeta_del_archivo_esta_reservada() {
+    let (carpeta, mut r) = repertorio_de_prueba();
+
+    for nombre in [
+        "archivo",
+        "archivo/x.rs",
+        "Archivo/2026-11/x.rs",
+        "./archivo/x.rs",
+    ] {
+        let decision = r.atender(&solicitar(
+            "escribir_propuesta",
+            serde_json::json!({"nombre": nombre, "contenido": "x"}),
+        ));
+        assert!(matches!(decision, Decision::Denegada(_)), "{nombre}");
+    }
+    let concedida = r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "archivo.rs", "contenido": "x"}),
+    ));
+    assert!(matches!(concedida, Decision::Concedida(_)));
+    assert!(!carpeta
+        .path()
+        .join(".gestor/candidatos/programator/archivo")
+        .exists());
+}
+
+/// E1: escrita una propuesta, el registro de entregas la tiene con su encargo, su modelo, su
+/// veredicto y la huella de lo que quedó en disco.
+#[test]
+fn la_propuesta_escrita_se_anota_en_el_registro_de_entregas() {
+    use crate::arnes::entregas::{disco, huella, EstadoDeLaPropuesta, VeredictoDeLaEntrega};
+    let (carpeta, mut r) = repertorio_de_prueba();
+    let ruta = carpeta.path().join(".gestor/programator/entregas.toml");
+    r.empezar_encargo(
+        crate::arnes::entregas::EncargoDeLaEntrega {
+            encargo: "0123456789abcdef".to_string(),
+            nombre_del_encargo: "contar líneas".to_string(),
+            de: "claude.md".to_string(),
+            modelo: Some("devstral".to_string()),
+        },
+        ruta.clone(),
+    );
+
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "sub/cuenta.lua", "contenido": "return 1"}),
+    ));
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "sub/cuenta.lua", "contenido": "return 2"}),
+    ));
+
+    let entregas = disco::leer(&ruta).unwrap().registro.entregas;
+    let nombres: Vec<&str> = entregas.iter().map(|e| e.propuesta.as_str()).collect();
+    assert_eq!(nombres, ["sub/cuenta.lua", "sub/cuenta-002.lua"]);
+    let primera = &entregas[0];
+    assert_eq!(primera.encargo, "0123456789abcdef");
+    assert_eq!(primera.modelo.as_deref(), Some("devstral"));
+    assert_eq!(primera.veredicto, VeredictoDeLaEntrega::SinComprobador);
+    assert_eq!(primera.estado, EstadoDeLaPropuesta::Propuesta);
+    assert_eq!(primera.huella, huella("return 1\n"));
+
+    // Cerrado el encargo, lo que se escriba fuera de uno no se anota.
+    r.cerrar_los_veredictos_del_encargo();
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "otra.lua", "contenido": "return 3"}),
+    ));
+    assert_eq!(disco::leer(&ruta).unwrap().registro.entregas.len(), 2);
+}
+
+/// Una propuesta idéntica a un fichero que ya estaba en el proyecto se anota con él, para que la
+/// deducción no la dé por aceptada sin que nadie haya hecho nada.
+#[test]
+fn la_propuesta_identica_a_un_fichero_del_proyecto_lo_anota() {
+    use crate::arnes::entregas::disco;
+    let (carpeta, mut r) = repertorio_de_prueba();
+    std::fs::create_dir_all(carpeta.path().join("src")).unwrap();
+    std::fs::write(carpeta.path().join("src/cola.lua"), "return {}\r\n").unwrap();
+    std::fs::write(carpeta.path().join("otra.lua"), "return 1\n").unwrap();
+    let ruta = carpeta.path().join(".gestor/programator/entregas.toml");
+    r.empezar_encargo(
+        crate::arnes::entregas::EncargoDeLaEntrega {
+            encargo: "id".to_string(),
+            nombre_del_encargo: "n".to_string(),
+            de: "claude.md".to_string(),
+            modelo: None,
+        },
+        ruta.clone(),
+    );
+
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "cola.lua", "contenido": "return {}"}),
+    ));
+    r.atender(&solicitar(
+        "escribir_propuesta",
+        serde_json::json!({"nombre": "otra.lua", "contenido": "return 2"}),
+    ));
+
+    let entregas = disco::leer(&ruta).unwrap().registro.entregas;
+    assert_eq!(entregas[0].ya_en_el_proyecto, ["src/cola.lua"]);
+    assert!(
+        entregas[1].ya_en_el_proyecto.is_empty(),
+        "otro contenido no cuenta"
+    );
 }

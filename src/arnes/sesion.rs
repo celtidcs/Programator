@@ -8,13 +8,18 @@
 //!   buzón, por ningún camino: es lo que neutraliza las marcas falsas que el modelo pueda haber
 //!   colado en el texto (el nombre de una herramienta lo elige él, y acaba dentro del motivo de un
 //!   aborto).
-//! - **La primera pasada nunca atiende nada.** Solo fotografía dónde está cada buzón ajeno ahora
-//!   mismo. Sobre un canal con meses de historia, atender todo lo que un día fue un encargo sería
-//!   una avalancha de respuestas a cosas ya resueltas.
+//! - **Lo que ya había al arrancar sin registro de lectura no se atiende** si Programator ya
+//!   respondió en el canal: la foto inicial (`sesion::instantanea`) lo anota como visto en el
+//!   registro de encargos. Sobre un canal con meses de historia, atender todo lo que un día fue un
+//!   encargo sería una avalancha de respuestas a cosas ya resueltas.
+//! - **Un encargo se reconoce por su identificador** (buzón, latido de su intervención y texto), no
+//!   por dónde cae en el fichero: es nuevo lo que no tiene ficha en el registro de encargos
+//!   (`arnes::registro_de_encargos`).
 //! - **El motor se prepara una vez por grupo de encargos con el mismo modelo**, y solo si hay algo
 //!   que atender: cargar el modelo es lo caro.
-//! - **Ningún encargo se olvida.** Lo que no llega a publicarse pasa a la cola de pendientes
-//!   (`pendientes.toml`), que cada pasada atiende antes que lo nuevo.
+//! - **Ningún encargo se olvida.** Lo nuevo se anota como pendiente antes de atender nada, y solo
+//!   deja de estarlo cuando su respuesta está publicada; cada pasada atiende los pendientes en
+//!   orden de llegada.
 //!
 //! Este módulo guarda el contrato de la sesión: los ajustes, los motores, el revisor y cómo
 //! termina una pasada. Lo demás va aparte, una cosa por submódulo: la foto inicial del canal
@@ -26,13 +31,18 @@
 
 mod atencion_del_modelo;
 mod cierre;
+mod decisiones;
+mod guardado;
 mod instantanea;
 mod instrucciones;
 mod pasada;
+mod preparaciones;
 #[cfg(test)]
 mod pruebas;
 #[cfg(test)]
 mod pruebas_motores;
+#[cfg(test)]
+mod pruebas_registro;
 #[cfg(test)]
 mod pruebas_respuesta;
 mod publicacion;
@@ -71,6 +81,8 @@ pub struct ResumenPasada {
     /// Cuántos pasaron a la cola de pendientes (o siguieron en ella) en esta pasada.
     pub pendientes: usize,
     pub avisos: Vec<String>,
+    /// Cuántos buzones se estaban escribiendo y se dejaron para el ciclo siguiente.
+    pub buzones_a_medias: usize,
 }
 
 /// Cómo terminó una pasada completa del ciclo. `main` decide qué imprimir a partir de esto.
@@ -84,8 +96,18 @@ pub enum DesenlacePasada {
     /// Hay un servidor cargando el modelo. Se reintenta en el ciclo siguiente sin perder los
     /// encargos detectados: el registro no avanza.
     MotorCargando,
+    /// No había nada que atender, y algún buzón con novedades acababa de cambiar y podía estar a
+    /// medio escribir: lo suyo se lee en el ciclo siguiente.
+    BuzonAMedias,
     /// Se atendió al menos un encargo.
     Atendidos(ResumenPasada),
+}
+
+/// La `[preparacion]` de fábrica, para los ajustes que no salen de un TOML.
+fn preparacion_por_defecto() -> &'static crate::config::Preparacion {
+    static PREPARACION: std::sync::OnceLock<crate::config::Preparacion> =
+        std::sync::OnceLock::new();
+    PREPARACION.get_or_init(crate::config::Preparacion::default)
 }
 
 /// La configuración que gobierna una pasada, agrupada.
@@ -123,6 +145,18 @@ pub struct Ajustes<'a> {
     pub registro_de_conversacion: bool,
     /// Tras cuántos intentos fallidos se avisa en el canal de un encargo pendiente.
     pub intentos_por_encargo: u32,
+    /// Cada cuánto se deduce en qué quedó cada propuesta (`[entregas]`).
+    pub entregas: crate::config::Entregas,
+    /// Cómo se atiende un `preparar:` (`[preparacion]`).
+    pub preparacion: &'a crate::config::Preparacion,
+    /// Cuántas propuestas anteriores se le cuentan al modelo (`[ciclo] entregas_en_contexto`).
+    pub entregas_en_contexto: usize,
+    /// Cuánto tiene que faltar de su buzón un encargo cerrado para olvidarlo
+    /// (`[ciclo] olvidar_lo_cerrado_tras_minutos`).
+    pub olvidar_lo_cerrado_tras_minutos: u64,
+    /// Cuánto tiene que llevar quieto un buzón con novedades para leerlas
+    /// (`[ciclo] buzon_estable_tras_ms`).
+    pub buzon_estable_tras: std::time::Duration,
     /// Por dónde se cuenta en la terminal lo que pasa en la pasada. La pone `main`, que es quien
     /// decide qué se imprime; las pruebas pasan una de mentira para ver lo que se avisa.
     pub terminal: &'a dyn Terminal,
@@ -148,6 +182,13 @@ impl<'a> Ajustes<'a> {
             intervalo_segundos: crate::config::intervalo_por_defecto(),
             registro_de_conversacion: false,
             intentos_por_encargo: crate::config::INTENTOS_POR_ENCARGO_POR_DEFECTO,
+            entregas: crate::config::Entregas::default(),
+            preparacion: preparacion_por_defecto(),
+            entregas_en_contexto: crate::config::ENTREGAS_EN_CONTEXTO_POR_DEFECTO,
+            olvidar_lo_cerrado_tras_minutos: crate::config::OLVIDAR_LO_CERRADO_POR_DEFECTO_MINUTOS,
+            // Sin espera: quien usa estos ajustes (el banco y las pruebas) escribe el buzón él
+            // mismo antes de la pasada, y nadie más lo toca a la vez.
+            buzon_estable_tras: std::time::Duration::ZERO,
             terminal,
         }
     }
@@ -175,6 +216,13 @@ impl<'a> Ajustes<'a> {
             intervalo_segundos: config.ciclo.intervalo_segundos,
             registro_de_conversacion: config.agente.registro_de_conversacion,
             intentos_por_encargo: config.ciclo.intentos_por_encargo,
+            entregas: config.entregas,
+            preparacion: &config.preparacion,
+            entregas_en_contexto: config.ciclo.entregas_en_contexto,
+            olvidar_lo_cerrado_tras_minutos: config.ciclo.olvidar_lo_cerrado_tras_minutos,
+            buzon_estable_tras: std::time::Duration::from_millis(
+                config.ciclo.buzon_estable_tras_ms,
+            ),
             terminal,
         }
     }

@@ -48,11 +48,12 @@ pub fn retirar(fichero: &str, entorno: &Entorno) -> Resultado<Retirada> {
         .modelo
         .iter()
         .any(|e| e.retirado_el.is_none() && es_el(&nombre, &e.nombre));
-    if let Some(negativa) = negativa(
-        fichero,
-        hay_fichero || hay_entrada,
-        entorno.modelo_en_uso.as_deref(),
-    ) {
+    let presencia = if hay_fichero || hay_entrada {
+        Presencia::Esta
+    } else {
+        Presencia::NoEsta
+    };
+    if let Some(negativa) = negativa(fichero, presencia, entorno.modelo_en_uso.as_deref()) {
         return Err(Error::Revision(negativa));
     }
     let propuesta = propuesta_mas_reciente(&entorno.carpeta_de_revisiones)?;
@@ -104,9 +105,17 @@ fn es_el(nombre: &str, de_la_entrada: &str) -> bool {
     !nombre.is_empty() && nombre.eq_ignore_ascii_case(de_la_entrada)
 }
 
+/// Si hay algo que retirar con ese nombre: el fichero en la carpeta de modelos o una entrada viva
+/// en el registro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Presencia {
+    Esta,
+    NoEsta,
+}
+
 /// Por qué no se puede retirar, o `None` si se puede. Solo un nombre de fichero, sin carpetas: así
 /// no se puede salir de la carpeta de modelos.
-fn negativa(fichero: &str, esta_en_modelos: bool, modelo_en_uso: Option<&str>) -> Option<String> {
+fn negativa(fichero: &str, presencia: Presencia, modelo_en_uso: Option<&str>) -> Option<String> {
     if fichero.is_empty() || fichero.contains(['/', '\\']) || fichero == ".." {
         return Some(mensajes::retirar_solo_un_nombre(fichero));
     }
@@ -117,7 +126,7 @@ fn negativa(fichero: &str, esta_en_modelos: bool, modelo_en_uso: Option<&str>) -
     if modelo_en_uso.is_some_and(|en_uso| en_uso.eq_ignore_ascii_case(nombre)) {
         return Some(mensajes::retirar_el_modelo_en_uso(fichero));
     }
-    if !esta_en_modelos {
+    if presencia == Presencia::NoEsta {
         return Some(mensajes::retirar_lo_que_no_esta(fichero));
     }
     None
@@ -266,17 +275,20 @@ mod pruebas {
     #[test]
     fn cada_negativa_dice_lo_suyo_y_no_toca_nada() {
         let casos = [
-            ("../fuera.gguf", false, "nombre"),
-            ("carpeta\\m.gguf", false, "nombre"),
-            ("notas.txt", true, ".gguf"),
-            ("EN-USO.gguf", true, "programator.toml"),
-            ("no-esta.gguf", false, "no está"),
+            ("../fuera.gguf", Presencia::NoEsta, "nombre"),
+            ("carpeta\\m.gguf", Presencia::NoEsta, "nombre"),
+            ("notas.txt", Presencia::Esta, ".gguf"),
+            ("EN-USO.gguf", Presencia::Esta, "programator.toml"),
+            ("no-esta.gguf", Presencia::NoEsta, "no está"),
         ];
         for (fichero, esta, clave) in casos {
             let texto = negativa(fichero, esta, Some("en-uso")).unwrap_or_default();
             assert!(texto.contains(clave), "{fichero}: {texto}");
         }
-        assert_eq!(negativa("sobra.gguf", true, Some("en-uso")), None);
+        assert_eq!(
+            negativa("sobra.gguf", Presencia::Esta, Some("en-uso")),
+            None
+        );
     }
 
     #[test]

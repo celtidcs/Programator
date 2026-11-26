@@ -84,16 +84,23 @@ pub fn cabida(encaje: &Encaje) -> Cabida {
     }
 }
 
+/// Si el fichero del modelo está en el disco. Lo mira quien llama: este módulo no abre ficheros.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FicheroDelModelo {
+    Esta,
+    Falta,
+}
+
 /// Por qué no se puede trabajar con un modelo, si se sabe antes de lanzar el motor: falta su
 /// fichero, o no cabe en la tarjeta. `None` si se puede, o si no se sabe (sin tarjeta medida, o
 /// sin poder calcular el encaje): en la duda se intenta.
 pub fn por_que_no_se_puede_usar(
     modelo: &std::path::Path,
-    existe: bool,
+    fichero: FicheroDelModelo,
     cabida: Option<&Cabida>,
 ) -> Option<String> {
-    if !existe {
-        return Some(motivo_falta_el_fichero(modelo));
+    if fichero == FicheroDelModelo::Falta {
+        return Some(super::mensajes::falta_el_fichero_del_modelo(modelo));
     }
     match cabida {
         Some(Cabida::Insuficiente { en_tarjeta, total }) => {
@@ -104,21 +111,12 @@ pub fn por_que_no_se_puede_usar(
     }
 }
 
-fn motivo_falta_el_fichero(modelo: &std::path::Path) -> String {
-    format!("falta el fichero del modelo «{}»", modelo.display())
-}
-
 fn motivo_no_cabe(modelo: &std::path::Path, capas: Option<(u32, u32)>) -> String {
     let nombre = modelo
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| modelo.display().to_string());
-    match capas {
-        Some((en_tarjeta, total)) => format!(
-            "el modelo «{nombre}» no cabe en esta tarjeta: quedarían en ella {en_tarjeta} de sus {total} capas, menos de lo mínimo para trabajar a buena velocidad"
-        ),
-        None => format!("el modelo «{nombre}» no cabe en esta tarjeta: no le cabe ni una capa"),
-    }
+    super::mensajes::modelo_que_no_cabe(&nombre, capas)
 }
 
 #[cfg(test)]
@@ -127,27 +125,30 @@ mod pruebas {
 
     #[test]
     fn un_modelo_que_falta_o_no_cabe_no_se_puede_usar_y_en_la_duda_si() {
+        const ESTA: FicheroDelModelo = FicheroDelModelo::Esta;
         let ruta = std::path::Path::new("modelos/m.gguf");
-        assert!(por_que_no_se_puede_usar(ruta, false, None)
-            .unwrap()
-            .contains("falta el fichero"));
-        assert!(por_que_no_se_puede_usar(ruta, true, Some(&parcial(10, 40)))
+        assert!(
+            por_que_no_se_puede_usar(ruta, FicheroDelModelo::Falta, None)
+                .unwrap()
+                .contains("falta el fichero")
+        );
+        assert!(por_que_no_se_puede_usar(ruta, ESTA, Some(&parcial(10, 40)))
             .unwrap()
             .contains("10 de sus 40"));
-        assert!(por_que_no_se_puede_usar(ruta, true, Some(&Cabida::Nada)).is_some());
+        assert!(por_que_no_se_puede_usar(ruta, ESTA, Some(&Cabida::Nada)).is_some());
         assert_eq!(
-            por_que_no_se_puede_usar(ruta, true, Some(&parcial(30, 40))),
+            por_que_no_se_puede_usar(ruta, ESTA, Some(&parcial(30, 40))),
             None
         );
         assert_eq!(
-            por_que_no_se_puede_usar(ruta, true, Some(&Cabida::Entero)),
+            por_que_no_se_puede_usar(ruta, ESTA, Some(&Cabida::Entero)),
             None
         );
         assert_eq!(
-            por_que_no_se_puede_usar(ruta, true, Some(&Cabida::NoSeSabe("x".into()))),
+            por_que_no_se_puede_usar(ruta, ESTA, Some(&Cabida::NoSeSabe("x".into()))),
             None
         );
-        assert_eq!(por_que_no_se_puede_usar(ruta, true, None), None);
+        assert_eq!(por_que_no_se_puede_usar(ruta, ESTA, None), None);
     }
 
     fn parcial(en_gpu: u32, total: u32) -> Cabida {

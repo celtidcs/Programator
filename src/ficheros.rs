@@ -128,6 +128,68 @@ pub fn escribir(ruta: &Path, contenido: &str) -> Resultado<()> {
     })
 }
 
+/// Los permisos de un fichero que solo debe leer su dueño, en Unix: lectura y escritura para él y
+/// nada para el grupo ni los demás.
+#[cfg(unix)]
+const PERMISOS_SOLO_DEL_DUENO: u32 = 0o600;
+
+/// Como [`escribir`], pero en Unix el fichero queda con permisos 0600 aunque ya existiera con
+/// otros: es para secretos, como la clave del motor. En Windows hereda la lista de control de
+/// acceso de su carpeta, que en la instalación es del usuario.
+pub fn escribir_solo_para_el_dueno(ruta: &Path, contenido: &str) -> Resultado<()> {
+    let error = |causa| Error::Escritura {
+        ruta: ruta.to_path_buf(),
+        causa,
+    };
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut fichero = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(PERMISOS_SOLO_DEL_DUENO)
+            .open(ruta)
+            .map_err(error)?;
+        // `mode` solo vale al crearlo: si ya existía, sus permisos se ponen aquí.
+        fichero
+            .set_permissions(std::fs::Permissions::from_mode(PERMISOS_SOLO_DEL_DUENO))
+            .map_err(error)?;
+        fichero.write_all(contenido.as_bytes()).map_err(error)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(ruta, contenido).map_err(error)
+    }
+}
+
+/// Lo que se añade al nombre de un fichero para escribirlo antes de renombrarlo con
+/// [`escribir_de_una_vez`]: si el programa se corta a mitad, queda a medias el temporal y no el
+/// fichero.
+pub const SUFIJO_DEL_TEMPORAL: &str = ".escribiendo";
+
+/// Escribe el fichero entero de una vez: primero en un temporal al lado y luego, con un cambio de
+/// nombre, con el suyo. Crea la carpeta si falta. Si el cambio de nombre falla, el temporal se
+/// borra y se devuelve ese fallo, que es el que importa.
+pub fn escribir_de_una_vez(ruta: &Path, contenido: &str) -> Resultado<()> {
+    if let Some(carpeta) = ruta.parent() {
+        crear_carpeta(carpeta)?;
+    }
+    let temporal = ruta_del_temporal(ruta);
+    escribir(&temporal, contenido)?;
+    renombrar(&temporal, ruta).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporal);
+    })
+}
+
+/// El temporal con que [`escribir_de_una_vez`] escribe `ruta`.
+pub fn ruta_del_temporal(ruta: &Path) -> PathBuf {
+    let mut nombre = ruta.as_os_str().to_owned();
+    nombre.push(SUFIJO_DEL_TEMPORAL);
+    PathBuf::from(nombre)
+}
+
 /// Cambia de nombre un fichero o una carpeta; el error nombra el destino.
 pub fn renombrar(origen: &Path, destino: &Path) -> Resultado<()> {
     std::fs::rename(origen, destino).map_err(|causa| Error::Escritura {
@@ -157,9 +219,57 @@ mod pruebas {
     use super::*;
 
     #[test]
+    fn escribir_solo_para_el_dueno_escribe_y_sobrescribe() {
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("secreto");
+        escribir_solo_para_el_dueno(&ruta, "uno largo").unwrap();
+        escribir_solo_para_el_dueno(&ruta, "dos").unwrap();
+        assert_eq!(std::fs::read_to_string(&ruta).unwrap(), "dos");
+    }
+
+    /// También si el fichero ya existía con permisos abiertos.
+    #[cfg(unix)]
+    #[test]
+    fn escribir_solo_para_el_dueno_deja_0600_en_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("secreto");
+        std::fs::write(&ruta, "viejo").unwrap();
+        std::fs::set_permissions(&ruta, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        escribir_solo_para_el_dueno(&ruta, "nuevo").unwrap();
+
+        let modo = std::fs::metadata(&ruta).unwrap().permissions().mode() & 0o777;
+        assert_eq!(modo, 0o600);
+    }
+
+    #[test]
+    fn escribir_de_una_vez_deja_el_fichero_sin_el_temporal() {
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let ruta = carpeta_temporal.path().join("sub").join("f.toml");
+
+        escribir_de_una_vez(&ruta, "hola").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&ruta).unwrap(), "hola");
+        assert!(!ruta_del_temporal(&ruta).exists());
+    }
+
+    /// Una carpeta con el nombre del fichero: ningún sistema deja poner un fichero encima.
+    #[test]
+    fn si_no_se_puede_poner_su_nombre_no_queda_el_temporal() {
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("f.toml");
+        std::fs::create_dir(&ruta).unwrap();
+        std::fs::write(ruta.join("dentro"), "x").unwrap();
+
+        assert!(escribir_de_una_vez(&ruta, "hola").is_err());
+        assert!(!ruta_del_temporal(&ruta).exists());
+    }
+
+    #[test]
     fn la_huella_de_unos_bytes_es_la_de_un_fichero_con_ellos() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("abc.txt");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("abc.txt");
         std::fs::write(&ruta, b"abc").unwrap();
 
         // El vector de prueba de «abc» de FIPS 180-2.
@@ -179,8 +289,8 @@ mod pruebas {
 
     #[test]
     fn la_huella_es_la_sha256_del_contenido() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("abc.txt");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("abc.txt");
         std::fs::write(&ruta, "abc").unwrap();
 
         assert_eq!(

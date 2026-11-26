@@ -106,7 +106,7 @@ pub fn leer_nota(texto: &str) -> Result<NotaDeRubrica, String> {
         .rev()
         .find(|l| l.trim_start().starts_with(PREFIJO_DE_NOTA))
     else {
-        return Err(format!("no tiene la línea «{PREFIJO_DE_NOTA}»"));
+        return Err(super::mensajes::rubrica_sin_nota(PREFIJO_DE_NOTA));
     };
     let valor = linea
         .trim_start()
@@ -119,9 +119,9 @@ pub fn leer_nota(texto: &str) -> Result<NotaDeRubrica, String> {
     let numero: f64 = valor
         .replace(',', ".")
         .parse()
-        .map_err(|_| format!("la nota «{valor}» no es un número"))?;
+        .map_err(|_| super::mensajes::nota_que_no_es_un_numero(valor))?;
     if !(0.0..=NOTA_MAXIMA).contains(&numero) {
-        return Err(format!("la nota {valor} está fuera de 0 a {NOTA_MAXIMA}"));
+        return Err(super::mensajes::nota_fuera_de_la_escala(valor, NOTA_MAXIMA));
     }
     Ok(NotaDeRubrica::Puntuada(Nota::Evaluada(numero)))
 }
@@ -245,8 +245,8 @@ mod pruebas {
 
     #[test]
     fn el_error_de_un_fichero_dice_cual_es() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join(nombre_del_fichero("E02", 44));
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join(nombre_del_fichero("E02", 44));
         std::fs::write(&ruta, con_nota("siete")).unwrap();
 
         let error = leer_fichero(&ruta).unwrap_err().to_string();

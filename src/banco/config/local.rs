@@ -413,7 +413,7 @@ impl ComprobacionLocal {
     /// Lo que no tiene sentido y se rechaza al leer `banco.toml`, o `None`.
     pub fn problema(&self) -> Option<String> {
         if self.interprete.as_ref().is_some_and(Vec::is_empty) {
-            return Some("«interprete» no puede estar vacío".into());
+            return Some(crate::banco::mensajes::interprete_vacio());
         }
         let mayores_que_cero = [
             (
@@ -429,7 +429,7 @@ impl ComprobacionLocal {
         mayores_que_cero
             .iter()
             .find(|(_, es_cero)| *es_cero)
-            .map(|(clave, _)| format!("«{clave}» tiene que ser mayor que 0"))
+            .map(|(clave, _)| crate::banco::mensajes::tiene_que_ser_mayor_que_cero(clave))
             .or_else(|| self.problema_del_aislamiento(std::env::consts::OS))
     }
 
@@ -438,14 +438,15 @@ impl ComprobacionLocal {
         let aislamiento = self.aislamiento;
         if let Some(donde) = aislamiento.sistema_donde_funciona() {
             if donde != sistema {
-                return Some(format!(
-                    "«aislamiento = \"{}\"» solo existe en {donde}, y esto es {sistema}",
-                    aislamiento.nombre()
+                return Some(crate::banco::mensajes::aislamiento_de_otro_sistema(
+                    aislamiento.nombre(),
+                    donde,
+                    sistema,
                 ));
             }
         }
         if aislamiento == Aislamiento::EspacioDeNombres && self.envoltorio.is_empty() {
-            return Some("«envoltorio» no puede estar vacío con «espacio_de_nombres»".into());
+            return Some(crate::banco::mensajes::envoltorio_vacio());
         }
         None
     }

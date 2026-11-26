@@ -64,10 +64,10 @@ pub(crate) mod pruebas {
 
     #[test]
     fn anotar_una_tanda_escribe_el_registro_con_el_nombre_de_su_carpeta() {
-        let dir = tempfile::tempdir().unwrap();
-        let tanda = dir.path().join("2026-11-12-1219-modelo");
+        let carpeta = tempfile::tempdir().unwrap();
+        let tanda = carpeta.path().join("2026-11-12-1219-modelo");
         guardar_tanda(&tanda, true);
-        let registro = dir.path().join("registro-de-modelos.toml");
+        let registro = carpeta.path().join("registro-de-modelos.toml");
 
         let desenlace = anotar_tanda(&tanda, &registro).unwrap();
 
@@ -79,10 +79,10 @@ pub(crate) mod pruebas {
 
     #[test]
     fn una_tanda_que_no_se_anota_no_toca_el_registro() {
-        let dir = tempfile::tempdir().unwrap();
-        let tanda = dir.path().join("antigua");
+        let carpeta = tempfile::tempdir().unwrap();
+        let tanda = carpeta.path().join("antigua");
         guardar_tanda(&tanda, false);
-        let registro = dir.path().join("registro-de-modelos.toml");
+        let registro = carpeta.path().join("registro-de-modelos.toml");
 
         let desenlace = anotar_tanda(&tanda, &registro).unwrap();
 

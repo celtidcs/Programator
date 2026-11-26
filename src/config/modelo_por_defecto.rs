@@ -104,8 +104,8 @@ mod pruebas {
 
     #[test]
     fn el_fichero_se_cambia_en_su_sitio() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("programator.toml");
         std::fs::write(&ruta, CONFIGURACION).unwrap();
 
         cambiar_en(&ruta, "modelos/nuevo.gguf").unwrap();

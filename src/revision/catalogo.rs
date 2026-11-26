@@ -13,8 +13,9 @@ use crate::error::{Error, Resultado};
 
 /// El prefijo de las etiquetas de Hugging Face que dicen la licencia: `license:apache-2.0`.
 const PREFIJO_DE_LICENCIA: &str = "license:";
-/// La API identifica a quien pregunta por el `User-Agent`, como la de GitHub en `actualizacion`.
-pub(super) const AGENTE: &str = "Programator";
+/// La API identifica a quien pregunta por el `User-Agent`: el mismo nombre con que Programator se
+/// presenta a GitHub en el aviso de versión.
+pub(super) const AGENTE: &str = crate::aviso_de_version::NOMBRE_DEL_PROGRAMA;
 
 /// Una búsqueda: el texto, la biblioteca y cuántos resultados.
 #[derive(Debug, Clone, PartialEq, Eq)]

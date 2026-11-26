@@ -18,7 +18,8 @@ use crate::config::{Config, Muestreo};
 use crate::error::{Error, Resultado};
 use crate::motor::fichero_de_modelo::nombre_de_modelo;
 use crate::motor::mensajes::{
-    mensaje_arranque_motor, mensaje_motor_terminado, mensaje_sin_motor_que_arrancar,
+    mensaje_arranque_motor, mensaje_motor_terminado, mensaje_puerto_con_otra_clave,
+    mensaje_sin_motor_que_arrancar,
 };
 use crate::motor::{encaje, hardware, proceso, MotorLlama};
 use crate::reloj::Reloj;
@@ -114,6 +115,9 @@ pub enum AccionDelMotor {
     /// El propio, con el modelo pedido, terminó: es un fallo, no una espera. Se suelta y no se
     /// relanza en esta vuelta; la siguiente lo intentará de nuevo, y el encargo cuenta un intento.
     Terminado,
+    /// En el puerto hay un `llama-server` que no acepta la clave de Programator: ni se usa ni se
+    /// arranca otro encima, que no podría escuchar en un puerto ocupado. Lo resuelve la persona.
+    PuertoConOtraClave,
 }
 
 /// Compara el servidor propio con el modelo pedido. Sin modelo pedido, el propio vale.
@@ -130,16 +134,17 @@ pub fn servidor_propio(lanzado: Option<(&Path, bool)>, pedido: Option<&Path>) ->
 /// aún no escucha pero sigue vivo está arrancando; si se murió, el encargo falla con el motivo
 /// (`Terminado`) y pasa por la cola de pendientes.
 pub fn decidir_motor(propio: ServidorPropio, puerto: proceso::EstadoServidor) -> AccionDelMotor {
-    use proceso::EstadoServidor::{Cargando, Listo, NoDisponible};
+    use proceso::EstadoServidor::{Cargando, Listo, NoDisponible, RechazaLaClave};
     match (propio, puerto) {
+        (ServidorPropio::Otro, _) => AccionDelMotor::Cambiar,
+        (ServidorPropio::Mismo { vivo: false }, _) => AccionDelMotor::Terminado,
+        (_, RechazaLaClave) => AccionDelMotor::PuertoConOtraClave,
         (ServidorPropio::Ninguno, Listo) => AccionDelMotor::UsarAjeno,
         (ServidorPropio::Ninguno, Cargando) => AccionDelMotor::Esperar,
         (ServidorPropio::Ninguno, NoDisponible) => AccionDelMotor::Arrancar,
-        (ServidorPropio::Mismo { vivo: false }, _) => AccionDelMotor::Terminado,
         (ServidorPropio::Mismo { vivo: true }, Listo) => AccionDelMotor::Usar,
         (ServidorPropio::Mismo { vivo: true }, Cargando) => AccionDelMotor::Esperar,
         (ServidorPropio::Mismo { vivo: true }, NoDisponible) => AccionDelMotor::Esperar,
-        (ServidorPropio::Otro, _) => AccionDelMotor::Cambiar,
     }
 }
 
@@ -160,7 +165,10 @@ pub fn asegurar_motor_para(
         .as_ref()
         .map(|s| (s.modelo(), s.sigue_vivo()));
     let propio = servidor_propio(lanzado, ruta_pedida.as_deref());
-    let mut accion = decidir_motor(propio, proceso::hay_servidor(config.motor.puerto));
+    let mut accion = decidir_motor(
+        propio,
+        proceso::hay_servidor(config.motor.puerto, clave_vigente(config).as_ref()),
+    );
     if accion == AccionDelMotor::Terminado {
         let modelo = servidor_local.take().map(|s| s.modelo().to_path_buf());
         return Err(Error::MotorSinRespuesta(mensaje_motor_terminado(
@@ -172,7 +180,7 @@ pub fn asegurar_motor_para(
         drop(servidor_local.take());
         accion = decidir_motor(
             ServidorPropio::Ninguno,
-            proceso::hay_servidor(config.motor.puerto),
+            proceso::hay_servidor(config.motor.puerto, clave_vigente(config).as_ref()),
         );
     }
     let nombre = pedido.modelo.unwrap_or("");
@@ -196,6 +204,9 @@ pub fn asegurar_motor_para(
                 Procedencia::Ajeno
             },
         }),
+        AccionDelMotor::PuertoConOtraClave => Err(Error::MotorSinRespuesta(
+            mensaje_puerto_con_otra_clave(config.motor.puerto),
+        )),
         AccionDelMotor::Arrancar | AccionDelMotor::Cambiar | AccionDelMotor::Terminado => {
             *servidor_local = Some(arrancar(config, ruta_pedida.as_deref(), pedido)?);
             // Recién arrancado, todavía está cargando el modelo: no tiene sentido lanzarle ya la
@@ -301,12 +312,15 @@ fn arrancar(
     pedido
         .terminal
         .avisar(&mensaje_arranque_motor(&resolucion.aviso));
+    let clave = crate::motor::clave::para_arrancar(config)?;
     proceso::ServidorLocal::arrancar(
         &config.motor,
         &ruta_binario,
         ruta_modelo,
         resolucion.capas,
+        resolucion.en_cpu,
         gpu.map(|g| g.vram_libre),
+        &clave,
     )
 }
 
@@ -338,6 +352,9 @@ pub const LATIDO_DE_CARGA: Duration = Duration::from_secs(1);
 pub struct Carga {
     pub capas: u32,
     pub vram_mib: Option<u64>,
+    /// Lo que el encaje calculaba que ocuparía esa misma carga, en MiB. Con `vram_mib`, da el
+    /// margen que de verdad hace falta en esta máquina.
+    pub vram_calculada_mib: Option<u64>,
     pub duracion: Duration,
     pub tarjeta: Option<String>,
 }
@@ -365,7 +382,7 @@ pub fn cargar_midiendo(
     terminal: &dyn Terminal,
 ) -> Resultado<DesenlaceDeCarga> {
     if matches!(
-        proceso::hay_servidor(config.motor.puerto),
+        proceso::hay_servidor(config.motor.puerto, clave_vigente(config).as_ref()),
         proceso::EstadoServidor::Listo
     ) {
         return Ok(DesenlaceDeCarga::Ajeno);
@@ -386,9 +403,17 @@ pub fn cargar_midiendo(
         return Ok(DesenlaceDeCarga::Ajeno);
     };
     propio.anotar_vram_ocupada(vram_mib);
+    let vram_calculada_mib = encaje::vram_calculada(
+        &config.motor,
+        propio.modelo(),
+        propio.capas_gpu(),
+        propio.en_cpu(),
+    )
+    .map(|bytes| bytes / crate::unidades::BYTES_POR_MIB);
     Ok(DesenlaceDeCarga::Listo(Carga {
         capas: propio.capas_gpu(),
         vram_mib,
+        vram_calculada_mib,
         duracion,
         tarjeta,
     }))
@@ -403,7 +428,15 @@ fn construir_motor(config: &Config, muestreo: &Muestreo, modelo: &str) -> MotorL
         )
         .con_herramientas(crate::arnes::ficha::declaraciones_concedibles())
         .con_muestreo(muestreo.clone())
-        .con_empezar_en_frio(config.motor.empezar_en_frio)
+        .con_inicio(crate::motor::continuidad::Inicio::segun(
+            config.motor.empezar_en_frio,
+        ))
+        .con_clave(clave_vigente(config))
+}
+
+/// La clave con que se habla ahora con el motor del puerto.
+fn clave_vigente(config: &Config) -> Option<crate::motor::clave::ClaveDelMotor> {
+    crate::motor::clave::vigente(config)
 }
 
 #[cfg(test)]
@@ -412,7 +445,102 @@ mod pruebas {
     use crate::reloj::RelojDeMentira;
     use crate::terminal::{Flujo, TerminalDeMentira};
 
-    use proceso::EstadoServidor::{Cargando, Listo, NoDisponible};
+    use proceso::EstadoServidor::{Cargando, Listo, NoDisponible, RechazaLaClave};
+
+    /// Un `llama-server` de mentira en una sola conexión: `/health` siempre contesta, y `/props`
+    /// solo con la clave `clave`; sin ella, 401, como b10993.
+    fn motor_con_clave(clave: &'static str) -> u16 {
+        use std::io::{Read, Write};
+
+        let escucha = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto = escucha.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let Ok((mut conexion, _)) = escucha.accept() else {
+                return;
+            };
+            let mut buffer = [0u8; 4096];
+            loop {
+                let leidos = conexion.read(&mut buffer).unwrap_or(0);
+                if leidos == 0 {
+                    return;
+                }
+                let peticion = String::from_utf8_lossy(&buffer[..leidos]).to_lowercase();
+                let con_clave = peticion.contains(&format!("authorization: bearer {clave}"));
+                let (codigo, cuerpo) = if peticion.starts_with("get /health") {
+                    (200, "{\"status\":\"ok\"}")
+                } else if con_clave {
+                    (200, "{\"total_slots\":1}")
+                } else {
+                    (401, "{\"error\":{\"code\":401}}")
+                };
+                let respuesta = format!(
+                    "HTTP/1.1 {codigo} X\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\n\r\n{cuerpo}",
+                    cuerpo.len()
+                );
+                if conexion.write_all(respuesta.as_bytes()).is_err() {
+                    return;
+                }
+            }
+        });
+        puerto
+    }
+
+    /// A6, primera mitad, de punta a punta: con `clave = "auto"` y la clave del arranque anterior
+    /// guardada junto a la configuración, el motor que sigue en el puerto se reutiliza.
+    #[test]
+    fn con_la_clave_guardada_se_reutiliza_el_motor_del_puerto() {
+        let carpeta = tempfile::tempdir().unwrap();
+        let puerto = motor_con_clave("clave-guardada");
+        let ruta_config = carpeta.path().join("programator.toml");
+        std::fs::write(
+            &ruta_config,
+            format!("[motor]\nmodelo = \"m.gguf\"\nclave = \"auto\"\npuerto = {puerto}\n"),
+        )
+        .unwrap();
+        let config = Config::cargar(&ruta_config).unwrap();
+        std::fs::write(
+            config.resolver(crate::motor::clave::FICHERO_DE_LA_CLAVE),
+            "clave-guardada\n",
+        )
+        .unwrap();
+        let muestreo = Muestreo::default();
+        let terminal = TerminalDeMentira::default();
+        let pedido = PedidoDeMotor {
+            modelo: None,
+            muestreo: &muestreo,
+            medida: &|_, _| None,
+            terminal: &terminal,
+        };
+
+        let preparado = asegurar_motor_para(&config, &pedido, &mut None).unwrap();
+
+        assert!(matches!(preparado.estado, EstadoMotor::Disponible(_)));
+        assert_eq!(preparado.procedencia, Procedencia::Ajeno);
+    }
+
+    /// Un motor que no acepta la clave no se usa ni se tapa con otro, sea o no el propio; el propio
+    /// con otro modelo se cambia igual, y el propio muerto sigue siendo un fallo.
+    #[test]
+    fn un_motor_que_rechaza_la_clave_no_se_usa_ni_se_arranca_otro_encima() {
+        for propio in [
+            ServidorPropio::Ninguno,
+            ServidorPropio::Mismo { vivo: true },
+        ] {
+            assert_eq!(
+                decidir_motor(propio, RechazaLaClave),
+                AccionDelMotor::PuertoConOtraClave
+            );
+        }
+        assert_eq!(
+            decidir_motor(ServidorPropio::Otro, RechazaLaClave),
+            AccionDelMotor::Cambiar
+        );
+        assert_eq!(
+            decidir_motor(ServidorPropio::Mismo { vivo: false }, RechazaLaClave),
+            AccionDelMotor::Terminado
+        );
+    }
 
     #[test]
     fn sin_servidor_propio_lo_que_responde_es_ajeno_y_si_no_hay_nada_se_arranca() {
@@ -492,8 +620,8 @@ mod pruebas {
     #[test]
     fn la_medida_registrada_sale_del_registro_y_sin_registro_legible_no_hay() {
         use crate::registro::modelo::{self, pruebas::entrada_de_ejemplo, Registro};
-        let dir = tempfile::tempdir().unwrap();
-        let ruta_config = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta_config = carpeta.path().join("programator.toml");
         std::fs::write(
             &ruta_config,
             "[motor]\nmodelo = \"m.gguf\"\n[agente]\nnombre = \"Programator\"\n\
@@ -517,12 +645,12 @@ mod pruebas {
         let registro = Registro {
             modelo: vec![entrada.clone()],
         };
-        modelo::escribir(&dir.path().join("registro.toml"), &registro).unwrap();
+        modelo::escribir(&carpeta.path().join("registro.toml"), &registro).unwrap();
         let medida = medida_registrada(&config, &entrada.nombre, &entrada.tarjeta).unwrap();
         assert_eq!(medida.capas, 34);
         assert_eq!(medida.vram_ocupada_mib, 13763);
 
-        std::fs::write(dir.path().join("registro.toml"), "esto no es toml [").unwrap();
+        std::fs::write(carpeta.path().join("registro.toml"), "esto no es toml [").unwrap();
         assert_eq!(
             medida_registrada(&config, &entrada.nombre, &entrada.tarjeta),
             None
@@ -532,8 +660,8 @@ mod pruebas {
     #[test]
     fn un_registro_ilegible_se_avisa_por_la_salida_de_errores_de_la_terminal_inyectada() {
         use crate::registro::{mensajes, modelo};
-        let dir = tempfile::tempdir().unwrap();
-        let ruta_config = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta_config = carpeta.path().join("programator.toml");
         std::fs::write(
             &ruta_config,
             "[motor]\nmodelo = \"m.gguf\"\n[agente]\nnombre = \"Programator\"\n\
@@ -541,7 +669,7 @@ mod pruebas {
         )
         .unwrap();
         let config = Config::cargar(&ruta_config).unwrap();
-        let ruta_registro = dir.path().join("registro.toml");
+        let ruta_registro = carpeta.path().join("registro.toml");
         std::fs::write(&ruta_registro, "esto no es toml [").unwrap();
         let terminal = TerminalDeMentira::default();
 

@@ -76,24 +76,25 @@ mod pruebas {
 
     #[test]
     fn rehacer_el_informe_recoge_la_nota_de_la_rubrica() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let resultados = tanda_de_ejemplo();
-        guardar(&resultados, dir.path()).unwrap();
-        std::fs::create_dir_all(dir.path().join("rubricas")).unwrap();
+        guardar(&resultados, carpeta.path()).unwrap();
+        std::fs::create_dir_all(carpeta.path().join("rubricas")).unwrap();
         let rubrica =
             componer_fichero("E01", 42, "respuesta", "rúbrica").replace("Nota: \n", "Nota: 4\n");
         std::fs::write(
-            dir.path()
+            carpeta
+                .path()
                 .join("rubricas")
                 .join(nombre_del_fichero("E01", 42)),
             rubrica,
         )
         .unwrap();
 
-        let pendientes = rehacer_informe(&dir.path().join(NOMBRE_RESULTADOS)).unwrap();
+        let pendientes = rehacer_informe(&carpeta.path().join(NOMBRE_RESULTADOS)).unwrap();
 
         assert_eq!(pendientes, 0);
-        let informe = std::fs::read_to_string(dir.path().join(NOMBRE_INFORME)).unwrap();
+        let informe = std::fs::read_to_string(carpeta.path().join(NOMBRE_INFORME)).unwrap();
         assert!(informe.contains("| criterio | 4,0 |"));
         assert!(!informe.contains("Quedan"));
     }

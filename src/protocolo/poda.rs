@@ -266,21 +266,13 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
 
         let mut diagnostico = String::new();
         if let Some(primero) = perdidos.first() {
-            diagnostico.push_str(&format!(
-                "perdidos: {}; primer perdido: «{}»",
-                perdidos.len(),
-                muestra_de(primero)
-            ));
+            diagnostico.push_str(&mensaje_perdidos(perdidos.len(), &muestra_de(primero)));
         }
         if let Some(primero) = inventados.first() {
             if !diagnostico.is_empty() {
                 diagnostico.push_str("; ");
             }
-            diagnostico.push_str(&format!(
-                "inventados: {}; primer inventado: «{}»",
-                inventados.len(),
-                muestra_de(primero)
-            ));
+            diagnostico.push_str(&mensaje_inventados(inventados.len(), &muestra_de(primero)));
         }
 
         return Err(Error::PodaInvalida(mensaje_contenido_modificado(
@@ -300,15 +292,11 @@ pub fn verificar_integridad(original: &str, propuesta: &Propuesta) -> Resultado<
     }
 
     if !es_subsecuencia(&bloques_podado, &bloques_original) {
-        return Err(Error::PodaInvalida(
-            "bloques de la versión podada no mantienen su orden original".to_string(),
-        ));
+        return Err(Error::PodaInvalida(mensaje_orden_perdido_en_lo_podado()));
     }
 
     if !es_subsecuencia(&bloques_archivo, &bloques_original) {
-        return Err(Error::PodaInvalida(
-            "bloques del archivo no mantienen su orden original".to_string(),
-        ));
+        return Err(Error::PodaInvalida(mensaje_orden_perdido_en_el_archivo()));
     }
 
     Ok(())
@@ -468,6 +456,26 @@ fn mensaje_recuento_de_bloques(original: usize, podado: usize, archivo: usize) -
         archivo,
         podado + archivo
     )
+}
+
+/// Cuántos bloques del original faltan en la poda, con el primero.
+fn mensaje_perdidos(cuantos: usize, primero: &str) -> String {
+    format!("perdidos: {cuantos}; primer perdido: «{primero}»")
+}
+
+/// Cuántos bloques de la poda no estaban en el original, con el primero.
+fn mensaje_inventados(cuantos: usize, primero: &str) -> String {
+    format!("inventados: {cuantos}; primer inventado: «{primero}»")
+}
+
+/// La versión podada desordenó los bloques.
+fn mensaje_orden_perdido_en_lo_podado() -> String {
+    "bloques de la versión podada no mantienen su orden original".to_string()
+}
+
+/// El archivo desordenó los bloques.
+fn mensaje_orden_perdido_en_el_archivo() -> String {
+    "bloques del archivo no mantienen su orden original".to_string()
 }
 
 /// La poda cambió el texto de algún bloque; el diagnóstico dice qué se perdió o se inventó.
@@ -1025,20 +1033,22 @@ Revisa el plan de pruebas.
 
     #[test]
     fn un_buzon_con_la_extension_en_mayusculas_no_la_duplica() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let buzon = "# Claude\n\n**LATIDO:** 10:00\n\n---\n\n## Para Programator\n\nTarea A.\n";
         let propuesta = proponer_poda_por_cierre(buzon, "Tarea A.").unwrap();
 
         let (ruta_podado, ruta_archivo) =
-            guardar_propuesta_poda(dir.path(), "Claude.MD", &propuesta).unwrap();
+            guardar_propuesta_poda(carpeta.path(), "Claude.MD", &propuesta).unwrap();
 
         assert_eq!(
             ruta_podado,
-            dir.path().join(".gestor/candidatos/poda/claude.md")
+            carpeta.path().join(".gestor/candidatos/poda/claude.md")
         );
         assert_eq!(
             ruta_archivo,
-            dir.path().join(".gestor/candidatos/poda/claude-archivo.md")
+            carpeta
+                .path()
+                .join(".gestor/candidatos/poda/claude-archivo.md")
         );
         assert_eq!(nombre_del_buzon("Claude.MD"), "Claude");
         assert_eq!(nombre_del_buzon("claude2.md"), "claude2");
@@ -1047,22 +1057,24 @@ Revisa el plan de pruebas.
 
     #[test]
     fn guardar_propuesta_poda_escribe_ficheros_en_candidatos() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let buzon = "# Claude\n\n**LATIDO:** 10:00\n\n---\n\n## Para Programator\n\nTarea A.\n";
         let propuesta = proponer_poda_por_cierre(buzon, "Tarea A.").unwrap();
 
         let (ruta_podado, ruta_archivo) =
-            guardar_propuesta_poda(dir.path(), "claude.md", &propuesta).unwrap();
+            guardar_propuesta_poda(carpeta.path(), "claude.md", &propuesta).unwrap();
 
         assert!(ruta_podado.exists());
         assert!(ruta_archivo.exists());
         assert_eq!(
             ruta_podado,
-            dir.path().join(".gestor/candidatos/poda/claude.md")
+            carpeta.path().join(".gestor/candidatos/poda/claude.md")
         );
         assert_eq!(
             ruta_archivo,
-            dir.path().join(".gestor/candidatos/poda/claude-archivo.md")
+            carpeta
+                .path()
+                .join(".gestor/candidatos/poda/claude-archivo.md")
         );
 
         let contenido_podado = std::fs::read_to_string(ruta_podado).unwrap();

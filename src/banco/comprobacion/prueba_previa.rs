@@ -84,8 +84,8 @@ mod pruebas {
 
     #[test]
     fn prepara_una_carpeta_que_ya_existe_dentro_de_resultados_y_la_borra() {
-        let dir = tempfile::tempdir().unwrap();
-        let resultados = dir.path().join("resultados");
+        let carpeta = tempfile::tempdir().unwrap();
+        let resultados = carpeta.path().join("resultados");
         let mut lanzador = DeMentira::nuevo(false);
 
         probar_el_lanzador(&mut lanzador, &resultados).unwrap();
@@ -98,38 +98,38 @@ mod pruebas {
 
     #[test]
     fn si_no_se_puede_preparar_lo_dice_antes_del_modelo_y_no_deja_la_carpeta() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let mut lanzador = DeMentira::nuevo(true);
 
-        let fallo = probar_el_lanzador(&mut lanzador, dir.path())
+        let fallo = probar_el_lanzador(&mut lanzador, carpeta.path())
             .unwrap_err()
             .to_string();
 
         assert!(fallo.contains("Acceso denegado"), "{fallo}");
         assert!(fallo.contains("antes de cargar el modelo"), "{fallo}");
         assert!(fallo.contains("activa = false"), "{fallo}");
-        assert!(!dir.path().join(CARPETA_DE_LA_PRUEBA_PREVIA).exists());
+        assert!(!carpeta.path().join(CARPETA_DE_LA_PRUEBA_PREVIA).exists());
     }
 
     #[test]
     fn lo_que_quedara_de_una_prueba_anterior_se_borra_antes() {
-        let dir = tempfile::tempdir().unwrap();
-        let resto = dir
+        let carpeta = tempfile::tempdir().unwrap();
+        let resto = carpeta
             .path()
             .join(CARPETA_DE_LA_PRUEBA_PREVIA)
             .join("viejo.txt");
         std::fs::create_dir_all(resto.parent().unwrap()).unwrap();
         std::fs::write(&resto, "x").unwrap();
 
-        probar_el_lanzador(&mut DeMentira::nuevo(false), dir.path()).unwrap();
+        probar_el_lanzador(&mut DeMentira::nuevo(false), carpeta.path()).unwrap();
 
         assert!(!resto.exists());
     }
 
     #[test]
     fn la_carpeta_se_prepara_vacia_aunque_quedaran_restos() {
-        let dir = tempfile::tempdir().unwrap();
-        let resto = dir
+        let carpeta = tempfile::tempdir().unwrap();
+        let resto = carpeta
             .path()
             .join(CARPETA_DE_LA_PRUEBA_PREVIA)
             .join("viejo.txt");
@@ -137,7 +137,7 @@ mod pruebas {
         std::fs::write(&resto, "x").unwrap();
         let mut lanzador = DeMentira::nuevo(false);
 
-        probar_el_lanzador(&mut lanzador, dir.path()).unwrap();
+        probar_el_lanzador(&mut lanzador, carpeta.path()).unwrap();
 
         assert!(lanzador.existia_al_prepararla);
         assert!(!lanzador.tenia_algo_al_prepararla);

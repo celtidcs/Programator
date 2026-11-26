@@ -27,6 +27,26 @@ pub enum Pedido {
     Cerrar,
 }
 
+impl Pedido {
+    /// Si atenderlo toca el motor del ciclo. Solo `probar`: suelta el motor para pasar el banco
+    /// (`revision::probar`, `soltar_motor` y `pasar_tanda`). `buscar` consulta Hugging Face y
+    /// descarga; `cerrar` comprueba y puntúa las tandas ya pasadas, aplica la regla y, si toca,
+    /// cambia el modelo de la configuración, que el ciclo relee después. Ninguno de los dos carga
+    /// ni suelta el motor, así que pueden atenderse mientras un modelo carga.
+    pub fn necesita_el_motor(&self) -> bool {
+        matches!(self, Self::Probar(_))
+    }
+}
+
+/// Si atender el texto de un encargo toca el motor del ciclo: solo un pedido de revisión que lo
+/// necesite. Lo mal escrito se contesta con su motivo y no lo toca.
+pub fn necesita_el_motor(texto: &str) -> bool {
+    match reconocer(texto) {
+        Reconocido::Pedido(pedido) => pedido.necesita_el_motor(),
+        Reconocido::NoEsDeRevision | Reconocido::MalEscrito(_) => false,
+    }
+}
+
 /// Lo que es el texto de un encargo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reconocido {
@@ -118,6 +138,25 @@ mod pruebas {
             repositorio: repositorio.into(),
             fichero: fichero.into(),
         }
+    }
+
+    #[test]
+    fn solo_probar_necesita_el_motor() {
+        assert!(!Pedido::Buscar.necesita_el_motor());
+        assert!(!Pedido::Cerrar.necesita_el_motor());
+        assert!(Pedido::Probar(vec![candidato("a/b", "c.gguf")]).necesita_el_motor());
+    }
+
+    #[test]
+    fn el_texto_dice_si_necesita_el_motor() {
+        assert!(!necesita_el_motor("revisión: buscar"));
+        assert!(!necesita_el_motor("revision: cerrar"));
+        assert!(necesita_el_motor(
+            "revisión: probar
+a/b c.gguf"
+        ));
+        assert!(!necesita_el_motor("revisión: lo que sea"));
+        assert!(!necesita_el_motor("haz esto"));
     }
 
     #[test]

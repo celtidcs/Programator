@@ -24,9 +24,7 @@ use crate::error::{Error, Resultado};
 use crate::ficheros::{copiar_arbol, crear_carpeta, entradas, escribir, leer, leer_si_existe};
 use crate::motor::proceso::EstadoServidor;
 use crate::motor::{Consumo, Mensaje, Motor, Respuesta};
-
-/// El canal dentro de la carpeta de trabajo.
-const CARPETA_DEL_CANAL: &str = ".gestor/canal";
+use crate::protocolo::carpetas::carpeta_del_canal;
 
 /// La carpeta de un encargo en una semilla, dentro de la carpeta de la tanda.
 pub fn carpeta_del_encargo(tanda: &Path, id: &str, semilla: i64) -> PathBuf {
@@ -137,7 +135,7 @@ pub fn preparar_carpeta(
             carpeta,
         )));
     }
-    crear_carpeta(&carpeta.join(CARPETA_DEL_CANAL))?;
+    crear_carpeta(&carpeta_del_canal(carpeta))?;
     let partida = encargo.carpeta.join(CARPETA_PARTIDA);
     if partida.is_dir() {
         copiar_arbol(&partida, carpeta)?;
@@ -176,9 +174,7 @@ pub fn pasar_encargo(
 
     // El buzón de quien encarga existe ya, solo con su encabezado, y Programator toma su foto
     // inicial como al arrancar: el encargo que se escribe después es lo único nuevo.
-    let buzon = carpeta
-        .join(CARPETA_DEL_CANAL)
-        .join(format!("{}.md", preparacion.buzon_que_encarga));
+    let buzon = carpeta_del_canal(carpeta).join(format!("{}.md", preparacion.buzon_que_encarga));
     let encabezado = encabezado_del_buzon(preparacion.buzon_que_encarga);
     escribir(&buzon, &encabezado)?;
     tomar_instantanea_inicial(carpeta, preparacion.agente)?;
@@ -241,9 +237,7 @@ impl Recogida {
         Ok(Self {
             a_tiempo,
             respuesta: leer_si_existe(
-                &carpeta
-                    .join(CARPETA_DEL_CANAL)
-                    .join(format!("{}.md", agente.to_lowercase())),
+                &carpeta_del_canal(carpeta).join(format!("{}.md", agente.to_lowercase())),
             )?,
             entregas: ficheros_de(&carpeta.join(carpeta_de_candidatos(agente)))?,
             consumo,
@@ -316,8 +310,8 @@ mod pruebas {
         }
     }
 
-    fn encargo_en(dir: &Path, id: &str, partida: &[(&str, &str)]) -> Encargo {
-        let carpeta = dir.join("encargos").join(id);
+    fn encargo_en(carpeta_temporal: &Path, id: &str, partida: &[(&str, &str)]) -> Encargo {
+        let carpeta = carpeta_temporal.join("encargos").join(id);
         std::fs::create_dir_all(&carpeta).unwrap();
         std::fs::write(carpeta.join(NOMBRE_ENUNCIADO), "Escribe hola.rs.\n").unwrap();
         for (ruta, contenido) in partida {
@@ -358,12 +352,12 @@ mod pruebas {
     }
 
     fn pasar(
-        dir: &Path,
+        carpeta_temporal: &Path,
         encargo: &Encargo,
         asegurar: &mut dyn FnMut() -> Resultado<EstadoMotor>,
         reloj: &mut dyn Reloj,
     ) -> Resultado<Recogida> {
-        let carpeta = carpeta_del_encargo(&dir.join("tanda"), &encargo.ficha.id, 42);
+        let carpeta = carpeta_del_encargo(&carpeta_temporal.join("tanda"), &encargo.ficha.id, 42);
         preparar_carpeta(&carpeta, encargo, &preparacion())?;
         let limites = Limites::default();
         let verificacion = Verificacion::default();
@@ -381,8 +375,8 @@ mod pruebas {
 
     #[test]
     fn un_doble_que_entrega_deja_su_fichero_en_la_recogida() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E03", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta.path(), "E03", &[]);
         let motor = MotorDoble::con_guion(vec![
             pedir(
                 "escribir_propuesta",
@@ -396,7 +390,7 @@ mod pruebas {
         ]);
 
         let recogida = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargo,
             &mut motor_una_vez(motor),
             &mut reloj(),
@@ -411,12 +405,12 @@ mod pruebas {
 
     #[test]
     fn un_doble_que_solo_responde_texto_deja_la_respuesta_y_ninguna_entrega() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E01", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta.path(), "E01", &[]);
         let motor = MotorDoble::con_guion(vec![Respuesta::Texto("Mi opinión es esta.".into())]);
 
         let recogida = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargo,
             &mut motor_una_vez(motor),
             &mut reloj(),
@@ -429,8 +423,8 @@ mod pruebas {
 
     #[test]
     fn con_el_tiempo_maximo_agotado_el_ciclo_no_llega_a_llamar_al_motor() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E03", &[]);
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta_temporal.path(), "E03", &[]);
         let motor = MotorDoble::con_guion(vec![pedir(
             "escribir_propuesta",
             serde_json::json!({"nombre": "hola.rs", "contenido": "fn main() {}\n"}),
@@ -439,7 +433,7 @@ mod pruebas {
             tiempo_maximo: Duration::ZERO,
             ..preparacion()
         };
-        let carpeta = carpeta_del_encargo(&dir.path().join("tanda"), "E03", 42);
+        let carpeta = carpeta_del_encargo(&carpeta_temporal.path().join("tanda"), "E03", 42);
         preparar_carpeta(&carpeta, &encargo, &preparacion).unwrap();
         let limites = Limites::default();
         let verificacion = Verificacion::default();
@@ -467,8 +461,8 @@ mod pruebas {
     /// Con el reloj de verdad, la primera respuesta no gasta tiempo y el modelo llegaría a entregar.
     #[test]
     fn el_plazo_del_ciclo_va_con_el_reloj_inyectado_y_corta_al_motor_que_tarda() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E03", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta.path(), "E03", &[]);
         let reloj = reloj();
         let motor = MotorQueTarda {
             interno: MotorDoble::con_guion(vec![
@@ -488,7 +482,7 @@ mod pruebas {
             None => Err(Error::Banco("dos veces".into())),
         };
 
-        let recogida = pasar(dir.path(), &encargo, &mut asegurar, &mut reloj.clone()).unwrap();
+        let recogida = pasar(carpeta.path(), &encargo, &mut asegurar, &mut reloj.clone()).unwrap();
 
         assert!(recogida.entregas.is_empty(), "el motor no debió seguir");
         assert!(
@@ -501,8 +495,8 @@ mod pruebas {
 
     #[test]
     fn el_consumo_se_suma_a_lo_largo_de_varias_respuestas() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E01", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta.path(), "E01", &[]);
         let gasto = |generados| {
             Some(Consumo {
                 tokens_generados: Some(generados),
@@ -517,7 +511,7 @@ mod pruebas {
         .con_consumos(vec![gasto(10), gasto(5)]);
 
         let recogida = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargo,
             &mut motor_una_vez(motor),
             &mut reloj(),
@@ -531,8 +525,8 @@ mod pruebas {
 
     #[test]
     fn mientras_el_motor_carga_se_espera_y_luego_se_atiende() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E01", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta.path(), "E01", &[]);
         let mut motor = Some(MotorDoble::con_guion(vec![Respuesta::Texto(
             "Hecho.".into(),
         )]));
@@ -549,7 +543,7 @@ mod pruebas {
         };
         let mut reloj = reloj();
 
-        let recogida = pasar(dir.path(), &encargo, &mut asegurar, &mut reloj).unwrap();
+        let recogida = pasar(carpeta.path(), &encargo, &mut asegurar, &mut reloj).unwrap();
 
         assert_eq!(reloj.esperas(), 2);
         assert!(recogida.a_tiempo);
@@ -558,11 +552,11 @@ mod pruebas {
 
     #[test]
     fn si_el_motor_no_termina_de_cargar_a_tiempo_no_se_entrega() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E01", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta.path(), "E01", &[]);
         let mut asegurar = || Ok(EstadoMotor::Esperando);
 
-        let recogida = pasar(dir.path(), &encargo, &mut asegurar, &mut reloj()).unwrap();
+        let recogida = pasar(carpeta.path(), &encargo, &mut asegurar, &mut reloj()).unwrap();
 
         assert!(!recogida.a_tiempo);
         assert!(recogida.entregas.is_empty());
@@ -571,9 +565,9 @@ mod pruebas {
 
     #[test]
     fn la_carpeta_lleva_la_partida_y_las_normas_y_no_ve_nada_del_encargo_anterior() {
-        let dir = tempfile::tempdir().unwrap();
-        let primero = encargo_en(dir.path(), "U01", &[("src/Pedidos.cs", "class P {}")]);
-        let segundo = encargo_en(dir.path(), "U02", &[]);
+        let carpeta = tempfile::tempdir().unwrap();
+        let primero = encargo_en(carpeta.path(), "U01", &[("src/Pedidos.cs", "class P {}")]);
+        let segundo = encargo_en(carpeta.path(), "U02", &[]);
         let motor = |texto: &str| {
             MotorDoble::con_guion(vec![
                 pedir(
@@ -585,22 +579,22 @@ mod pruebas {
         };
 
         let uno = pasar(
-            dir.path(),
+            carpeta.path(),
             &primero,
             &mut motor_una_vez(motor("uno")),
             &mut reloj(),
         )
         .unwrap();
         let dos = pasar(
-            dir.path(),
+            carpeta.path(),
             &segundo,
             &mut motor_una_vez(motor("dos")),
             &mut reloj(),
         )
         .unwrap();
 
-        let carpeta_uno = carpeta_del_encargo(&dir.path().join("tanda"), "U01", 42);
-        let carpeta_dos = carpeta_del_encargo(&dir.path().join("tanda"), "U02", 42);
+        let carpeta_uno = carpeta_del_encargo(&carpeta.path().join("tanda"), "U01", 42);
+        let carpeta_dos = carpeta_del_encargo(&carpeta.path().join("tanda"), "U02", 42);
         assert!(carpeta_uno.join("src/Pedidos.cs").is_file());
         assert!(!carpeta_dos.join("src/Pedidos.cs").exists());
         assert_eq!(
@@ -614,9 +608,9 @@ mod pruebas {
 
     #[test]
     fn una_carpeta_que_ya_existe_no_se_reutiliza() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargo = encargo_en(dir.path(), "E01", &[]);
-        let carpeta = dir.path().join("ya-existe");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargo = encargo_en(carpeta_temporal.path(), "E01", &[]);
+        let carpeta = carpeta_temporal.path().join("ya-existe");
         std::fs::create_dir_all(&carpeta).unwrap();
 
         let error = preparar_carpeta(&carpeta, &encargo, &preparacion()).unwrap_err();
@@ -628,16 +622,16 @@ mod pruebas {
     /// la de fábrica: con otro nombre, lo de `.gestor/candidatos/programator` no es suyo.
     #[test]
     fn recoge_las_entregas_del_agente_con_su_nombre_y_no_las_de_fabrica() {
-        let dir = tempfile::tempdir().unwrap();
-        let propias = dir.path().join(carpeta_de_candidatos("Cobalto"));
-        let ajenas = dir.path().join(carpeta_de_candidatos("Programator"));
+        let carpeta = tempfile::tempdir().unwrap();
+        let propias = carpeta.path().join(carpeta_de_candidatos("Cobalto"));
+        let ajenas = carpeta.path().join(carpeta_de_candidatos("Programator"));
         std::fs::create_dir_all(&propias).unwrap();
         std::fs::create_dir_all(&ajenas).unwrap();
         std::fs::write(propias.join("suya.rs"), "fn main() {}\n").unwrap();
         std::fs::write(ajenas.join("ajena.rs"), "fn main() {}\n").unwrap();
 
         let recogida = Recogida::de_la_carpeta(
-            dir.path(),
+            carpeta.path(),
             "Cobalto",
             true,
             ConsumoAcumulado::default(),

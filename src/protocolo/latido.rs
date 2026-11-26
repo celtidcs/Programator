@@ -6,8 +6,8 @@
 //! cuando sondeaba. El duplicado resultante hubo que retirarlo a mano doce minutos después.
 //!
 //! Este módulo define el [`Latido`], un fichero que se escribe en **cada sondeo** —actúe el arnés o
-//! no— declarando su estado (`reposo`, `atendiendo` o `error`), el encargo en curso si lo hay, y
-//! cuándo será el próximo sondeo.
+//! no— declarando su estado (`reposo`, `atendiendo` o `error`), el encargo en curso si lo hay, y,
+//! salvo mientras atiende, cuándo será el próximo sondeo.
 
 use crate::error::{Error, Resultado};
 use crate::terminal::Terminal;
@@ -34,6 +34,10 @@ pub struct DetalleEncargo {
     pub buzon: String,
     /// Primera línea o resumen del encargo para identificarlo sin abrir el buzón.
     pub resumen: String,
+    /// El identificador del encargo (`protocolo::identificador`), el mismo que da nombre a su
+    /// ficha en el registro de encargos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 /// Longitud máxima de una línea de resumen (la del encargo y la del latido del buzón), para que se
@@ -58,17 +62,23 @@ const TEXTO_ENCARGO_VACIO: &str = "encargo sin texto";
 impl DetalleEncargo {
     /// Construye el detalle a partir del buzón y del texto íntegro del encargo.
     pub fn nuevo(buzon: &str, texto_encargo: &str) -> Self {
-        let primera_linea = texto_encargo
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty())
-            .unwrap_or(TEXTO_ENCARGO_VACIO);
+        let primera_linea =
+            super::encargo::primera_linea_con_texto(texto_encargo).unwrap_or(TEXTO_ENCARGO_VACIO);
 
         let resumen = acotar_resumen(primera_linea);
 
         Self {
             buzon: buzon.to_string(),
             resumen,
+            id: None,
+        }
+    }
+
+    /// El detalle de un encargo detectado, con su identificador.
+    pub fn del_encargo(encargo: &crate::protocolo::Encargo) -> Self {
+        Self {
+            id: Some(encargo.id()),
+            ..Self::nuevo(&encargo.de, &encargo.texto)
         }
     }
 }
@@ -86,8 +96,10 @@ pub struct Latido {
     /// Encargo que se está atendiendo, si lo hay.
     #[serde(skip_serializing_if = "Option::is_none")]
     encargo: Option<DetalleEncargo>,
-    /// Momento estimado en que tendrá lugar el próximo sondeo.
-    proximo_sondeo: String,
+    /// Momento estimado en que tendrá lugar el próximo sondeo. Mientras se atiende no lo hay: el
+    /// siguiente sondeo es al terminar la llamada en curso al modelo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proximo_sondeo: Option<String>,
     /// Detalle adicional del error, si el estado es `Error`.
     #[serde(skip_serializing_if = "Option::is_none")]
     detalle_error: Option<String>,
@@ -124,23 +136,19 @@ impl Latido {
             marca_tiempo: marca_tiempo.into(),
             estado: EstadoLatido::Reposo,
             encargo: None,
-            proximo_sondeo: proximo_sondeo.into(),
+            proximo_sondeo: Some(proximo_sondeo.into()),
             detalle_error: None,
             modelo_cargado: None,
         }
     }
 
     /// Crea un latido en estado de atención, con el encargo en curso.
-    fn atendiendo(
-        marca_tiempo: impl Into<String>,
-        proximo_sondeo: impl Into<String>,
-        encargo: DetalleEncargo,
-    ) -> Self {
+    fn atendiendo(marca_tiempo: impl Into<String>, encargo: DetalleEncargo) -> Self {
         Self {
+            proximo_sondeo: None,
             marca_tiempo: marca_tiempo.into(),
             estado: EstadoLatido::Atendiendo,
             encargo: Some(encargo),
-            proximo_sondeo: proximo_sondeo.into(),
             detalle_error: None,
             modelo_cargado: None,
         }
@@ -157,7 +165,7 @@ impl Latido {
             marca_tiempo: marca_tiempo.into(),
             estado: EstadoLatido::Error,
             encargo,
-            proximo_sondeo: proximo_sondeo.into(),
+            proximo_sondeo: Some(proximo_sondeo.into()),
             detalle_error: Some(detalle_error.into()),
             modelo_cargado: None,
         }
@@ -176,15 +184,9 @@ impl Latido {
         Self::reposo(inicio, proximo)
     }
 
-    /// Crea un latido en estado de atención calculando los tiempos a partir del momento actual
-    /// y del intervalo en segundos del ciclo.
-    pub fn en_atencion(
-        ahora: DateTime<Local>,
-        intervalo_segundos: u64,
-        encargo: DetalleEncargo,
-    ) -> Self {
-        let (inicio, proximo) = calcular_tiempos_sondeo(ahora, intervalo_segundos);
-        Self::atendiendo(inicio, proximo, encargo)
+    /// Crea un latido en estado de atención en el momento `ahora`. No lleva próximo sondeo.
+    pub fn en_atencion(ahora: DateTime<Local>, encargo: DetalleEncargo) -> Self {
+        Self::atendiendo(formatear_marca_tiempo(ahora), encargo)
     }
 
     /// Crea un latido en estado de error calculando los tiempos a partir del momento actual
@@ -290,6 +292,31 @@ mod pruebas {
     use super::*;
 
     #[test]
+    fn el_detalle_de_un_encargo_lleva_su_identificador_y_se_guarda() {
+        let encargo = crate::protocolo::Encargo {
+            de: "claude.md".into(),
+            texto: "Para Programator: uno".into(),
+            forma: crate::protocolo::encargo::Forma::Linea,
+            latido: Some("2026-11-25 10:00:00".into()),
+        };
+
+        let detalle = DetalleEncargo::del_encargo(&encargo);
+
+        assert_eq!(detalle.id.as_deref(), Some(encargo.id().as_str()));
+        let json = serde_json::to_value(&detalle).unwrap();
+        assert_eq!(json["id"], encargo.id());
+        assert_eq!(json["buzon"], "claude.md");
+    }
+
+    /// Un latido escrito antes de la 1.2.0, sin identificador, se sigue leyendo.
+    #[test]
+    fn un_detalle_sin_identificador_se_lee() {
+        let detalle: DetalleEncargo =
+            serde_json::from_str(r#"{"buzon":"claude.md","resumen":"uno"}"#).unwrap();
+        assert_eq!(detalle.id, None);
+    }
+
+    #[test]
     fn el_resumen_se_acota_a_ciento_veinte_caracteres_con_elipsis() {
         let justa = "a".repeat(TOPE_CARACTERES_RESUMEN);
         assert_eq!(acotar_resumen(&justa), justa);
@@ -334,7 +361,7 @@ mod pruebas {
 
         // 2. Atendiendo
         let encargo = DetalleEncargo::nuevo("claude.md", "## Para Programator: E01");
-        let latido_atendiendo = Latido::atendiendo(t1, t2, encargo);
+        let latido_atendiendo = Latido::atendiendo(t1, encargo);
         let json_atendiendo = serde_json::to_string(&latido_atendiendo).unwrap();
         assert!(json_atendiendo.contains(r#""estado":"atendiendo""#));
         assert!(json_atendiendo.contains(r#""buzon":"claude.md""#));
@@ -378,12 +405,11 @@ mod pruebas {
 
     #[test]
     fn escribir_dos_veces_seguidas_deja_el_segundo_y_no_los_concatena() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("latido.json");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("latido.json");
 
         let primer_latido = Latido::atendiendo(
             "2026-09-25 10:00:00",
-            "2026-09-25 10:03:00",
             DetalleEncargo::nuevo("claude.md", "encargo uno"),
         );
         primer_latido.guardar(&ruta).unwrap();
@@ -399,8 +425,8 @@ mod pruebas {
 
     #[test]
     fn la_ruta_se_crea_si_no_existe() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta_profunda = dir
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta_profunda = carpeta
             .path()
             .join(".gestor")
             .join("programator")
@@ -419,8 +445,8 @@ mod pruebas {
 
     #[test]
     fn cargar_inexistente_devuelve_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let resultado = Latido::cargar(&dir.path().join("fantasma.json")).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let resultado = Latido::cargar(&carpeta.path().join("fantasma.json")).unwrap();
         assert!(resultado.is_none());
     }
 
@@ -454,16 +480,26 @@ mod pruebas {
         let latido_reposo = Latido::en_reposo(ahora, 120);
         assert_eq!(latido_reposo.estado, EstadoLatido::Reposo);
         assert_eq!(latido_reposo.marca_tiempo, "2026-09-25 10:30:00");
-        assert_eq!(latido_reposo.proximo_sondeo, "2026-09-25 10:32:00");
+        assert_eq!(
+            latido_reposo.proximo_sondeo.as_deref(),
+            Some("2026-09-25 10:32:00")
+        );
 
         let detalle = DetalleEncargo::nuevo("claude.md", "encargo");
-        let latido_atendiendo = Latido::en_atencion(ahora, 60, detalle);
+        let latido_atendiendo = Latido::en_atencion(ahora, detalle);
         assert_eq!(latido_atendiendo.estado, EstadoLatido::Atendiendo);
-        assert_eq!(latido_atendiendo.proximo_sondeo, "2026-09-25 10:31:00");
+        // Uso real del 26/11: mientras se atiende no se sondea hasta terminar la llamada en curso,
+        // así que el latido no promete ninguna hora.
+        assert_eq!(latido_atendiendo.proximo_sondeo, None);
+        let json = serde_json::to_string(&latido_atendiendo).unwrap();
+        assert!(!json.contains("proximo_sondeo"), "{json}");
 
         let latido_error = Latido::en_error(ahora, 300, None, "fallo de red");
         assert_eq!(latido_error.estado, EstadoLatido::Error);
-        assert_eq!(latido_error.proximo_sondeo, "2026-09-25 10:35:00");
+        assert_eq!(
+            latido_error.proximo_sondeo.as_deref(),
+            Some("2026-09-25 10:35:00")
+        );
         assert_eq!(latido_error.detalle_error.as_deref(), Some("fallo de red"));
     }
 

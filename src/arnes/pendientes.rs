@@ -13,11 +13,7 @@ use crate::error::{Error, Resultado};
 use crate::ficheros;
 use crate::protocolo::encargo::{Encargo, Forma};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-
-/// Lo que se añade al nombre de la cola para escribirla antes de renombrarla: si el programa se
-/// corta a mitad, queda a medias el temporal y no la cola.
-const SUFIJO_DEL_TEMPORAL: &str = ".escribiendo";
+use std::path::Path;
 
 /// Un encargo en la cola, con lo necesario para atenderlo después y para avisar si se atasca.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -51,6 +47,11 @@ impl Pendiente {
         &self.motivo
     }
 
+    /// Cuándo entró en la cola.
+    pub fn llego_el(&self) -> &str {
+        &self.llego_el
+    }
+
     /// Texto íntegro del encargo.
     pub fn texto(&self) -> &str {
         &self.texto
@@ -59,6 +60,7 @@ impl Pendiente {
     /// El encargo, tal como llegó.
     pub fn encargo(&self) -> Encargo {
         Encargo {
+            latido: None,
             de: self.de.clone(),
             texto: self.texto.clone(),
             forma: self.forma,
@@ -155,22 +157,7 @@ pub fn leer(ruta: &Path) -> Resultado<Cola> {
 pub fn guardar(ruta: &Path, cola: &Cola) -> Resultado<()> {
     let texto = toml::to_string(cola)
         .map_err(|causa| Error::Pendientes(mensaje_cola_sin_componer(&causa)))?;
-    if let Some(carpeta) = ruta.parent() {
-        ficheros::crear_carpeta(carpeta)?;
-    }
-    let temporal = ruta_del_temporal(ruta);
-    ficheros::escribir(&temporal, &texto)?;
-    // Si el cambio de nombre falla, el temporal no se queda al lado de la cola: se borra y se
-    // devuelve el fallo del cambio de nombre, que es el que importa.
-    ficheros::renombrar(&temporal, ruta).inspect_err(|_| {
-        let _ = std::fs::remove_file(&temporal);
-    })
-}
-
-fn ruta_del_temporal(ruta: &Path) -> PathBuf {
-    let mut nombre = ruta.as_os_str().to_owned();
-    nombre.push(SUFIJO_DEL_TEMPORAL);
-    PathBuf::from(nombre)
+    ficheros::escribir_de_una_vez(ruta, &texto)
 }
 
 /// El error cuando la cola no se entiende.
@@ -192,6 +179,7 @@ mod pruebas {
 
     fn encargo(texto: &str) -> Encargo {
         Encargo {
+            latido: None,
             de: "claude2.md".into(),
             texto: texto.into(),
             forma: Forma::Linea,
@@ -202,22 +190,22 @@ mod pruebas {
 
     #[test]
     fn un_fichero_que_no_existe_es_una_cola_vacia() {
-        let dir = tempfile::tempdir().unwrap();
-        let cola = leer(&dir.path().join("pendientes.toml")).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let cola = leer(&carpeta.path().join("pendientes.toml")).unwrap();
         assert!(cola.esta_vacia());
     }
 
     /// Si el cambio de nombre falla, el temporal no se queda al lado de la cola.
     #[test]
     fn si_no_se_puede_poner_su_nombre_no_queda_el_temporal() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         // Una carpeta con el nombre de la cola: ningún sistema deja poner un fichero encima.
-        let ruta = dir.path().join("pendientes.toml");
+        let ruta = carpeta_temporal.path().join("pendientes.toml");
         std::fs::create_dir(&ruta).unwrap();
         std::fs::write(ruta.join("dentro"), "x").unwrap();
 
         assert!(guardar(&ruta, &Cola::default()).is_err());
-        assert!(!ruta_del_temporal(&ruta).exists());
+        assert!(!ficheros::ruta_del_temporal(&ruta).exists());
     }
 
     #[test]
@@ -271,8 +259,8 @@ mod pruebas {
 
     #[test]
     fn una_cola_que_no_se_entiende_da_un_error_que_nombra_la_ruta_y_no_se_borra() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("pendientes.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("pendientes.toml");
         std::fs::write(&ruta, "esto no es [toml").unwrap();
 
         let fallo = leer(&ruta).unwrap_err().to_string();
@@ -283,9 +271,12 @@ mod pruebas {
 
     #[test]
     fn la_cola_sobrevive_a_guardarla_y_releerla_sin_dejar_el_temporal() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         // La carpeta del agente todavía no existe: guardar la crea.
-        let ruta = dir.path().join("programator").join("pendientes.toml");
+        let ruta = carpeta_temporal
+            .path()
+            .join("programator")
+            .join("pendientes.toml");
         let mut cola = Cola::default();
         cola.anotar_fallo(&encargo("a\ncon dos líneas"), "f", "m", 1);
         cola.anotar_fallo(&encargo("b"), "f", "m", UMBRAL);
@@ -294,6 +285,6 @@ mod pruebas {
         guardar(&ruta, &cola).unwrap();
 
         assert_eq!(leer(&ruta).unwrap(), cola);
-        assert!(!ruta_del_temporal(&ruta).exists());
+        assert!(!ficheros::ruta_del_temporal(&ruta).exists());
     }
 }

@@ -141,6 +141,33 @@ cache_kv = "q8_0"
 # si la pones en "off", pon también cache_kv = "f16".
 flash_attn = "on"
 
+# Reparto de la memoria. Sirve para que quepa en la tarjeta un modelo que no cabe entero, dejando
+# una parte en la memoria del equipo. Todo lo que se mueve a la CPU va más lento. Con los valores
+# de aquí, que son los de fábrica, llama-server arranca igual que en la 1.1.0.
+#
+# Formato de la caché de claves y de la de valores por separado. Sin estas líneas, las dos usan
+# el de cache_kv.
+# cache_k = "q8_0"
+# cache_v = "q8_0"
+# La caché entera en la memoria del equipo (--no-kv-offload). Libera la tarjeta para el modelo a
+# cambio de que cada token tarde más. Por defecto: false.
+cache_en_cpu = false
+# Cómo se carga el modelo (--load-mode): "auto", "none", "mmap", "mlock", "mmap+mlock" o "dio".
+# Por defecto: "auto", que es lo que hace llama-server si no se le dice nada. "mlock" impide que el
+# sistema mande a disco la parte del modelo que esté en la memoria del equipo.
+modo_de_carga = "auto"
+# Capas cuya FFN se queda en la CPU (--n-cpu-ffn): las de las capas 0 a N-1. Es la que sirve a los
+# modelos densos, como Devstral. Por defecto: 0, ninguna. Con "auto", Programator calcula cuántas
+# hacen falta para que el resto quepa.
+ffn_en_cpu = 0
+# Lo mismo para los modelos de mezcla de expertos (--n-cpu-moe): los expertos de las capas 0 a N-1
+# se quedan en la CPU. En un modelo sin expertos no hace nada. Por defecto: 0. Admite "auto".
+expertos_en_cpu = 0
+# Patrones de nombres de tensor que van a la CPU (--override-tensor <patrón>=CPU), para quien sepa
+# lo que hace. Cada patrón es una expresión regular de las que entiende llama-server, sin comas ni
+# signos de igual. Por defecto: ninguno. Ejemplo: ["blk\\.(3[0-9])\\.ffn_up"].
+tensores_en_cpu = []
+
 # Tope de memoria de la tarjeta, en MiB, que Programator no supera nunca al repartir el modelo.
 # Sirve para decir «como mucho 8 GB» sin tener que pensar en capas, por ejemplo si quieres dejar
 # sitio a otro programa que usa la tarjeta. Sin esta línea no hay tope y se usa toda la memoria
@@ -168,6 +195,12 @@ soltar_modelo = "auto"
 # tanda de encargos. Por defecto: 300. Si no carga a tiempo, el encargo no se pierde: queda en la
 # cola de pendientes y se atiende en una vuelta posterior.
 # espera_de_carga_segundos = 300
+
+# La clave que protege el motor. Sin ella, cualquier página web abierta en el navegador de este
+# equipo podría usar el modelo. Con "auto", lo de fábrica, Programator inventa una nueva en cada
+# arranque y no la sabe nadie más. Escribe una tuya solo si quieres usar el mismo motor desde otra
+# herramienta; esa herramienta tendrá que mandarla en la cabecera «Authorization: Bearer <clave>».
+clave = "auto"
 
 # A partir de qué porcentaje de la ventana se avisa de que la conversación va justa. Por defecto: 70.
 #
@@ -351,6 +384,25 @@ max_denegaciones_seguidas = 2
 # pidió con el motivo. Por defecto: 2, la regla de los dos intentos de los agentes.
 intentos_por_encargo = 2
 
+# Cuántas propuestas anteriores se le cuentan al modelo en cada encargo, en el apartado «Lo que ya
+# entregaste en este proyecto»: las aceptadas con dónde están, las que esperan revisión y las
+# rechazadas con su motivo, primero las de quien encarga y lo más reciente antes. Ocupa contexto,
+# y cuenta en el aviso de ocupación. Con 0 no sale. Por defecto: 20.
+entregas_en_contexto = 20
+
+# Cuántos minutos tiene que faltar de su buzón un encargo ya atendido para que Programator lo
+# olvide (el agente lo pasó a su histórico). No basta con no verlo una vez: un buzón leído mientras
+# su dueño lo reescribe puede salir vacío o cortado, y si se olvidara en el acto se volvería a
+# atender cuando se leyera entero. Por defecto: 60.
+olvidar_lo_cerrado_tras_minutos = 60
+
+# Cuántos milisegundos tiene que llevar sin cambiar un buzón con novedades para que Programator las
+# lea. Un buzón leído mientras su dueño lo escribe puede salir cortado, y lo cortado se atendería
+# como un encargo nuevo; lo nuevo de un buzón más reciente
+# espera a la vuelta siguiente, y los demás buzones se atienden.
+# Por defecto: 1500.
+buzon_estable_tras_ms = 1500
+
 [actualizaciones]
 # Si Programator comprueba, al arrancar, si hay una versión más nueva publicada en GitHub. Por
 # defecto: true.
@@ -372,6 +424,62 @@ repositorio = "celtidcs/Programator"
 # el de las opciones de internet. Detrás de un proxy con configuración automática (PAC) define
 # HTTPS_PROXY antes de abrir Programator.
 tiempo_espera_segundos = 3
+
+[entregas]
+# Programator anota cada propuesta que escribe en .gestor/programator/entregas.toml y deduce en qué
+# quedó: aceptada si encuentra en el proyecto un fichero con su nombre y el mismo contenido, y
+# sustituida si después propuso otra para el mismo nombre. Para lo primero recorre el proyecto
+# (con git, solo lo que no ignora el .gitignore; sin git, todo menos .gestor y .git).
+#
+# Cada cuántos minutos, como mucho, se hace esa búsqueda. Por defecto: 60. Con 0, en cada pasada,
+# que en un proyecto grande se nota.
+deducir_cada_minutos = 60
+# Cuánto se espera a git al listar los ficheros del proyecto, en segundos. Por defecto: 30.
+tiempo_de_busqueda_segundos = 30
+# Tras cuántos días sin que se diga ni se deduzca nada, una propuesta queda «sin confirmar». Lo
+# resuelto (aceptado, rechazado, sustituido o sin confirmar) pasa de la carpeta de candidatos a su
+# subcarpeta archivo/AAAA-MM/, y arriba solo queda lo que espera revisión. Por defecto: 30.
+dias_sin_confirmar = 30
+
+[preparacion]
+# Con «Para Programator: preparar: <propuesta> en <ruta del proyecto>», Programator copia el
+# proyecto a una carpeta suya, pone la propuesta en la ruta pedida dentro de la copia y ejecuta ahí
+# las órdenes de su extensión: formatear, compilar, probar. Contesta con lo que dijo cada orden, el
+# cambio frente al fichero que había y la ruta de la copia. El proyecto no se toca nunca, y no usa
+# el modelo.
+#
+# Dónde se hacen las copias, relativa a la carpeta de trabajo. Por defecto:
+# ".gestor/programator/preparacion".
+carpeta = ".gestor/programator/preparacion"
+# Lo más que puede ocupar lo que se copia, en MiB. Se copia lo que lista git (lo que no ignora el
+# .gitignore) o, sin git, todo menos .gestor, .git, target y node_modules. Si se pasa, no se copia
+# nada y se dice. Por defecto: 512.
+tope_mib = 512
+# Tras cuántos días se borra una copia de la que nadie dijo nada. Se borra antes, en la pasada
+# siguiente, si quien encargó dice que la propuesta quedó aceptada o rechazada. Por defecto: 2.
+dias_de_vida = 2
+# Lo más que puede durar cada orden, en segundos. Por defecto: 600. Como mucho 86400 (un día).
+tiempo_maximo_segundos = 600
+# Solo en Linux: lo que se antepone a las órdenes aisladas para dejarlas sin red. Por defecto, el
+# de las comprobaciones del banco («unshare» con un espacio de nombres propio). Antes de lanzar
+# nada se prueba; si no aísla, no se lanza ninguna orden y se dice. Ubuntu 24.04 y posteriores no
+# dejan a los usuarios normales usar «unshare» así, pero sí «bwrap», que trae su propio permiso:
+# envoltorio = ["bwrap", "--dev-bind", "/", "/", "--unshare-net", "--"]
+# Una lista vacía no vale: las órdenes aisladas nunca se lanzan sin aislamiento.
+
+# Las órdenes de cada extensión (sin punto), en tres clases. Ninguna pasa por un shell, y
+# «{fichero}» se sustituye por la ruta de la propuesta dentro de la copia.
+#   - previas: sin aislar y antes que nada. Solo para bajar dependencias, nunca para ejecutar
+#     código del proyecto: las aisladas no tienen red.
+#   - formatear: aislada. Si falla, no se sigue.
+#   - aisladas: aisladas y sin red, como las comprobaciones del banco (integridad baja y un Job en
+#     Windows, sin red en Linux). Una que falla se cuenta con su salida y las demás siguen.
+# Sin órdenes para la extensión, solo se copia y se dice el cambio. Por ejemplo, para Rust:
+#
+# [preparacion.ordenes.rs]
+# previas = [["cargo", "fetch"]]
+# formatear = ["cargo", "fmt"]
+# aisladas = [["cargo", "build", "--offline"], ["cargo", "test", "--offline"]]
 
 [revision]
 # La revisión de modelos: buscar candidatos en Hugging Face, descargarlos, pasarles el banco y

@@ -42,6 +42,11 @@ impl ArnesDelBanco {
 
     /// El banco guarda siempre la conversación de cada pasada: una nota sin el porqué no sirve
     /// para corregir nada (el bucle de reescrituras del 11/11/2026 no se pudo explicar sin ella).
+    ///
+    /// Y no espera a que el buzón del encargo se quede quieto: lo escribe el propio banco de una
+    /// vez, justo antes de la pasada. Con la espera del ciclo (`[ciclo] buzon_estable_tras_ms`),
+    /// la pasada lo dejaba para la vuelta siguiente y el banco se detenía en el primer encargo
+    /// (prueba Q de la 1.2.0, en la máquina Linux con la tarjeta).
     pub(super) fn ajustes<'a>(
         &'a self,
         config: &'a Config,
@@ -49,6 +54,7 @@ impl ArnesDelBanco {
     ) -> Ajustes<'a> {
         Ajustes {
             registro_de_conversacion: true,
+            buzon_estable_tras: Duration::ZERO,
             ..Ajustes::de_la_config(
                 config,
                 &self.limites,
@@ -74,5 +80,33 @@ impl ArnesDelBanco {
             normas: &self.normas,
             tiempo_maximo,
         }
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    /// Prueba Q de la 1.2.0: con la espera del buzón del ciclo, el banco se detenía en el primer
+    /// encargo, porque la pasada dejaba para luego el buzón que acababa de escribir.
+    #[test]
+    fn el_banco_no_espera_a_que_su_buzon_se_quede_quieto() {
+        let config: Config = toml::from_str("[motor]\n").unwrap();
+        assert_ne!(
+            config.ciclo.buzon_estable_tras_ms, 0,
+            "la prueba necesita una espera"
+        );
+        let arnes = ArnesDelBanco {
+            verificacion: Verificacion::default(),
+            limites: Limites::de_la_config(&config.ciclo),
+            preambulo: PathBuf::new(),
+            recordatorio: PathBuf::new(),
+            normas: String::new(),
+        };
+
+        let ajustes = arnes.ajustes(&config, &crate::terminal::TerminalReal);
+
+        assert_eq!(ajustes.buzon_estable_tras, Duration::ZERO);
+        assert!(ajustes.registro_de_conversacion);
     }
 }

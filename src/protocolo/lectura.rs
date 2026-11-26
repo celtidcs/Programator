@@ -68,6 +68,13 @@ impl RegistroLectura {
         })
     }
 
+    /// Hasta qué byte se leyó el buzón `nombre`, si se leyó alguna vez.
+    pub fn bytes_leidos(&self, nombre: &str) -> Option<usize> {
+        self.entradas
+            .get(nombre)
+            .map(|entrada| entrada.bytes_leidos)
+    }
+
     /// ¿Todavía no se ha leído nada?
     pub fn esta_vacio(&self) -> bool {
         self.entradas.is_empty()
@@ -75,10 +82,27 @@ impl RegistroLectura {
 
     /// Calcula qué hay de nuevo en un buzón y actualiza el registro.
     pub fn delta(&mut self, nombre: &str, contenido: &str) -> Delta {
+        let resultado = self.lo_nuevo(nombre, contenido);
         let bytes = contenido.as_bytes();
-        let anterior = self.entradas.get(nombre).cloned();
+        self.entradas.insert(
+            nombre.to_string(),
+            Entrada {
+                bytes_leidos: bytes.len(),
+                huella_prefijo: huella(bytes),
+            },
+        );
+        resultado
+    }
 
-        let resultado = match anterior {
+    /// ¿Tiene el buzón algo que no se haya leído? No mueve el registro.
+    pub fn tiene_novedades(&self, nombre: &str, contenido: &str) -> bool {
+        !matches!(self.lo_nuevo(nombre, contenido), Delta::Nada)
+    }
+
+    /// Lo nuevo de un buzón respecto de lo leído, sin anotarlo.
+    fn lo_nuevo(&self, nombre: &str, contenido: &str) -> Delta {
+        let bytes = contenido.as_bytes();
+        match self.entradas.get(nombre) {
             Some(entrada)
                 if entrada.bytes_leidos <= bytes.len()
                     && huella(&bytes[..entrada.bytes_leidos]) == entrada.huella_prefijo =>
@@ -93,17 +117,7 @@ impl RegistroLectura {
                 }
             }
             _ => Delta::Completo(contenido.to_string()),
-        };
-
-        self.entradas.insert(
-            nombre.to_string(),
-            Entrada {
-                bytes_leidos: bytes.len(),
-                huella_prefijo: huella(bytes),
-            },
-        );
-
-        resultado
+        }
     }
 }
 
@@ -163,6 +177,22 @@ mod pruebas {
         }
     }
 
+    /// Mirar si hay novedades no las da por leídas.
+    #[test]
+    fn mirar_si_hay_novedades_no_mueve_el_registro() {
+        let mut registro = RegistroLectura::default();
+        assert!(registro.tiene_novedades("claude.md", "uno\n"));
+        registro.delta("claude.md", "uno\n");
+        assert!(!registro.tiene_novedades("claude.md", "uno\n"));
+        assert!(registro.tiene_novedades("claude.md", "uno\ndos\n"));
+
+        assert!(registro.tiene_novedades("claude.md", "uno\ndos\n"));
+        assert!(matches!(
+            registro.delta("claude.md", "uno\ndos\n"),
+            Delta::Incremento(ref t) if t == "dos\n"
+        ));
+    }
+
     #[test]
     fn un_buzon_sin_cambios_no_devuelve_nada() {
         let mut registro = RegistroLectura::default();
@@ -189,8 +219,8 @@ mod pruebas {
 
     #[test]
     fn el_registro_sobrevive_a_un_viaje_de_ida_y_vuelta_por_disco() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("lectura.json");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("lectura.json");
         let mut registro = RegistroLectura::default();
         registro.delta("claude.md", "contenido\n");
         registro.guardar(&ruta).unwrap();
@@ -208,9 +238,9 @@ mod pruebas {
 
     #[test]
     fn cargar_un_registro_inexistente_devuelve_uno_vacio_y_no_falla() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
-        let registro = RegistroLectura::cargar(&dir.path().join("no-existe.json")).unwrap();
+        let registro = RegistroLectura::cargar(&carpeta.path().join("no-existe.json")).unwrap();
 
         assert!(registro.esta_vacio());
     }

@@ -60,6 +60,7 @@ pub(super) fn datos_de_la_tanda(
         maquina_de_comprobacion: lugar.nombre(),
         capas_en_gpu: carga.map(|c| c.capas),
         vram_ocupada_mib: carga.and_then(|c| c.vram_mib),
+        vram_calculada_mib: carga.and_then(|c| c.vram_calculada_mib),
         segundos_de_carga: carga.map(|c| c.duracion.as_secs_f64()),
         ajustes_del_motor: Some(ajustes_del_motor(config)),
         tarjeta: carga.and_then(|c| c.tarjeta.clone()),

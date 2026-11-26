@@ -360,8 +360,8 @@ pub(crate) mod pruebas {
 
     #[test]
     fn el_registro_escrito_se_vuelve_a_leer_igual() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("registro-de-modelos.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("registro-de-modelos.toml");
         let registro = Registro {
             modelo: vec![entrada_de_ejemplo()],
         };
@@ -373,17 +373,17 @@ pub(crate) mod pruebas {
 
     #[test]
     fn un_registro_que_no_existe_esta_vacio() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
-        let registro = leer(&dir.path().join("no-existe.toml")).unwrap();
+        let registro = leer(&carpeta.path().join("no-existe.toml")).unwrap();
 
         assert!(registro.modelo.is_empty());
     }
 
     #[test]
     fn un_registro_roto_da_un_error_que_dice_la_ruta() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("registro-de-modelos.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("registro-de-modelos.toml");
         std::fs::write(&ruta, "[[modelo]]\nnombre = 3\n").unwrap();
 
         let error = leer(&ruta).unwrap_err().to_string();

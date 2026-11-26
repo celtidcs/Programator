@@ -114,10 +114,10 @@ mod pruebas {
 
     #[test]
     fn concede_una_ruta_dentro_del_ambito() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(carpeta.path().join("src")).unwrap();
+        std::fs::write(carpeta.path().join("src/main.rs"), "fn main() {}").unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         let resuelta = ambito.resolver("src/main.rs").unwrap();
 
@@ -126,8 +126,8 @@ mod pruebas {
 
     #[test]
     fn deniega_el_ascenso_con_dos_puntos() {
-        let dir = tempfile::tempdir().unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         let fallo = ambito.resolver("../../secreto.txt").unwrap_err();
 
@@ -136,8 +136,8 @@ mod pruebas {
 
     #[test]
     fn deniega_el_ascenso_disimulado_en_medio_de_la_ruta() {
-        let dir = tempfile::tempdir().unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         let fallo = ambito.resolver("src/../../fuera.txt").unwrap_err();
 
@@ -146,9 +146,9 @@ mod pruebas {
 
     #[test]
     fn deniega_una_ruta_absoluta_ajena() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let otro = tempfile::tempdir().unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         let fallo = ambito
             .resolver(otro.path().join("x.txt").to_str().unwrap())
@@ -159,8 +159,8 @@ mod pruebas {
 
     #[test]
     fn concede_un_fichero_que_todavia_no_existe_pero_cuyo_destino_esta_dentro() {
-        let dir = tempfile::tempdir().unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         let resuelta = ambito.resolver(".gestor/candidatos/nuevo.md").unwrap();
 
@@ -170,9 +170,9 @@ mod pruebas {
     #[cfg(windows)]
     #[test]
     fn deniega_el_ascenso_a_traves_de_una_union_de_directorio_con_fichero_nuevo() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let otro = tempfile::tempdir().unwrap();
-        let enlace = dir.path().join("enlace");
+        let enlace = carpeta.path().join("enlace");
 
         // Las uniones de directorio (`mklink /J`), a diferencia de los enlaces
         // simbólicos, no exigen privilegios elevados en Windows.
@@ -191,7 +191,7 @@ mod pruebas {
             "no se pudo crear la unión de directorio de prueba"
         );
 
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         let fallo = ambito.resolver("enlace/fichero-nuevo.txt").unwrap_err();
 
@@ -203,11 +203,11 @@ mod pruebas {
     #[cfg(windows)]
     #[test]
     fn deniega_una_union_de_directorio_rota() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let otro = tempfile::tempdir().unwrap();
         let destino = otro.path().join("borrado");
         std::fs::create_dir(&destino).unwrap();
-        let enlace = dir.path().join("enlace");
+        let enlace = carpeta.path().join("enlace");
         let estado = std::process::Command::new("cmd")
             .args([
                 "/C",
@@ -220,7 +220,7 @@ mod pruebas {
             .unwrap();
         assert!(estado.success(), "no se pudo crear la unión de prueba");
         std::fs::remove_dir(&destino).unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         assert!(ambito.resolver("enlace/nuevo.txt").is_err());
         assert!(ambito.resolver("enlace").is_err());
@@ -229,11 +229,14 @@ mod pruebas {
     #[cfg(unix)]
     #[test]
     fn deniega_un_enlace_simbolico_roto_hacia_fuera() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let otro = tempfile::tempdir().unwrap();
-        std::os::unix::fs::symlink(otro.path().join("nuevo.rs"), dir.path().join("enlace.rs"))
-            .unwrap();
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
+        std::os::unix::fs::symlink(
+            otro.path().join("nuevo.rs"),
+            carpeta.path().join("enlace.rs"),
+        )
+        .unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
 
         assert!(ambito.resolver("enlace.rs").is_err());
     }

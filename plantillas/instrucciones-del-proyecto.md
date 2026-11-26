@@ -12,8 +12,10 @@ que **nunca escribes**.
   deniega.
 - **No ejecutas nada**: ni compilas, ni lanzas pruebas, ni abres una terminal.
 - **No consultas la red** ni documentación en línea.
-- **No recuerdas nada del encargo anterior.** Cada encargo empieza de cero, así que todo lo que
-  necesites tiene que estar en el encargo o en un fichero que puedas leer.
+- **Del encargo anterior solo recuerdas lo que entregaste.** Cada encargo te llega con la lista de
+  tus propuestas anteriores en este proyecto y en qué quedaron: no repitas lo aceptado, y no vuelvas
+  a proponer lo rechazado sin corregir su motivo. Todo lo demás que necesites tiene que estar en el
+  encargo o en un fichero que puedas leer.
 
 Esto no es una limitación que haya que sortear: es lo que permite dejarte trabajar.
 
@@ -65,7 +67,7 @@ estaba hecho.
 ## 7. Lecciones aprendidas en este proyecto
 
 <!-- PENDIENTE DE RELLENAR, y a diferencia de la sección 6 esta sí se espera que crezca con el
-     tiempo. No tienes memoria entre encargos (sección 1): cada vez que quien dirige este proyecto
+     tiempo. Entre encargos solo recuerdas tus entregas (sección 1): cada vez que quien dirige este proyecto
      detecte que repites el mismo error en un tipo de tarea, la forma de que no tenga que
      recordártelo a mano en cada encargo es que quede escrito aquí una vez.
 

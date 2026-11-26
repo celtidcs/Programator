@@ -29,9 +29,23 @@ pub const CIEN_POR_CIEN: u32 = 100;
 /// encaje, el banco y la revisión.
 pub const SIN_MEDIR: &str = "sin medir";
 
+/// Bytes a GiB con un decimal y coma decimal, que es como se escribe en español. Es la única: toda
+/// cifra de GiB la lee una persona (diagnóstico, encaje, historial de encaje y revisión), y antes
+/// había dos, una con punto y otra con coma, que salían juntas en el mismo arranque.
+pub fn en_gib(bytes: u64) -> String {
+    let gib = bytes as f64 / BYTES_POR_GIB_F64;
+    format!("{gib:.1} GiB").replace('.', ",")
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn los_gib_salen_con_un_decimal_y_coma() {
+        assert_eq!(en_gib(8 * 1024 * BYTES_POR_MIB), "8,0 GiB");
+        assert_eq!(en_gib(2_576_980_378), "2,4 GiB");
+    }
 
     #[test]
     fn las_tres_formas_dicen_lo_mismo() {

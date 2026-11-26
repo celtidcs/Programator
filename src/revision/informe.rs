@@ -204,7 +204,7 @@ mod pruebas {
     use super::*;
     use crate::revision::candidatos::FicheroCandidato;
 
-    const GIB: u64 = 1024 * BYTES_POR_MIB;
+    use crate::revision::pruebas_comunes::GIB;
     const SITIO: &str = "https://huggingface.co";
 
     fn entrada(repositorio: &str, licencia: Option<&str>) -> EntradaDeLaLista {

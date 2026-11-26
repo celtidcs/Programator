@@ -33,7 +33,7 @@ pub(super) fn avisar_de_los_que_faltan(carpeta: &Path, config: &Config, medido: 
     let como_pedir = mensajes::como_pedir_la_revision(
         &donde::donde(carpeta, instalacion),
         &instalacion.join(NOMBRE_DEL_FICHERO_DE_CONFIGURACION),
-        !identidades_que_ordenan(config).is_empty(),
+        mensajes::PermisoDeRevision::de(&identidades_que_ordenan(config)),
     );
     if let Some(aviso) =
         mensajes::aviso_de_los_que_faltan(&faltan.utiles, &como_pedir, carpeta_de_modelos)

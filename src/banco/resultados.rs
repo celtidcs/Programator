@@ -13,6 +13,7 @@
 
 mod estadisticas;
 mod filas;
+mod margen;
 mod persistencia;
 mod redaccion;
 
@@ -61,6 +62,10 @@ pub struct DatosDeTanda {
     pub maquina_de_comprobacion: Option<String>,
     pub capas_en_gpu: Option<u32>,
     pub vram_ocupada_mib: Option<u64>,
+    /// Lo que el encaje calculaba que ocuparía esa carga, en MiB: con `vram_ocupada_mib`, da el
+    /// margen que hace falta en esta máquina. Las tandas anteriores a la 1.2.0 no lo guardan.
+    #[serde(default)]
+    pub vram_calculada_mib: Option<u64>,
     pub segundos_de_carga: Option<f64>,
     /// Lo del motor que cambia la respuesta. Las tandas pasadas antes del 12/11/2026 no lo
     /// guardan.
@@ -258,6 +263,7 @@ pub(crate) mod pruebas {
             maquina_de_comprobacion: None,
             capas_en_gpu: Some(41),
             vram_ocupada_mib: Some(13_100),
+            vram_calculada_mib: None,
             segundos_de_carga: Some(21.5),
             tarjeta: None,
             sistema_de_comprobacion: None,

@@ -112,31 +112,42 @@ impl ConfigRevision {
     /// Lo que impide hacer una revisión con esta sección, dicho para quien edita el TOML, o
     /// `None` si se puede.
     pub fn problema(&self) -> Option<String> {
+        use super::mensajes::{clave_a_cero, lista_vacia};
         if self.busquedas.is_empty() {
-            return Some("«[revision] busquedas» está vacía: no habría nada que buscar".into());
+            return Some(lista_vacia("busquedas", "no habría nada que buscar"));
         }
         if self.cuantizaciones.is_empty() {
-            return Some(
-                "«[revision] cuantizaciones» está vacía: no se tomaría ningún fichero".into(),
-            );
+            return Some(lista_vacia(
+                "cuantizaciones",
+                "no se tomaría ningún fichero",
+            ));
         }
-        if self.resultados_por_busqueda == 0 {
-            return Some("«[revision] resultados_por_busqueda» es 0: no llegaría ninguno".into());
-        }
-        if self.tiempo_espera_segundos == 0 {
-            return Some(
-                "«[revision] tiempo_espera_segundos» es 0: ninguna consulta tendría tiempo".into(),
-            );
-        }
-        if self.avisar_cada_mib == 0 {
-            return Some("«[revision] avisar_cada_mib» es 0: tiene que ser al menos 1".into());
-        }
-        if self.candidatos_por_revision == 0 {
-            return Some(
-                "«[revision] candidatos_por_revision» es 0: no se probaría ninguno".into(),
-            );
-        }
-        None
+        let a_cero = [
+            (
+                "resultados_por_busqueda",
+                self.resultados_por_busqueda == 0,
+                "no llegaría ninguno",
+            ),
+            (
+                "tiempo_espera_segundos",
+                self.tiempo_espera_segundos == 0,
+                "ninguna consulta tendría tiempo",
+            ),
+            (
+                "avisar_cada_mib",
+                self.avisar_cada_mib == 0,
+                "tiene que ser al menos 1",
+            ),
+            (
+                "candidatos_por_revision",
+                self.candidatos_por_revision == 0,
+                "no se probaría ninguno",
+            ),
+        ];
+        a_cero
+            .iter()
+            .find(|(_, es_cero, _)| *es_cero)
+            .map(|(clave, _, por_que)| clave_a_cero(clave, por_que))
     }
 }
 

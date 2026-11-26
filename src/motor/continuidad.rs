@@ -37,27 +37,45 @@ impl Cache {
     }
 }
 
+/// Cómo empieza cada conversación nueva: `[motor] empezar_en_frio`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inicio {
+    /// Sin la caché de prefijos del servidor, para que el resultado no dependa de lo anterior.
+    EnFrio,
+    /// Reutilizando siempre la caché, como antes del 12/11/2026.
+    ConLaCache,
+}
+
+impl Inicio {
+    /// El inicio que pide la clave `empezar_en_frio` de la configuración.
+    pub fn segun(empezar_en_frio: bool) -> Self {
+        if empezar_en_frio {
+            Self::EnFrio
+        } else {
+            Self::ConLaCache
+        }
+    }
+}
+
 /// Lo que el cliente sabe de su última petición, y la decisión que se toma con ello.
 #[derive(Debug, Clone)]
 pub struct Continuidad {
-    /// `[motor] empezar_en_frio`. Con `false`, la caché se reutiliza siempre, como antes del
-    /// 12/11/2026.
-    empezar_en_frio: bool,
+    inicio: Inicio,
     /// La última conversación que se mandó y salió bien. `None` al empezar y tras un fallo.
     ultima: Option<Vec<Mensaje>>,
 }
 
 impl Continuidad {
-    pub fn nueva(empezar_en_frio: bool) -> Self {
+    pub fn nueva(inicio: Inicio) -> Self {
         Self {
-            empezar_en_frio,
+            inicio,
             ultima: None,
         }
     }
 
     /// Qué hacer con la caché para mandar `conversacion`.
     pub fn cache_para(&self, conversacion: &[Mensaje]) -> Cache {
-        if !self.empezar_en_frio {
+        if self.inicio == Inicio::ConLaCache {
             return Cache::Reutilizar;
         }
         match &self.ultima {
@@ -95,14 +113,14 @@ mod pruebas {
     }
 
     fn tras(anterior: &[&str]) -> Continuidad {
-        let mut continuidad = Continuidad::nueva(true);
+        let mut continuidad = Continuidad::nueva(Inicio::EnFrio);
         continuidad.recordar(&conversacion(anterior));
         continuidad
     }
 
     #[test]
     fn la_primera_peticion_va_en_frio() {
-        let continuidad = Continuidad::nueva(true);
+        let continuidad = Continuidad::nueva(Inicio::EnFrio);
         assert_eq!(
             continuidad.cache_para(&conversacion(&["normas", "encargo"])),
             Cache::EnFrio
@@ -164,7 +182,7 @@ mod pruebas {
 
     #[test]
     fn sin_empezar_en_frio_se_reutiliza_siempre() {
-        let continuidad = Continuidad::nueva(false);
+        let continuidad = Continuidad::nueva(Inicio::ConLaCache);
         assert_eq!(
             continuidad.cache_para(&conversacion(&["normas", "encargo"])),
             Cache::Reutilizar

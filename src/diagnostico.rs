@@ -135,8 +135,8 @@ mod pruebas {
     /// Sin modelo, la línea «Encaje:» no habla de 99 capas.
     #[test]
     fn sin_el_fichero_del_modelo_el_encaje_no_habla_de_capas() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("programator.toml");
         std::fs::write(
             &ruta,
             "[motor]\nmodelo = \"modelos/no-existe.gguf\"\ncapas_gpu = \"auto\"\n",

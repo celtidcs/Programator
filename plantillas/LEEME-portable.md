@@ -54,7 +54,7 @@ programator.exe --diagnostico
 
 Esta orden analiza el equipo e imprime un resumen con la tarjeta gráfica detectada, la memoria VRAM libre, la disponibilidad de soporte CUDA en el motor, el modelo configurado, el cálculo de capas del modelo que pueden alojarse en la GPU y la carpeta de trabajo. Debajo añade la lista de los modelos que hay en la carpeta modelos/. No abre la ventana de la carpeta ni arranca el motor. La forma es esta; lo que va entre ángulos cambia en cada equipo:
 
-    Programator 1.1.0 — asistente de código local en segundo plano
+    Programator 1.2.0 — asistente de código local en segundo plano
 
     GPU:                <tarjeta> · <memoria libre> libres de <memoria total>
     Motor:              llama-server con CUDA, en <ruta del motor>
@@ -64,7 +64,7 @@ Esta orden analiza el equipo e imprime un resumen con la tarjeta gráfica detect
     Modelos disponibles en <carpeta de modelos> para <tarjeta>, contando la tarjeta entera libre (el encaje de arriba cuenta la memoria libre ahora):
     - <fichero>: cabe entero; atiende <clases que le dio el banco>
 
-La línea Encaje cambia de redacción según el caso: si el modelo entero cabe, si caben todas sus capas pero no los embeddings y la salida, si solo cabe una parte, si no cabe ni una capa, si no se pudo calcular o si usa las capas que el banco midió para ese modelo en esta tarjeta. La línea Carpeta de trabajo dice la carpeta fijada en la configuración o, si no hay ninguna, cómo se elegirá. En la lista de modelos disponibles, un modelo cuenta como que cabe si al menos tres cuartas partes de sus capas entran en la tarjeta; si no, la línea dice cuántas entran y cuántas harían falta.
+La línea Encaje cambia de redacción según el caso: si caben todas las capas, si caben todas sus capas pero no los embeddings y la salida, si solo cabe una parte, si no cabe ni una capa, si no se pudo calcular o si usa las capas que el banco midió para ese modelo en esta tarjeta. La línea Carpeta de trabajo dice la carpeta fijada en la configuración o, si no hay ninguna, cómo se elegirá. En la lista de modelos disponibles, un modelo cuenta como que cabe si al menos tres cuartas partes de sus capas entran en la tarjeta; si no, la línea dice cuántas entran y cuántas harían falta.
 
 Si el diagnóstico indica que falta el motor o el modelo, revisa la sección dedicada a los componentes necesarios.
 
@@ -112,6 +112,21 @@ En los arranques posteriores sobre proyectos ya conocidos, Programator detecta q
 Al publicar la guía de trabajo en .gestor/canal/COMO-ENCARGAR-A-PROGRAMATOR.md, Programator muestra una indicación clara para el usuario, detallando la petición exacta que debe formularle a su modelo de pago habitual (Claude, ChatGPT, etc.) para que este acceda a la guía, conozca las capacidades de Programator y comience a coordinarse con él.
 
 
+Novedades de la versión 1.2.0
+
+El motor arranca protegido. llama-server exige ahora una clave en cada petición y solo acepta las de tu propio equipo, así que una página web abierta en el navegador ya no puede mandarle trabajo. Con la clave de la sección [motor] en "auto", que es como viene, Programator inventa una nueva en cada arranque y la guarda en .clave-del-motor, junto a la configuración. Si en el puerto hay un llama-server que no la acepta, Programator no lo usa y te dice qué hacer.
+
+Un encargo ya atendido no se vuelve a atender por editar lo de alrededor, y ninguno se pierde. Cada encargo tiene su ficha en el registro de encargos y se reconoce por quién lo pidió, cuándo y qué dice, no por dónde cae en el buzón. Corregir algo antiguo o que el editor cambie los saltos de línea ya no hace que se vuelva a atender lo atendido, y un buzón que se está escribiendo se deja para la vuelta siguiente. Si cambias el texto de un encargo ya atendido, se atiende otra vez, y la respuesta lo avisa con Segunda atención.
+
+Los encargos se ordenan y se cancelan. Una línea Prioridad: alta, normal o baja adelanta o retrasa un encargo. Para Programator: cancelar: seguido de la etiqueta, el nombre o el identificador de otro encargo lo retira, sin gastar el modelo si aún no había empezado. Solo cancela quien encargó. Las peticiones de revisión que no necesitan el motor ya no esperan a que cargue el modelo.
+
+Programator sabe en qué quedó cada propuesta. Las anota en .gestor/programator/entregas.toml. El agente que encargó dice aceptada: o rechazada: seguido del nombre de la propuesta, y si no lo dice, Programator lo deduce cuando encuentra el fichero en el proyecto. El modelo ve lo que ya entregó y en qué quedó, y la revisión mensual de modelos cuenta las aceptadas y las rechazadas de cada uno.
+
+Las propuestas se prueban sin tocar el proyecto. Con preparar: seguido del nombre de la propuesta, en y la ruta donde iría, Programator copia el proyecto a .gestor/programator/preparacion, pone la propuesta en su sitio, baja las dependencias con las órdenes previas de la sección [preparacion] y ejecuta allí las demás aisladas: con integridad baja y un Job en Windows, y sin red en Linux. Contesta con lo que pasó en cada orden y lo que cambiaría. En Ubuntu 24.04 y posteriores, hace falta la clave envoltorio para aislar con bwrap, y el ejemplo trae cómo: sin ella no se lanza ninguna orden.
+
+Un modelo que no cabe entero puede dejar en el procesador solo una parte de cada capa. La sección [motor] trae claves nuevas para eso: ffn_en_cpu, expertos_en_cpu, cache_en_cpu, cache_k, cache_v, modo_de_carga y tensores_en_cpu. Con los valores de fábrica, el motor arranca como en la 1.1.0, más la clave. El informe de cada tanda del banco dice además qué margen de memoria hizo falta de verdad en tu tarjeta.
+
+
 Novedades de la versión 1.1.0
 
 Los modelos que faltan se reponen. El registro guarda ahora de qué repositorio y fichero de Hugging Face salió cada modelo. Si falta en la carpeta modelos uno que, según lo medido en tu tarjeta, sigue siendo el mejor en algo, o el de programator.toml, Programator lo avisa al arrancar y explica cómo pedir la revisión. Al pedir revisión: buscar, o con programator.exe --revision-buscar, se vuelve a bajar con su nombre de siempre y se comprueba que es el mismo fichero que se midió. Los que faltan y ya no ganan nada se marcan retirados en el registro, con sus cifras. Un modelo sin fichero ya no cuenta en la propuesta de la revisión, y programator.exe --retirar-modelo retira del registro uno cuyo fichero ya no está, sin borrar nada.
@@ -137,7 +152,7 @@ Las respuestas despiertan a quien encargó, y a nadie más. Cada respuesta empie
 
 El vigilante del canal. Al arrancar en un proyecto, si en .gestor/vigilante/ no hay ningún vigilante, Programator copia allí el que trae en su carpeta vigilante/. Nunca reemplaza uno que ya exista. La guía del canal le dice al agente que lo lance tras cada encargo, para enterarse en cuanto Programator responde.
 
-La cola de pendientes. Un encargo que no se puede atender porque el modelo no termina de cargar a tiempo, porque el motor se cierra o porque la entrega no se puede publicar pasa a .gestor/<agente>/pendientes.toml, y sigue ahí aunque cierres Programator. Cada pasada atiende primero lo que hay en la cola. El tiempo que se espera a que cargue un modelo lo fija motor.espera_de_carga_segundos, 300 de fábrica, y ciclo.intentos_por_encargo dice tras cuántos intentos fallidos, 2 de fábrica, se cierra el encargo y se responde a quien lo pidió con el motivo.
+El registro de encargos. Cada encargo tiene su ficha en .gestor/<agente>/encargos/, con el estado en que está, y sigue ahí aunque cierres Programator. Un encargo que no se puede atender porque el modelo no termina de cargar a tiempo, porque el motor se cierra o porque la entrega no se puede publicar sigue pendiente, y cada pasada atiende los pendientes por orden de llegada. Editar lo anterior de un buzón o cambiar sus saltos de línea no hace que se vuelva a atender nada. El tiempo que se espera a que cargue un modelo lo fija motor.espera_de_carga_segundos, 300 de fábrica, y ciclo.intentos_por_encargo dice tras cuántos intentos fallidos, 2 de fábrica, se cierra el encargo y se responde a quien lo pidió con el motivo.
 
 Qué modelos hay. Al arrancar, y en el diagnóstico, Programator lista los modelos de la carpeta modelos/, dice si caben en la tarjeta y qué clases de encargo atiende cada uno según el banco. Un modelo cuenta como que cabe si al menos tres cuartas partes de sus capas entran en la tarjeta. Si ninguno cabe, o la carpeta está vacía, lo dice en la terminal y, si la configuración dice quiénes pueden ordenar la revisión de modelos, lo deja escrito en su buzón dirigido a ellos, sin descargar nada.
 
@@ -160,7 +175,7 @@ El fichero .gestor/<agente>/lectura.json es el registro interno de punteros y hu
 
 El fichero .gestor/<agente>/latido.json es el archivo de estado en tiempo real que refleja la actividad del arnés.
 
-El fichero .gestor/<agente>/pendientes.toml es la cola de encargos que llegaron y todavía no tienen respuesta publicada.
+La carpeta .gestor/<agente>/encargos/ es el registro de encargos: un fichero por encargo, con su estado. Si una ficha no se entiende, Programator la aparta con la extensión .ilegible y lo avisa. Si vienes de la 1.1.0, su cola, pendientes.toml, se traslada al registro en la primera vuelta y queda renombrada como pendientes.toml.migrado.
 
 El fichero .gestor/<agente>/encaje-historico.log va acumulando cómo se repartió el modelo entre la tarjeta y el procesador: una línea en cada arranque y, por cada encargo, la misma línea Memoria que lleva su entrega.
 
@@ -187,7 +202,7 @@ Este archivo contiene información estructurada con tres posibles estados de eje
 
 El estado reposo indica que Programator ha completado sus revisiones, no tiene tareas pendientes y se encuentra esperando el momento de la siguiente comprobación. El archivo incluye, en el campo proximo_sondeo, la hora local en la que se llevará a cabo el próximo sondeo. Todas sus horas, también la del propio latido en marca_tiempo, van en la forma año-mes-día horas:minutos:segundos, por ejemplo 2026-09-25 14:03:00, la misma que usan los latidos del canal; no llevan zona horaria.
 
-El estado atendiendo indica que el modelo de lenguaje se encuentra procesando activamente un encargo. En este estado, el archivo detalla el identificador del encargo en curso o las primeras líneas de su descripción.
+El estado atendiendo indica que el modelo de lenguaje se encuentra procesando activamente un encargo. En este estado, el archivo detalla el identificador del encargo en curso o las primeras líneas de su descripción, y no lleva el campo proximo_sondeo: lo nuevo del canal se lee al terminar la vuelta, y entre una llamada al modelo y la siguiente Programator solo mira si cancelan el encargo en curso.
 
 El estado error indica que ha ocurrido una incidencia que impide completar el ciclo, como un fallo reiterado de comunicación con el motor de inferencia. El archivo recoge el mensaje descriptivo del fallo.
 
@@ -278,7 +293,7 @@ Si la consola señala SIN CUDA (solo CPU), la versión de llama-server.exe insta
 
 Si se asignan menos capas a la tarjeta gráfica de las previstas, reduce el tamaño del parámetro contexto en programator.toml. La memoria necesaria para retener la conversación compite directamente por la misma VRAM que las capas del modelo.
 
-Si publicas un encargo en el canal y Programator no responde, asegúrate de que el encargo está en el buzón de otro participante, en una línea que lleve Para Programator, con la P mayúscula (o bajo un encabezado «## Para Programator», la forma antigua), y no con Programator solo en copia ni nombrado sin Para. Comprueba asimismo que latido.json refleja el estado de reposo y una hora de próximo sondeo cercana. El momento en que se publicó el encargo solo importa en un caso: si Programator ya había respondido alguna vez en ese canal y ha perdido su registro de lectura, lectura.json, al arrancar da por visto todo lo que ya había, y un encargo publicado antes de su aviso de disponibilidad no se atiende; vuelve a publicarlo al final del buzón. Si tu buzón no empieza por la línea # Bandeja de con tu identidad, Programator sí responde, pero la respuesta no te despertará.
+Si publicas un encargo en el canal y Programator no responde, asegúrate de que el encargo está en el buzón de otro participante, en una línea que lleve Para Programator, con la P mayúscula (o bajo un encabezado «## Para Programator», la forma antigua), y no con Programator solo en copia ni nombrado sin Para. Comprueba asimismo que latido.json refleja el estado de reposo y una hora de próximo sondeo cercana. El momento en que se publicó el encargo solo importa en un caso: si Programator ya había respondido alguna vez en ese canal y ha perdido su registro de lectura, lectura.json, al arrancar da por visto todo lo que ya había, y un encargo publicado antes de su aviso de disponibilidad no se atiende; vuelve a publicarlo en una intervención nueva. Si tu buzón no empieza por la línea # Bandeja de con tu identidad, Programator sí responde, pero la respuesta no te despertará.
 
 Si se notifica que la carpeta de trabajo no existe, verifica la ruta asignada en el parámetro --ruta, en la clave ruta del archivo de configuración o en ultima-carpeta.txt.
 

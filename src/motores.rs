@@ -15,7 +15,7 @@ use crate::arnes::espacio::ruta_del_encaje_historico;
 use crate::arnes::sesion::{Espera, EstadoMotor, ModeloPedido, Motores, Preparacion};
 use crate::config::Config;
 use crate::error::Resultado;
-use crate::motor::cabida::{cabida, por_que_no_se_puede_usar};
+use crate::motor::cabida::{cabida, por_que_no_se_puede_usar, FicheroDelModelo};
 use crate::motor::encaje::encaje_en_tarjeta;
 use crate::motor::encaje_historico::{self, Memoria};
 use crate::motor::fichero_de_modelo;
@@ -122,16 +122,25 @@ impl Motores for MotoresDelCiclo<'_> {
         // modelo que tenga.
         let ajeno_listo = || {
             self.servidor.borrow().is_none()
-                && matches!(hay_servidor(config.motor.puerto), EstadoServidor::Listo)
+                && matches!(
+                    hay_servidor(
+                        config.motor.puerto,
+                        crate::motor::clave::vigente(config).as_ref()
+                    ),
+                    EstadoServidor::Listo
+                )
         };
         let por_pesar = modelo.filter(|m| self.cargado().as_deref() != Some(*m));
         if let Some(ruta) = por_pesar.filter(|_| !ajeno_listo()) {
             let ruta = Path::new(ruta);
             let cabida =
                 || describir_gpu().map(|gpu| cabida(&encaje_en_tarjeta(&config.motor, ruta, &gpu)));
-            let existe = ruta.is_file();
-            let cabida = if existe { cabida() } else { None };
-            if let Some(motivo) = por_que_no_se_puede_usar(ruta, existe, cabida.as_ref()) {
+            let (fichero, cabida) = if ruta.is_file() {
+                (FicheroDelModelo::Esta, cabida())
+            } else {
+                (FicheroDelModelo::Falta, None)
+            };
+            if let Some(motivo) = por_que_no_se_puede_usar(ruta, fichero, cabida.as_ref()) {
                 return Ok(Preparacion::SinModelo(motivo));
             }
         }

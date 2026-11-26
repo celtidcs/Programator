@@ -14,8 +14,8 @@ fn la_guia_para_el_equipo_se_actualiza_en_cada_arranque() {
     // Al revés que las normas: una guía vieja es peor que ninguna, porque dice qué sabe hacer
     // el modelo y dónde miente, y eso cambia con cada versión y con cada modelo que se ponga
     // detrás. Se lee como vigente aunque no lo sea.
-    let dir = tempfile::tempdir().unwrap();
-    let plantilla = dir.path().join("guia.md");
+    let carpeta = tempfile::tempdir().unwrap();
+    let plantilla = carpeta.path().join("guia.md");
     let canal = tempfile::tempdir().unwrap();
     let comprobadores = crate::arnes::verificacion::Comprobadores::new();
 
@@ -76,8 +76,8 @@ fn la_guia_publica_el_contexto_en_vigor_y_no_una_cifra_escrita_a_mano() {
 fn la_guia_compone_el_repertorio_el_desempeno_y_los_comprobadores() {
     // El defecto que cierra esta tarea: la guía real le decía al modelo dirigido que carecía de
     // herramientas, cuando `publicar_guia` ya podía interpolar las tres cosas que lo desmienten.
-    let dir = tempfile::tempdir().unwrap();
-    let plantilla = dir.path().join("guia.md");
+    let carpeta = tempfile::tempdir().unwrap();
+    let plantilla = carpeta.path().join("guia.md");
     std::fs::write(&plantilla, "{repertorio}\n{desempeno}\n{comprobadores}").unwrap();
     let desempeno = "27 de 41 auditando formas";
     let canal = tempfile::tempdir().unwrap();
@@ -147,61 +147,61 @@ fn no_sobrescribe_unas_normas_que_ya_estaban() {
 
 #[test]
 fn el_sondeo_detecta_que_un_buzon_ha_cambiado() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("claude.md"), "uno").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    std::fs::write(carpeta.path().join("claude.md"), "uno").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
-    std::fs::write(dir.path().join("claude.md"), "uno y dos").unwrap();
+    std::fs::write(carpeta.path().join("claude.md"), "uno y dos").unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades
     );
 }
 
 #[test]
 fn el_sondeo_no_da_falsos_positivos_cuando_nada_cambia() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("claude.md"), "uno").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    std::fs::write(carpeta.path().join("claude.md"), "uno").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::SinCambios
     );
 }
 
 #[test]
 fn el_sondeo_detecta_un_buzon_nuevo() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("claude.md"), "uno").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    std::fs::write(carpeta.path().join("claude.md"), "uno").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
-    std::fs::write(dir.path().join("gemini.md"), "nuevo agente").unwrap();
+    std::fs::write(carpeta.path().join("gemini.md"), "nuevo agente").unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades
     );
 }
 
 #[test]
 fn detecta_dos_escrituras_del_mismo_tamano_en_el_mismo_segundo() {
-    let dir = tempfile::tempdir().unwrap();
-    let ruta = dir.path().join("claude.md");
+    let carpeta = tempfile::tempdir().unwrap();
+    let ruta = carpeta.path().join("claude.md");
     std::fs::write(&ruta, "aaaaa").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     // Mismo tamaño, contenido distinto, casi con toda seguridad dentro del mismo segundo: si
     // la huella dependiera de la fecha de modificación, esta escritura pasaría desapercibida.
     std::fs::write(&ruta, "bbbbb").unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades,
         "dos escrituras del mismo tamaño en el mismo segundo deben distinguirse por el hash \
          SHA-256 del contenido, que no depende de ninguna resolución de reloj"
@@ -210,54 +210,54 @@ fn detecta_dos_escrituras_del_mismo_tamano_en_el_mismo_segundo() {
 
 #[test]
 fn un_fichero_nuevo_en_una_subcarpeta_se_detecta() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("claude.md"), "uno").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    std::fs::write(carpeta.path().join("claude.md"), "uno").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
-    let subcarpeta = dir.path().join("msg");
+    let subcarpeta = carpeta.path().join("msg");
     std::fs::create_dir_all(&subcarpeta).unwrap();
     std::fs::write(subcarpeta.join("001.md"), "primer mensaje").unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades
     );
 }
 
 #[test]
 fn un_fichero_nuevo_en_una_subcarpeta_anidada_dos_niveles_se_detecta() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("claude.md"), "uno").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    std::fs::write(carpeta.path().join("claude.md"), "uno").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
-    let anidada = dir.path().join("msg").join("archivo");
+    let anidada = carpeta.path().join("msg").join("archivo");
     std::fs::create_dir_all(&anidada).unwrap();
     std::fs::write(anidada.join("002.md"), "mensaje archivado").unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades
     );
 }
 
 #[test]
 fn dos_ficheros_con_el_mismo_nombre_en_carpetas_distintas_no_se_confunden() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("a")).unwrap();
-    std::fs::create_dir_all(dir.path().join("b")).unwrap();
-    std::fs::write(dir.path().join("a").join("x.md"), "contenido").unwrap();
-    std::fs::write(dir.path().join("b").join("x.md"), "contenido").unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(carpeta.path().join("a")).unwrap();
+    std::fs::create_dir_all(carpeta.path().join("b")).unwrap();
+    std::fs::write(carpeta.path().join("a").join("x.md"), "contenido").unwrap();
+    std::fs::write(carpeta.path().join("b").join("x.md"), "contenido").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     // Si la huella confundiera ambos ficheros por compartir nombre, borrar uno mientras el
     // otro sigue intacto podría pasar desapercibido.
-    std::fs::remove_file(dir.path().join("a").join("x.md")).unwrap();
+    std::fs::remove_file(carpeta.path().join("a").join("x.md")).unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades,
         "borrar uno de los dos ficheros homónimos debe detectarse aunque el otro siga intacto"
     );
@@ -265,37 +265,37 @@ fn dos_ficheros_con_el_mismo_nombre_en_carpetas_distintas_no_se_confunden() {
 
 #[test]
 fn un_fichero_borrado_dentro_de_una_subcarpeta_se_detecta() {
-    let dir = tempfile::tempdir().unwrap();
-    let subcarpeta = dir.path().join("msg");
+    let carpeta = tempfile::tempdir().unwrap();
+    let subcarpeta = carpeta.path().join("msg");
     std::fs::create_dir_all(&subcarpeta).unwrap();
     std::fs::write(subcarpeta.join("001.md"), "uno").unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     std::fs::remove_file(subcarpeta.join("001.md")).unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades
     );
 }
 
 #[test]
 fn un_directorio_vacio_no_da_falsos_positivos() {
-    let dir = tempfile::tempdir().unwrap();
+    let carpeta = tempfile::tempdir().unwrap();
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::SinCambios
     );
 }
 
 #[test]
 fn un_directorio_inexistente_da_un_error_claro() {
-    let dir = tempfile::tempdir().unwrap();
-    let inexistente = dir.path().join("no-existe");
+    let carpeta = tempfile::tempdir().unwrap();
+    let inexistente = carpeta.path().join("no-existe");
     let mut huella = None;
 
     let fallo = hay_novedades(&inexistente, &mut huella).unwrap_err();
@@ -324,17 +324,17 @@ fn bloquear_en_exclusiva(ruta: &std::path::Path) -> std::fs::File {
 #[test]
 #[cfg(windows)]
 fn un_fichero_que_no_se_puede_leer_no_se_confunde_con_uno_borrado() {
-    let dir = tempfile::tempdir().unwrap();
-    let fichero = dir.path().join("codex.md");
+    let carpeta = tempfile::tempdir().unwrap();
+    let fichero = carpeta.path().join("codex.md");
     std::fs::write(&fichero, "contenido estable\n").unwrap();
 
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
     let referencia = huella.clone();
 
     // Con el fichero bloqueado, la foto del canal está incompleta: la pasada se ignora.
     let bloqueo = bloquear_en_exclusiva(&fichero);
-    let sondeo = hay_novedades(dir.path(), &mut huella).unwrap();
+    let sondeo = hay_novedades(carpeta.path(), &mut huella).unwrap();
     drop(bloqueo);
 
     assert_eq!(
@@ -351,21 +351,21 @@ fn un_fichero_que_no_se_puede_leer_no_se_confunde_con_uno_borrado() {
 #[test]
 #[cfg(windows)]
 fn tras_una_pasada_ignorada_el_canal_quieto_sigue_sin_dar_novedades() {
-    let dir = tempfile::tempdir().unwrap();
-    let fichero = dir.path().join("codex.md");
+    let carpeta = tempfile::tempdir().unwrap();
+    let fichero = carpeta.path().join("codex.md");
     std::fs::write(&fichero, "contenido estable\n").unwrap();
 
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     let bloqueo = bloquear_en_exclusiva(&fichero);
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
     drop(bloqueo);
 
     // Éste es el fallo que se vio en uso real: al recuperarse la lectura, el sondeo anunciaba
     // una segunda novedad falsa. Con la referencia intacta, no hay nada que anunciar.
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::SinCambios
     );
 }
@@ -373,21 +373,21 @@ fn tras_una_pasada_ignorada_el_canal_quieto_sigue_sin_dar_novedades() {
 #[test]
 #[cfg(windows)]
 fn un_cambio_real_ocurrido_durante_el_bloqueo_se_detecta_al_recuperarse() {
-    let dir = tempfile::tempdir().unwrap();
-    let fichero = dir.path().join("codex.md");
+    let carpeta = tempfile::tempdir().unwrap();
+    let fichero = carpeta.path().join("codex.md");
     std::fs::write(&fichero, "contenido estable\n").unwrap();
 
     let mut huella = None;
-    hay_novedades(dir.path(), &mut huella).unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
 
     let bloqueo = bloquear_en_exclusiva(&fichero);
-    hay_novedades(dir.path(), &mut huella).unwrap();
-    std::fs::write(dir.path().join("gemini.md"), "encargo nuevo\n").unwrap();
+    hay_novedades(carpeta.path(), &mut huella).unwrap();
+    std::fs::write(carpeta.path().join("gemini.md"), "encargo nuevo\n").unwrap();
     drop(bloqueo);
 
     // Ignorar una pasada no puede tragarse una novedad de verdad: solo la retrasa una vuelta.
     assert_eq!(
-        hay_novedades(dir.path(), &mut huella).unwrap(),
+        hay_novedades(carpeta.path(), &mut huella).unwrap(),
         Sondeo::Novedades
     );
 }
@@ -586,8 +586,12 @@ fn mensajes_de_ciclo_y_desenlace_formatean_correctamente() {
         "Novedades en el canal: atendiendo…"
     );
     assert_eq!(
-        mensaje_reanudacion_encargo_esperando_motor(),
-        "Se retoma el encargo que quedó esperando a que cargara el modelo."
+        mensaje_se_retoma_lo_aplazado(),
+        "Se retoma lo que quedó para esta vuelta: el modelo cargando o un buzón a medio escribir."
+    );
+    assert_eq!(
+        mensaje_desenlace_buzon_a_medias(),
+        "Un buzón se estaba escribiendo: lo nuevo se lee en el ciclo siguiente."
     );
     assert_eq!(
         mensaje_desenlace_sin_encargos(),

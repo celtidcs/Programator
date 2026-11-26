@@ -1102,12 +1102,13 @@ dependencies = [
 
 [[package]]
 name = "programator"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "aviso-version-github",
  "chrono",
  "ctrlc",
  "fs4",
+ "getrandom 0.2.17",
  "rfd",
  "serde",
  "serde_json",

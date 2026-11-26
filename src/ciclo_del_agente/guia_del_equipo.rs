@@ -31,7 +31,11 @@ pub(super) fn leer_el_registro_de_modelos(config: &Config) -> Registro {
 
 /// La guía para los demás agentes, al día en cada arranque. Si no se puede escribir se avisa y
 /// se sigue: quedarse sin guía es malo, pero no arrancar es peor.
-pub(super) fn publicar_la_guia_del_equipo(canal_dir: &Path, config: &Config, medido: &LoMedido) {
+pub(super) fn publicar_la_guia_del_equipo(
+    carpeta_del_canal: &Path,
+    config: &Config,
+    medido: &LoMedido,
+) {
     let plantilla_guia = config.resolver(&config.agente.guia);
     let en_modelos = programator::revision::proponer::ficheros_con_tamano(
         &config.resolver(&config.revision.carpeta_de_modelos),
@@ -39,7 +43,7 @@ pub(super) fn publicar_la_guia_del_equipo(canal_dir: &Path, config: &Config, med
     .unwrap_or_default();
     let desempeno = desempeno_para_la_guia(config, medido, &en_modelos);
     match publicar_guia(
-        canal_dir,
+        carpeta_del_canal,
         &plantilla_guia,
         programator::protocolo::carpetas::NOMBRE_DE_LA_GUIA,
         config.motor.contexto,
@@ -63,12 +67,12 @@ pub(super) fn publicar_la_guia_del_equipo(canal_dir: &Path, config: &Config, med
 
 /// Vuelve a publicar la guía con el registro, la tarjeta y los modelos disponibles de ahora: la
 /// guía cuenta el modelo por defecto y sus cifras, y con otro hay que rehacerla.
-pub(super) fn republicar_la_guia_del_equipo(canal_dir: &Path, config: &Config) {
+pub(super) fn republicar_la_guia_del_equipo(carpeta_del_canal: &Path, config: &Config) {
     let registro = leer_el_registro_de_modelos(config);
     let gpu = programator::motor::hardware::describir_gpu();
     let disponibles = arranque::disponibles::reunir(config, gpu.as_ref(), &registro);
     publicar_la_guia_del_equipo(
-        canal_dir,
+        carpeta_del_canal,
         config,
         &LoMedido {
             registro: &registro,

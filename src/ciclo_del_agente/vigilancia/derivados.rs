@@ -41,9 +41,9 @@ mod pruebas {
     /// Tras releer la configuración, todo lo que sale de ella es de la nueva.
     #[test]
     fn los_derivados_salen_de_la_configuracion_que_se_les_da() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let cargar = |contenido: &str| {
-            let ruta = dir.path().join("programator.toml");
+            let ruta = carpeta.path().join("programator.toml");
             std::fs::write(&ruta, contenido).unwrap();
             Config::cargar(&ruta).unwrap()
         };
@@ -54,8 +54,8 @@ mod pruebas {
              max_herramientas_por_encargo = 3\nfichero_latido = \"otro.json\"\n",
         );
 
-        let antes = DerivadosDeLaConfig::de(&vieja, dir.path());
-        let despues = DerivadosDeLaConfig::de(&nueva, dir.path());
+        let antes = DerivadosDeLaConfig::de(&vieja, carpeta.path());
+        let despues = DerivadosDeLaConfig::de(&nueva, carpeta.path());
 
         assert!(despues.preambulo.ends_with("otro.md"));
         assert!(despues.recordatorio.ends_with("otro-recordatorio.md"));

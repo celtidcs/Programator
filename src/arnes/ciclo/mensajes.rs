@@ -105,15 +105,7 @@ pub fn resultado_denegado(nombre: &str, motivo: &str) -> String {
     format!("Denegada «{nombre}»: {motivo}. Rectifica o usa otra herramienta.")
 }
 
-/// Los nombres entre comillas latinas y separados por comas: «a», «b». La única forma de listar
-/// propuestas en los avisos.
-pub(crate) fn lista_entre_comillas(nombres: &[String]) -> String {
-    nombres
-        .iter()
-        .map(|nombre| format!("«{nombre}»"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
+pub(crate) use crate::concordancia::lista_entre_comillas;
 
 /// Describe el estado de las propuestas dejadas en disco al momento de abortar un encargo.
 ///

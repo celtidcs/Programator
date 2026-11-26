@@ -68,28 +68,32 @@ mod pruebas {
 
     #[test]
     fn una_carpeta_fuera_de_resultados_no_se_toma_por_una_tanda() {
-        let dir = tempfile::tempdir().unwrap();
-        let fallo = carpeta_del_banco(&dir.path().join("otra").join("t1")).unwrap_err();
+        let carpeta = tempfile::tempdir().unwrap();
+        let fallo = carpeta_del_banco(&carpeta.path().join("otra").join("t1")).unwrap_err();
         assert!(fallo.to_string().contains("resultados"), "{fallo}");
         assert_eq!(
-            carpeta_del_banco(&carpeta_tanda(dir.path())).unwrap(),
-            dir.path()
+            carpeta_del_banco(&carpeta_tanda(carpeta.path())).unwrap(),
+            carpeta.path()
         );
     }
 
     #[test]
     fn un_lenguaje_sin_orden_para_el_banco_antes_de_cargar_el_modelo_y_dice_que_anadir() {
-        let dir = tempfile::tempdir().unwrap();
-        oficio_en_php(dir.path());
-        oficio(dir.path());
-        std::fs::write(dir.path().join(NOMBRE_BANCO_TOML), "[comprobacion_local]\n").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        oficio_en_php(carpeta.path());
+        oficio(carpeta.path());
+        std::fs::write(
+            carpeta.path().join(NOMBRE_BANCO_TOML),
+            "[comprobacion_local]\n",
+        )
+        .unwrap();
 
-        let fallo = cargar_banco(dir.path(), &TerminalDeMentira::default())
+        let fallo = cargar_banco(carpeta.path(), &TerminalDeMentira::default())
             .unwrap_err()
             .to_string();
         // Sin banco.toml van encendidas, así que también se exige.
-        std::fs::remove_file(dir.path().join(NOMBRE_BANCO_TOML)).unwrap();
-        let sin_toml = cargar_banco(dir.path(), &TerminalDeMentira::default())
+        std::fs::remove_file(carpeta.path().join(NOMBRE_BANCO_TOML)).unwrap();
+        let sin_toml = cargar_banco(carpeta.path(), &TerminalDeMentira::default())
             .unwrap_err()
             .to_string();
         assert_eq!(sin_toml, fallo);
@@ -105,15 +109,15 @@ mod pruebas {
 
     #[test]
     fn un_lenguaje_declarado_en_banco_toml_se_acepta() {
-        let dir = tempfile::tempdir().unwrap();
-        oficio_en_php(dir.path());
+        let carpeta = tempfile::tempdir().unwrap();
+        oficio_en_php(carpeta.path());
         std::fs::write(
-            dir.path().join(NOMBRE_BANCO_TOML),
+            carpeta.path().join(NOMBRE_BANCO_TOML),
             "[comprobacion_local]\n[comprobacion_local.herramientas]\nphp = \"php --version\"\n",
         )
         .unwrap();
 
-        let (_, encargos) = cargar_banco(dir.path(), &TerminalDeMentira::default()).unwrap();
+        let (_, encargos) = cargar_banco(carpeta.path(), &TerminalDeMentira::default()).unwrap();
 
         assert_eq!(encargos.len(), 1);
     }
@@ -122,15 +126,15 @@ mod pruebas {
     fn con_las_pruebas_ocultas_apagadas_un_lenguaje_sin_orden_no_impide_pasar_el_banco() {
         // Apagadas no se ejecuta código: el modelo escribe el PHP igual, y lo que no se puede es
         // comprobar si funciona, que sale «no evaluado» con su motivo.
-        let dir = tempfile::tempdir().unwrap();
-        oficio_en_php(dir.path());
+        let carpeta = tempfile::tempdir().unwrap();
+        oficio_en_php(carpeta.path());
         std::fs::write(
-            dir.path().join(NOMBRE_BANCO_TOML),
+            carpeta.path().join(NOMBRE_BANCO_TOML),
             "[comprobacion_local]\nactiva = false\n",
         )
         .unwrap();
 
-        let (_, encargos) = cargar_banco(dir.path(), &TerminalDeMentira::default()).unwrap();
+        let (_, encargos) = cargar_banco(carpeta.path(), &TerminalDeMentira::default()).unwrap();
 
         assert_eq!(encargos.len(), 1);
     }
@@ -139,17 +143,17 @@ mod pruebas {
     /// que recibe el banco, no directamente por `stderr`.
     #[test]
     fn sin_banco_toml_se_avisa_por_la_salida_de_errores_de_la_terminal_inyectada() {
-        let dir = tempfile::tempdir().unwrap();
-        oficio(dir.path());
+        let carpeta = tempfile::tempdir().unwrap();
+        oficio(carpeta.path());
         let terminal = TerminalDeMentira::default();
 
-        cargar_banco(dir.path(), &terminal).unwrap();
+        cargar_banco(carpeta.path(), &terminal).unwrap();
 
         assert_eq!(
             terminal.capturado(),
             vec![(
                 Flujo::Errores,
-                mensajes::mensaje_sin_banco_toml(&dir.path().join(NOMBRE_BANCO_TOML))
+                mensajes::mensaje_sin_banco_toml(&carpeta.path().join(NOMBRE_BANCO_TOML))
             )]
         );
     }

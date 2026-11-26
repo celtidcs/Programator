@@ -254,10 +254,13 @@ mod pruebas {
 
     #[test]
     fn copia_bin_etc_y_usr_crea_tmp_y_dev_y_deja_fuera_lo_demas() {
-        let dir = tempfile::tempdir().unwrap();
-        let raiz = dir.path().join("Git");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let raiz = carpeta_temporal.path().join("Git");
         git_de_mentira(&raiz);
-        let copia = dir.path().join("banco").join("interprete-aislado");
+        let copia = carpeta_temporal
+            .path()
+            .join("banco")
+            .join("interprete-aislado");
 
         assert!(asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap());
 
@@ -283,10 +286,10 @@ mod pruebas {
 
     #[test]
     fn sin_cambios_no_se_vuelve_a_copiar_y_con_cambios_si() {
-        let dir = tempfile::tempdir().unwrap();
-        let raiz = dir.path().join("Git");
+        let carpeta = tempfile::tempdir().unwrap();
+        let raiz = carpeta.path().join("Git");
         git_de_mentira(&raiz);
-        let copia = dir.path().join("copia");
+        let copia = carpeta.path().join("copia");
         asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap();
         std::fs::write(copia.join("etc/profile"), "tocado").unwrap();
 
@@ -306,10 +309,10 @@ mod pruebas {
 
     #[test]
     fn con_integridad_baja_se_usa_el_bash_de_la_copia_con_el_resto_de_la_orden() {
-        let dir = tempfile::tempdir().unwrap();
-        let raiz = dir.path().join("Git");
+        let carpeta = tempfile::tempdir().unwrap();
+        let raiz = carpeta.path().join("Git");
         git_de_mentira(&raiz);
-        let banco = dir.path().join("banco");
+        let banco = carpeta.path().join("banco");
 
         let (local, aviso) = con_la_copia(
             &local_aislado(&raiz.join("bin/bash.exe")),
@@ -332,8 +335,8 @@ mod pruebas {
 
     #[test]
     fn el_bash_de_la_copia_va_en_ruta_absoluta_aunque_el_banco_venga_en_relativa() {
-        let dir = tempfile::tempdir().unwrap();
-        let raiz = dir.path().join("Git");
+        let carpeta = tempfile::tempdir().unwrap();
+        let raiz = carpeta.path().join("Git");
         git_de_mentira(&raiz);
         let local = local_aislado(&raiz.join("bin/bash.exe"));
         let relativa = Path::new("banco-de-una-prueba-de-ruta-relativa");
@@ -353,10 +356,10 @@ mod pruebas {
 
     #[test]
     fn una_copia_de_una_forma_anterior_se_rehace() {
-        let dir = tempfile::tempdir().unwrap();
-        let raiz = dir.path().join("Git");
+        let carpeta = tempfile::tempdir().unwrap();
+        let raiz = carpeta.path().join("Git");
         git_de_mentira(&raiz);
-        let copia = dir.path().join("copia");
+        let copia = carpeta.path().join("copia");
         asegurar_la_copia(&raiz, &copia, &TerminalDeMentira::default()).unwrap();
         let actual = std::fs::read_to_string(copia.join(NOMBRE_DE_LA_MARCA)).unwrap();
         let sin_forma: String = actual
@@ -373,10 +376,10 @@ mod pruebas {
 
     #[test]
     fn con_otro_aislamiento_o_sin_carpeta_no_se_copia_nada() {
-        let dir = tempfile::tempdir().unwrap();
-        let raiz = dir.path().join("Git");
+        let carpeta = tempfile::tempdir().unwrap();
+        let raiz = carpeta.path().join("Git");
         git_de_mentira(&raiz);
-        let banco = dir.path().join("banco");
+        let banco = carpeta.path().join("banco");
         let aislado = local_aislado(&raiz.join("bin/bash.exe"));
         let sin_aislar = ComprobacionLocal {
             aislamiento: Aislamiento::Ninguno,
@@ -398,11 +401,11 @@ mod pruebas {
 
     #[test]
     fn un_interprete_que_no_es_el_bash_de_git_se_usa_tal_cual_y_se_avisa() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let local = local_aislado(Path::new("C:/msys64/usr/bin/bash.exe"));
 
         let (resultado, aviso) =
-            con_la_copia(&local, dir.path(), &TerminalDeMentira::default()).unwrap();
+            con_la_copia(&local, carpeta.path(), &TerminalDeMentira::default()).unwrap();
 
         assert_eq!(resultado, local);
         let aviso = aviso.unwrap();

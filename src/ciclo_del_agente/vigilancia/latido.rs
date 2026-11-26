@@ -35,8 +35,8 @@ mod pruebas {
 
     #[test]
     fn registrar_latido_fin_vuelta_guarda_reposo_y_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("latido.json");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("latido.json");
 
         registrar_latido_fin_vuelta(&ruta, 180, &EstadoFinVuelta::Reposo, None);
         let latido_reposo = Latido::cargar(&ruta).unwrap().expect("existe");

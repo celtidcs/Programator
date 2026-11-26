@@ -88,9 +88,78 @@ fn con_los_nombres(fichero: &str, orden: &str) -> String {
     format!(". '{entre_comillas}'\n{orden}")
 }
 
+/// Las variables de entorno de las dos clases de órdenes, ya compuestas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entornos {
+    /// Las de las órdenes que ejecutan código, sin red.
+    pub del_codigo: Vec<(String, String)>,
+    /// Las de las que preparan y descargan, con red.
+    pub para_preparar: Vec<(String, String)>,
+}
+
+/// Las variables de la configuración con `{cache}` sustituido por `cache`, `{proxy}` por el puerto
+/// de la trampa y las `{VARIABLE}` del sistema por las de `sistema`. Las usan el banco y la
+/// preparación de propuestas del arnés, que así aíslan igual.
+pub fn entornos(
+    config: &ComprobacionLocal,
+    cache: &Path,
+    puerto_de_la_trampa: u16,
+    sistema: &BTreeMap<String, String>,
+) -> Entornos {
+    let texto_de_cache = con_barras(cache);
+    let componer = |variables| {
+        con_las_del_sistema(
+            variables_sustituidas(variables, &texto_de_cache, puerto_de_la_trampa),
+            sistema,
+        )
+    };
+    Entornos {
+        del_codigo: componer(config.variables_efectivas()),
+        para_preparar: componer(config.variables_para_preparar()),
+    }
+}
+
+/// Crea la carpeta de cachés `cache` y las que nombran las variables de `config` dentro de ella
+/// (`TMPDIR` y demás): si faltan, las herramientas que las usan fallan sin decir por qué.
+pub fn crear_las_caches(config: &ComprobacionLocal, cache: &Path) -> Resultado<()> {
+    crear_carpeta(cache)?;
+    let texto_de_cache = con_barras(cache);
+    for valor in config.variables_efectivas().values() {
+        if valor.contains(MARCADOR_CACHE) {
+            crear_carpeta(Path::new(&valor.replace(MARCADOR_CACHE, &texto_de_cache)))?;
+        }
+    }
+    Ok(())
+}
+
+/// Prueba que el envoltorio `prefijo` funciona aquí, con una orden que no hace nada dentro. Sin
+/// envoltorio no hay nada que probar. Si falla, devuelve por qué, ya recortado: en Ubuntu 24.04 y
+/// posteriores, AppArmor no deja crear espacios de nombres a los usuarios normales.
+pub fn probar_el_envoltorio(
+    prefijo: &[String],
+    lanzador: &mut dyn LanzadorConEntorno,
+    directorio: &Path,
+    entorno: &[(String, String)],
+) -> Result<(), String> {
+    if prefijo.is_empty() {
+        return Ok(());
+    }
+    let mut argumentos = prefijo.to_vec();
+    argumentos.push(ORDEN_QUE_NO_HACE_NADA.into());
+    match lanzador.lanzar(
+        &argumentos,
+        directorio,
+        entorno,
+        TIEMPO_MAXIMO_PREGUNTA_AL_INTERPRETE,
+    ) {
+        DesenlaceDeOrden::Terminada { exito: true, .. } => Ok(()),
+        otro => Err(recortar(&mensajes::motivo_del_desenlace(&otro))),
+    }
+}
+
 /// Lo que va delante de cada orden para aislarla: el envoltorio con `espacio_de_nombres`, y nada
 /// con los demás. La integridad baja de Windows no va por argumentos, sino por el lanzador.
-fn prefijo_de_aislamiento(config: &ComprobacionLocal) -> &[String] {
+pub fn prefijo_de_aislamiento(config: &ComprobacionLocal) -> &[String] {
     match config.aislamiento {
         Aislamiento::EspacioDeNombres => &config.envoltorio,
         Aislamiento::IntegridadBaja | Aislamiento::Ninguno => &[],
@@ -213,19 +282,18 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
         })?;
         let raiz = absoluta(carpeta_de_la_tanda, &actual).join(CARPETA_DE_COMPROBACION);
         let cache = raiz.join(CARPETA_DE_CACHES);
-        let texto_de_cache = con_barras(&cache);
         let trampa = Trampa::abrir()?;
         let funciones = cache.join(FICHERO_DE_FUNCIONES);
-        let con_bash_env = |variables| {
-            let mut entorno = con_las_del_sistema(
-                variables_sustituidas(variables, &texto_de_cache, trampa.puerto()),
-                entorno_del_sistema,
-            );
+        let Entornos {
+            del_codigo,
+            para_preparar,
+        } = entornos(config, &cache, trampa.puerto(), entorno_del_sistema);
+        let con_bash_env = |mut entorno: Vec<(String, String)>| {
             entorno.push((VARIABLE_BASH_ENV.into(), con_barras(&funciones)));
             entorno
         };
-        let entorno = con_bash_env(config.variables_efectivas());
-        let entorno_para_preparar = con_bash_env(config.variables_para_preparar());
+        let entorno = con_bash_env(del_codigo);
+        let entorno_para_preparar = con_bash_env(para_preparar);
         let vigiladas = carpetas_vigiladas(
             &config.vigilar,
             &config.temporales_del_sistema,
@@ -253,7 +321,7 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
         // herede: con integridad baja, la etiqueta.
         crear_carpeta(&carpeta.raiz)?;
         carpeta.lanzador.preparar_carpeta(&carpeta.raiz)?;
-        carpeta.crear_caches(&cache, &texto_de_cache, &funciones)?;
+        carpeta.crear_caches(&cache, &funciones)?;
         carpeta.comprobar_envoltorio()?;
         carpeta.comprobar_interprete()?;
         carpeta.foto_inicial = tomar_foto(&carpeta.vigiladas, config.alcance_del_rastro());
@@ -261,13 +329,8 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
     }
 
     /// Crea la carpeta de cachés, las que nombran las variables y el fichero de funciones.
-    fn crear_caches(&self, cache: &Path, texto_de_cache: &str, funciones: &Path) -> Resultado<()> {
-        crear_carpeta(cache)?;
-        for valor in self.config.variables_efectivas().values() {
-            if valor.contains(MARCADOR_CACHE) {
-                crear_carpeta(Path::new(&valor.replace(MARCADOR_CACHE, texto_de_cache)))?;
-            }
-        }
+    fn crear_caches(&self, cache: &Path, funciones: &Path) -> Resultado<()> {
+        crear_las_caches(self.config, cache)?;
         escribir(funciones, &fichero_de_funciones(&self.config.nombres))
     }
 
@@ -276,24 +339,14 @@ impl<'a, L: LanzadorConEntorno> CarpetaLocal<'a, L> {
     /// fallaría todo después con un «el intérprete no responde» que mandaría a mirar donde no es.
     fn comprobar_envoltorio(&mut self) -> Resultado<()> {
         let prefijo = prefijo_de_aislamiento(self.config).to_vec();
-        if prefijo.is_empty() {
-            return Ok(());
-        }
-        let mut argumentos = prefijo.clone();
-        argumentos.push(ORDEN_QUE_NO_HACE_NADA.into());
-        let desenlace = self.lanzador.lanzar(
-            &argumentos,
-            &self.raiz,
-            &self.entorno,
-            TIEMPO_MAXIMO_PREGUNTA_AL_INTERPRETE,
-        );
-        match desenlace {
-            DesenlaceDeOrden::Terminada { exito: true, .. } => Ok(()),
-            otro => Err(Error::Banco(mensajes::mensaje_aislamiento_no_disponible(
-                &prefijo.join(" "),
-                &recortar(&mensajes::motivo_del_desenlace(&otro)),
-            ))),
-        }
+        probar_el_envoltorio(&prefijo, &mut self.lanzador, &self.raiz, &self.entorno).map_err(
+            |detalle| {
+                Error::Banco(mensajes::mensaje_aislamiento_no_disponible(
+                    &prefijo.join(" "),
+                    &detalle,
+                ))
+            },
+        )
     }
 
     fn comprobar_interprete(&mut self) -> Resultado<()> {
@@ -558,11 +611,14 @@ mod pruebas {
 
     #[test]
     fn una_carpeta_relativa_se_hace_absoluta_desde_la_actual() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let relativa = Path::new("banco").join("resultados").join("tanda");
 
-        assert_eq!(absoluta(&relativa, dir.path()), dir.path().join(&relativa));
-        assert_eq!(absoluta(dir.path(), Path::new("otra")), dir.path());
+        assert_eq!(
+            absoluta(&relativa, carpeta.path()),
+            carpeta.path().join(&relativa)
+        );
+        assert_eq!(absoluta(carpeta.path(), Path::new("otra")), carpeta.path());
     }
 
     #[test]
@@ -581,14 +637,14 @@ mod pruebas {
 
     #[test]
     fn la_carpeta_se_prepara_para_el_lanzador_recien_creada_y_antes_de_la_primera_orden() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let config = config_con_nombres();
         let (lanzador, _) = falso(bash_de_aqui);
         let preparadas = Rc::clone(&lanzador.preparadas);
 
         let carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -597,20 +653,20 @@ mod pruebas {
         assert!(carpeta.is_ok());
         let raiz = std::env::current_dir()
             .unwrap()
-            .join(dir.path())
+            .join(carpeta_temporal.path())
             .join(CARPETA_DE_COMPROBACION);
         assert_eq!(*preparadas.borrow(), [(raiz, 0, true)]);
     }
 
     #[test]
     fn el_bash_de_wsl_se_rechaza_y_no_deja_la_carpeta() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let config = config_con_nombres();
         let (lanzador, _) = falso(|_| termina("linux-gnu\n"));
 
         let resultado = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -619,7 +675,7 @@ mod pruebas {
         if cfg!(windows) {
             let fallo = resultado.err().unwrap();
             assert!(fallo.to_string().contains("WSL"), "{fallo}");
-            assert!(!dir.path().join(CARPETA_DE_COMPROBACION).exists());
+            assert!(!carpeta.path().join(CARPETA_DE_COMPROBACION).exists());
         } else {
             assert!(resultado.is_ok());
         }
@@ -661,13 +717,13 @@ mod pruebas {
 
     #[test]
     fn el_envoltorio_se_prueba_solo_antes_que_el_interprete() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let config = config_en_espacio_de_nombres();
         let (lanzador, llamadas) = falso(bash_de_aqui);
 
         let carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -682,7 +738,7 @@ mod pruebas {
     /// eso, y no que el intérprete no responde.
     #[test]
     fn si_el_envoltorio_falla_se_explica_y_no_queda_la_carpeta() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let config = config_en_espacio_de_nombres();
         let (lanzador, _) = falso(|_| DesenlaceDeOrden::Terminada {
             exito: false,
@@ -694,7 +750,7 @@ mod pruebas {
 
         let fallo = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -705,18 +761,18 @@ mod pruebas {
 
         assert!(fallo.contains("no se pudo aislar"), "{fallo}");
         assert!(fallo.contains("Operation not permitted"), "{fallo}");
-        assert!(!dir.path().join(CARPETA_DE_COMPROBACION).exists());
+        assert!(!carpeta.path().join(CARPETA_DE_COMPROBACION).exists());
     }
 
     #[test]
     fn el_proxy_de_cada_orden_apunta_a_la_trampa_abierta() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let config = config_con_nombres();
         let (lanzador, llamadas) = falso(bash_de_aqui);
 
         let carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -731,7 +787,7 @@ mod pruebas {
 
     #[test]
     fn lo_que_vio_el_lanzador_se_recoge_una_vez_y_sin_repetir() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let config = config_con_nombres();
         let (mut lanzador, _) = falso(bash_de_aqui);
         lanzador.vigilancia = Vigilancia {
@@ -740,7 +796,7 @@ mod pruebas {
         };
         let mut carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -756,7 +812,7 @@ mod pruebas {
 
     #[test]
     fn lo_que_abre_un_programa_del_sistema_no_se_recoge() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let mut config = config_con_nombres();
         config.programas_del_sistema = vec!["vctip.exe".into()];
         let (mut lanzador, _) = falso(bash_de_aqui);
@@ -769,7 +825,7 @@ mod pruebas {
         };
         let mut carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -809,7 +865,7 @@ mod pruebas {
 
     #[test]
     fn la_preparacion_va_sin_envoltorio_sin_variables_de_red_y_sin_anotar_la_red() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let config = config_en_espacio_de_nombres();
         let (mut lanzador, llamadas) = falso(bash_de_aqui);
         lanzador.vigilancia = Vigilancia {
@@ -818,7 +874,7 @@ mod pruebas {
         };
         let mut carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -844,11 +900,11 @@ mod pruebas {
 
     #[test]
     fn la_entrega_se_copia_y_la_orden_recibe_las_variables_y_bash_env() {
-        let dir = tempfile::tempdir().unwrap();
-        let montada = dir.path().join("montada");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let montada = carpeta_temporal.path().join("montada");
         std::fs::create_dir(&montada).unwrap();
         std::fs::write(montada.join("prueba.py"), "print(1)").unwrap();
-        let tanda = dir.path().join("tanda");
+        let tanda = carpeta_temporal.path().join("tanda");
         let config = config_con_nombres();
         let (lanzador, llamadas) = falso(bash_de_aqui);
         let mut carpeta =
@@ -887,14 +943,14 @@ mod pruebas {
 
     #[test]
     fn al_terminar_la_carpeta_ya_no_existe_tambien_si_se_suelta_sin_terminar() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let config = config_con_nombres();
-        let raiz = dir.path().join(CARPETA_DE_COMPROBACION);
+        let raiz = carpeta_temporal.path().join(CARPETA_DE_COMPROBACION);
 
         let (lanzador, _) = falso(bash_de_aqui);
         let mut carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -908,7 +964,7 @@ mod pruebas {
         let (lanzador, _) = falso(bash_de_aqui);
         let carpeta = CarpetaLocal::empezar(
             &config,
-            dir.path(),
+            carpeta_temporal.path(),
             lanzador,
             &BTreeMap::new(),
             &TerminalReal,
@@ -921,8 +977,8 @@ mod pruebas {
 
     #[test]
     fn lo_que_aparece_en_una_carpeta_vigilada_se_cuenta_como_rastro() {
-        let dir = tempfile::tempdir().unwrap();
-        let perfil = dir.path().join("perfil");
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let perfil = carpeta_temporal.path().join("perfil");
         let config = ComprobacionLocal {
             vigilar: vec!["{PERFIL}/.npm".into()],
             temporales_del_sistema: Vec::new(),
@@ -934,7 +990,7 @@ mod pruebas {
         let (lanzador, _) = falso(bash_de_aqui);
         let mut carpeta = CarpetaLocal::empezar(
             &config,
-            &dir.path().join("tanda"),
+            &carpeta_temporal.path().join("tanda"),
             lanzador,
             &entorno,
             &TerminalReal,

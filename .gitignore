@@ -19,6 +19,8 @@
 # La configuración de cada cual, con las rutas de su máquina. El fichero de ejemplo,
 # «programator.ejemplo.toml», sí se versiona; la copia de trabajo no.
 /programator.toml
+# La clave del motor de una instalación (motor::clave), junto a su configuración.
+.clave-del-motor
 
 # Lo mismo para el banco de modelos: «banco.ejemplo.toml» se versiona, «banco.toml» no. De cada
 # tanda se versionan los resultados y el informe; las carpetas de trabajo, con una copia del canal

@@ -21,9 +21,9 @@ pub(super) fn preparar_la_carpeta(
 ) -> Resultado<(PathBuf, Option<sesion::Instantanea>)> {
     instalar_las_instrucciones(carpeta, config)?;
 
-    let canal_dir = programator::protocolo::carpetas::carpeta_del_canal(carpeta);
-    std::fs::create_dir_all(&canal_dir).map_err(|causa| Error::Escritura {
-        ruta: canal_dir.clone(),
+    let carpeta_del_canal = programator::protocolo::carpetas::carpeta_del_canal(carpeta);
+    std::fs::create_dir_all(&carpeta_del_canal).map_err(|causa| Error::Escritura {
+        ruta: carpeta_del_canal.clone(),
         causa,
     })?;
 
@@ -38,12 +38,12 @@ pub(super) fn preparar_la_carpeta(
     };
 
     dejar_el_vigilante(carpeta, config);
-    publicar_la_guia_del_equipo(&canal_dir, config, medido);
+    publicar_la_guia_del_equipo(&carpeta_del_canal, config, medido);
     if let Some(disponibles) = medido.disponibles.filter(|d| d.ninguno_cabe()) {
         avisar_de_que_ninguno_cabe(carpeta, config, disponibles);
     }
     avisar_de_los_que_faltan(carpeta, config, medido);
-    Ok((canal_dir, instantanea))
+    Ok((carpeta_del_canal, instantanea))
 }
 
 /// El fichero de instrucciones: se compone con lo que el arnés va a ejecutar de verdad y se

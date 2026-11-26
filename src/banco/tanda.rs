@@ -239,10 +239,14 @@ mod pruebas {
 
     #[test]
     fn comprobar_una_tanda_guardada_da_las_mismas_notas_que_la_tanda_completa() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![criterio(dir.path()), formas(dir.path()), oficio(dir.path())];
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargos = vec![
+            criterio(carpeta_temporal.path()),
+            formas(carpeta_temporal.path()),
+            oficio(carpeta_temporal.path()),
+        ];
         let pasados = pasar(
-            dir.path(),
+            carpeta_temporal.path(),
             &encargos,
             vec![
                 vec![Respuesta::Texto("El protocolo dice esto.".into())],
@@ -258,7 +262,7 @@ mod pruebas {
                 ],
             ],
         );
-        let carpeta = carpeta_tanda(dir.path());
+        let carpeta = carpeta_tanda(carpeta_temporal.path());
         let completa = cerrar_tanda(
             &pasados,
             datos(),
@@ -271,7 +275,7 @@ mod pruebas {
         // Como la tanda completa, sin ejecutar código: desde el 13/11/2026 las pruebas ocultas van
         // encendidas por defecto, y una prueba no puede lanzar nada de verdad.
         std::fs::write(
-            dir.path().join(NOMBRE_BANCO_TOML),
+            carpeta_temporal.path().join(NOMBRE_BANCO_TOML),
             "[comprobacion_local]\nactiva = false\n",
         )
         .unwrap();
@@ -287,14 +291,14 @@ mod pruebas {
     /// escribió de nuevo en blanco y se perdieron las 21 notas puestas a mano (en una copia).
     #[test]
     fn comprobar_de_nuevo_no_pisa_las_rubricas_ya_puntuadas() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![criterio(dir.path())];
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargos = vec![criterio(carpeta_temporal.path())];
         let pasados = pasar(
-            dir.path(),
+            carpeta_temporal.path(),
             &encargos,
             vec![vec![Respuesta::Texto("El protocolo dice esto.".into())]],
         );
-        let carpeta = carpeta_tanda(dir.path());
+        let carpeta = carpeta_tanda(carpeta_temporal.path());
         let primera = cerrar_tanda(
             &pasados,
             datos(),
@@ -324,14 +328,14 @@ mod pruebas {
 
     #[test]
     fn si_falla_la_fase_2_quedan_las_pasadas_y_se_dice_como_terminar() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![criterio(dir.path())];
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargos = vec![criterio(carpeta_temporal.path())];
         let pasados = pasar(
-            dir.path(),
+            carpeta_temporal.path(),
             &encargos,
             vec![vec![Respuesta::Texto("El protocolo dice esto.".into())]],
         );
-        let carpeta = carpeta_tanda(dir.path());
+        let carpeta = carpeta_tanda(carpeta_temporal.path());
         // Una carpeta donde va el fichero de resultados: guardarlos falla.
         std::fs::create_dir_all(carpeta.join(NOMBRE_RESULTADOS)).unwrap();
 
@@ -355,40 +359,48 @@ mod pruebas {
     fn antes_de_cargar_el_modelo_se_prueba_donde_se_comprobara() {
         // La carpeta de resultados es un fichero: no se puede preparar la de comprobación, y eso
         // se sabe antes del motor. Si no se probara, `cargar_y_probar` saldría bien.
-        let dir = tempfile::tempdir().unwrap();
-        oficio_en_php(dir.path());
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        oficio_en_php(carpeta_temporal.path());
         std::fs::write(
-            dir.path().join(NOMBRE_BANCO_TOML),
+            carpeta_temporal.path().join(NOMBRE_BANCO_TOML),
             "[comprobacion_local]\naislamiento = \"ninguno\"\n\
              [comprobacion_local.herramientas]\nphp = \"php --version\"\n",
         )
         .unwrap();
-        std::fs::write(dir.path().join(CARPETA_DE_RESULTADOS), "no es una carpeta").unwrap();
+        std::fs::write(
+            carpeta_temporal.path().join(CARPETA_DE_RESULTADOS),
+            "no es una carpeta",
+        )
+        .unwrap();
 
-        assert!(cargar_banco(dir.path(), &TerminalDeMentira::default()).is_ok());
-        assert!(cargar_y_probar(dir.path(), &TerminalDeMentira::default()).is_err());
+        assert!(cargar_banco(carpeta_temporal.path(), &TerminalDeMentira::default()).is_ok());
+        assert!(cargar_y_probar(carpeta_temporal.path(), &TerminalDeMentira::default()).is_err());
     }
 
     #[test]
     fn pasar_y_ejecutar_el_banco_hacen_la_prueba_previa_antes_que_nada() {
         // Sin «motor.modelo», el motor diría que le falta: si sale el error de la prueba previa es
         // que se probó antes, y el motor no llega a arrancar nunca, se pruebe o no.
-        let dir = tempfile::tempdir().unwrap();
-        oficio_en_php(dir.path());
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        oficio_en_php(carpeta_temporal.path());
         std::fs::write(
-            dir.path().join(NOMBRE_BANCO_TOML),
+            carpeta_temporal.path().join(NOMBRE_BANCO_TOML),
             "[comprobacion_local]\naislamiento = \"ninguno\"\n\
              [comprobacion_local.herramientas]\nphp = \"php --version\"\n",
         )
         .unwrap();
-        std::fs::write(dir.path().join(CARPETA_DE_RESULTADOS), "no es una carpeta").unwrap();
+        std::fs::write(
+            carpeta_temporal.path().join(CARPETA_DE_RESULTADOS),
+            "no es una carpeta",
+        )
+        .unwrap();
         let config: Config = toml::from_str("[motor]\n").unwrap();
 
         let reloj = &mut crate::reloj::RelojDeMentira::default();
         let fallos = [
             super::pasar(
                 &config,
-                dir.path(),
+                carpeta_temporal.path(),
                 "0.0.0",
                 reloj,
                 &TerminalDeMentira::default(),
@@ -397,7 +409,7 @@ mod pruebas {
             .to_string(),
             ejecutar(
                 &config,
-                dir.path(),
+                carpeta_temporal.path(),
                 "0.0.0",
                 reloj,
                 &TerminalDeMentira::default(),
@@ -418,15 +430,19 @@ mod pruebas {
 
     #[test]
     fn sin_codigo_que_comprobar_no_se_prueba_nada() {
-        let dir = tempfile::tempdir().unwrap();
-        oficio_en_php(dir.path());
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        oficio_en_php(carpeta_temporal.path());
         std::fs::write(
-            dir.path().join(NOMBRE_BANCO_TOML),
+            carpeta_temporal.path().join(NOMBRE_BANCO_TOML),
             "[comprobacion_local]\nactiva = false\n",
         )
         .unwrap();
-        std::fs::write(dir.path().join(CARPETA_DE_RESULTADOS), "no es una carpeta").unwrap();
+        std::fs::write(
+            carpeta_temporal.path().join(CARPETA_DE_RESULTADOS),
+            "no es una carpeta",
+        )
+        .unwrap();
 
-        assert!(cargar_y_probar(dir.path(), &TerminalDeMentira::default()).is_ok());
+        assert!(cargar_y_probar(carpeta_temporal.path(), &TerminalDeMentira::default()).is_ok());
     }
 }

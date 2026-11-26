@@ -1,10 +1,11 @@
 //! La línea `Clase:` de un encargo: con qué clase de trabajo lo etiqueta el agente que dirige, para
 //! que Programator cargue el modelo que mejor la hace.
 //!
-//! Es opcional. Solo cuenta al principio de una línea propia: `Clase:` a mitad de una frase es
-//! texto del encargo, no una petición. Si hay varias, vale la primera. Quién puede escribirla lo
-//! decide quien llama: la lee del encargo que escribió el agente, nunca de lo que diga el modelo.
+//! Es opcional y se lee como toda línea con nombre (`super::linea_con_nombre`). Quién puede
+//! escribirla lo decide quien llama: la lee del encargo que escribió el agente, nunca de lo que
+//! diga el modelo.
 
+use super::linea_con_nombre::primer_valor;
 use crate::banco::resultados::FilaDeDesempeno;
 
 /// La palabra que abre la línea, sin los dos puntos. Se compara sin distinguir mayúsculas.
@@ -24,7 +25,7 @@ pub enum ClasePedida {
 
 /// Lee la primera línea `Clase:` del texto de un encargo.
 pub fn clase_pedida(texto: &str) -> ClasePedida {
-    let Some(valor) = texto.lines().find_map(valor_de_la_linea) else {
+    let Some(valor) = primer_valor(texto, ETIQUETA) else {
         return ClasePedida::Ninguna;
     };
     match FilaDeDesempeno::por_nombre(valor) {
@@ -45,24 +46,6 @@ pub fn mensaje_clase_desconocida(escrita: &str) -> String {
          el modelo por defecto. Las clases que valen son {}.",
         validas.join(", ")
     )
-}
-
-/// Lo que va tras `Clase:` si la línea empieza por ella, sin las marcas de lista ni de negrita que
-/// un agente pone a veces (`- **Clase:** diagnostico`).
-fn valor_de_la_linea(linea: &str) -> Option<&str> {
-    let limpia = linea
-        .trim_start()
-        .trim_start_matches(['-', '*', ' '])
-        .trim_start();
-    let (etiqueta, resto) = limpia.split_once(':')?;
-    if !etiqueta
-        .trim()
-        .trim_end_matches('*')
-        .eq_ignore_ascii_case(ETIQUETA)
-    {
-        return None;
-    }
-    Some(resto.trim().trim_matches(['*', '`']).trim())
 }
 
 #[cfg(test)]

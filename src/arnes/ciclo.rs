@@ -6,11 +6,13 @@
 use super::herramientas::{Decision, Repertorio};
 use crate::motor::{Llamada, Mensaje, Motor, Papel, Respuesta, SolicitudHerramienta};
 
+mod cancelacion_en_curso;
 mod mensajes;
 pub(crate) use mensajes::lista_entre_comillas;
 mod plazo;
 mod reintentos;
 mod repeticiones;
+pub use cancelacion_en_curso::CancelacionEnCurso;
 use mensajes::estado_entrega_propuestas;
 pub use plazo::Plazo;
 pub use reintentos::{evaluar_reintento, DecisionReintento};
@@ -41,6 +43,15 @@ pub enum Desenlace {
     /// Se acabó el plazo del encargo antes de que el modelo cerrara. El motivo, que nombra lo que
     /// quedó en disco, se publica tal cual.
     FueraDePlazo(String),
+    /// Quien lo encargó lo canceló mientras se atendía. Lleva quién y las propuestas que el
+    /// encargo ya había dejado, que siguen en disco.
+    Cancelado {
+        a_peticion_de: String,
+        propuestas: Vec<String>,
+        /// Si se canceló antes de la primera llamada al motor: el encargo no llegó a empezar
+        /// (uso real del 26/11, un encargo de la cola cancelado mientras se atendía otro).
+        sin_empezar: bool,
+    },
 }
 
 /// Topes que impone el arnés.
@@ -54,6 +65,9 @@ pub struct Limites {
     /// A partir de cuándo no se vuelve a llamar al motor. Lo pone el banco, con su tiempo máximo
     /// por encargo; en uso normal va vacío.
     pub plazo: Option<Plazo>,
+    /// Si el encargo en curso se ha cancelado. Lo pone la sesión para cada encargo; el banco y las
+    /// pruebas lo dejan vacío.
+    pub cancelacion: Option<CancelacionEnCurso>,
 }
 
 /// Solo para las pruebas: los límites de fábrica, pero sin esperar entre reintentos al motor, para
@@ -68,6 +82,7 @@ impl Default for Limites {
             max_reintentos_motor: crate::config::max_reintentos_motor_por_defecto(),
             espera_reintento_motor: std::time::Duration::from_millis(0),
             plazo: None,
+            cancelacion: None,
         }
     }
 }
@@ -84,6 +99,7 @@ impl Limites {
                 ciclo.espera_reintento_motor_segundos,
             ),
             plazo: None,
+            cancelacion: None,
         }
     }
 }
@@ -150,6 +166,8 @@ struct Cuentas {
     etiquetas_como_texto: u32,
     /// Llamadas que quedan en el historial, para numerar su identificador.
     llamadas_hechas: u32,
+    /// Veces que se ha llamado al motor en este encargo, contando los reintentos.
+    llamadas_al_motor: u32,
 }
 
 impl Cuentas {
@@ -242,11 +260,24 @@ impl<'a, 't> EnCurso<'a, 't> {
         loop {
             // Antes de cada llamada, también de los reintentos: una respuesta del motor puede
             // tardar minutos, y es ahí donde se va el tiempo.
+            if let Some(a_peticion_de) = self
+                .limites
+                .cancelacion
+                .as_ref()
+                .and_then(CancelacionEnCurso::pedida_por)
+            {
+                return Err(Desenlace::Cancelado {
+                    a_peticion_de,
+                    propuestas: self.propuestas(),
+                    sin_empezar: self.cuentas.llamadas_al_motor == 0,
+                });
+            }
             if self.limites.plazo.as_ref().is_some_and(Plazo::vencido) {
                 return Err(Desenlace::FueraDePlazo(mensajes::fuera_de_plazo(
                     &self.detalle_de_entrega(),
                 )));
             }
+            self.cuentas.llamadas_al_motor += 1;
             let fallo = match motor.responder(&self.conversacion) {
                 Ok(respuesta) => return Ok(respuesta),
                 Err(fallo) => fallo,
@@ -413,15 +444,15 @@ mod pruebas {
     use crate::motor::{MotorDoble, Respuesta, SolicitudHerramienta};
 
     fn repertorio() -> (tempfile::TempDir, Repertorio<'static>) {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("nota.txt"), "contenido\n").unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
+        std::fs::write(carpeta.path().join("nota.txt"), "contenido\n").unwrap();
         for i in 0..30 {
-            std::fs::write(dir.path().join(format!("nota_{i}.txt")), "contenido\n").unwrap();
+            std::fs::write(carpeta.path().join(format!("nota_{i}.txt")), "contenido\n").unwrap();
         }
-        let ambito = Ambito::nuevo(dir.path()).unwrap();
-        let canal = crate::protocolo::Canal::nuevo(dir.path(), "Programator").unwrap();
+        let ambito = Ambito::nuevo(carpeta.path()).unwrap();
+        let canal = crate::protocolo::Canal::nuevo(carpeta.path(), "Programator").unwrap();
         (
-            dir,
+            carpeta,
             Repertorio::nuevo(ambito, canal, &crate::terminal::TerminalReal),
         )
     }
@@ -741,6 +772,75 @@ mod pruebas {
         // La última conversación que vio el motor es la de la segunda llamada: la primera
         // llamada a herramienta y su resultado.
         assert_eq!(motor.ultima_conversacion().len(), 2);
+    }
+
+    /// D4, en el ciclo: la cancelación llega entre la segunda y la tercera llamada.
+    #[test]
+    fn cancelado_entre_dos_llamadas_no_hay_tercera_y_lleva_las_propuestas() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        let (_dir, mut r) = repertorio();
+        let mut motor = MotorDoble::con_guion(vec![
+            pedir(
+                "escribir_propuesta",
+                serde_json::json!({"nombre": "cola.lua", "contenido": "return {}"}),
+            ),
+            pedir("leer_fichero", serde_json::json!({"ruta": "nota.txt"})),
+            pedir("publicar", serde_json::json!({"texto": "nunca se llega"})),
+        ]);
+        let preguntas = Arc::new(AtomicU32::new(0));
+        let contador = Arc::clone(&preguntas);
+        let limites = Limites {
+            cancelacion: Some(CancelacionEnCurso::con(move || {
+                (contador.fetch_add(1, Ordering::SeqCst) >= 2).then(|| "Claude 1".to_string())
+            })),
+            ..Limites::default()
+        };
+
+        let desenlace = atender_encargo(&mut motor, &mut r, vec![], &limites);
+
+        match desenlace {
+            Desenlace::Cancelado {
+                a_peticion_de,
+                propuestas,
+                sin_empezar,
+            } => {
+                assert!(!sin_empezar);
+                assert_eq!(a_peticion_de, "Claude 1");
+                assert_eq!(propuestas, vec!["cola.lua".to_string()]);
+            }
+            otro => panic!("se esperaba Cancelado: {otro:?}"),
+        }
+        assert_eq!(motor.ultima_conversacion().len(), 2);
+    }
+
+    /// Cancelado antes de la primera llamada, el encargo no llegó a empezar y el motor no se usa.
+    #[test]
+    fn cancelado_antes_de_la_primera_llamada_no_llega_a_empezar() {
+        let (_dir, mut r) = repertorio();
+        let mut motor = MotorDoble::con_guion(vec![pedir(
+            "publicar",
+            serde_json::json!({"texto": "nunca se llega"}),
+        )]);
+        let limites = Limites {
+            cancelacion: Some(CancelacionEnCurso::con(|| Some("Claude 1".to_string()))),
+            ..Limites::default()
+        };
+
+        let desenlace = atender_encargo(&mut motor, &mut r, vec![], &limites);
+
+        assert!(
+            matches!(
+                desenlace,
+                Desenlace::Cancelado {
+                    sin_empezar: true,
+                    ..
+                }
+            ),
+            "{desenlace:?}"
+        );
+        assert!(motor.ultima_conversacion().is_empty());
     }
 
     #[test]

@@ -13,6 +13,12 @@ const NOMBRE_DEL_REGISTRO: &str = "lectura.json";
 /// La cola de encargos que llegaron y todavía no tienen respuesta publicada.
 const NOMBRE_DE_LOS_PENDIENTES: &str = "pendientes.toml";
 
+/// La carpeta del registro de encargos, una ficha por encargo (`arnes::registro_de_encargos`).
+const NOMBRE_DE_LOS_ENCARGOS: &str = "encargos";
+
+/// El registro de lo que el agente propuso y en qué quedó (`arnes::entregas`).
+const NOMBRE_DE_LAS_ENTREGAS: &str = "entregas.toml";
+
 /// El historial acumulativo de cómo se repartió el modelo entre GPU y CPU en cada arranque.
 const NOMBRE_DEL_ENCAJE_HISTORICO: &str = "encaje-historico.log";
 
@@ -41,6 +47,16 @@ pub fn carpeta_del_agente(carpeta: &Path, agente: &str) -> PathBuf {
 /// Dónde se guarda el registro de lectura del canal.
 pub fn ruta_del_registro(carpeta: &Path, agente: &str) -> PathBuf {
     carpeta_del_agente(carpeta, agente).join(NOMBRE_DEL_REGISTRO)
+}
+
+/// Dónde se guarda el registro de entregas, junto al registro de lectura.
+pub fn ruta_de_las_entregas(carpeta: &Path, agente: &str) -> PathBuf {
+    carpeta_del_agente(carpeta, agente).join(NOMBRE_DE_LAS_ENTREGAS)
+}
+
+/// La carpeta del registro de encargos, junto al registro de lectura.
+pub fn carpeta_de_los_encargos(carpeta: &Path, agente: &str) -> PathBuf {
+    carpeta_del_agente(carpeta, agente).join(NOMBRE_DE_LOS_ENCARGOS)
 }
 
 /// Dónde se guarda la cola de encargos pendientes, junto al registro de lectura.

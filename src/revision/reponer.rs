@@ -270,7 +270,7 @@ mod pruebas {
         sobra_espacio, FuenteFija, CONTENIDO_DE_LA_FUENTE_FIJA as CONTENIDO,
     };
 
-    const TARJETA: &str = "NVIDIA GeForce RTX 4070 Ti SUPER";
+    use crate::revision::pruebas_comunes::TARJETA;
     const DIA: &str = "2026-11-24";
 
     fn huella_del_contenido() -> String {

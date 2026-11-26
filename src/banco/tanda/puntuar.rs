@@ -96,7 +96,7 @@ fn puntuar_comprobaciones(
         None => {
             semilla
                 .detalle
-                .get_or_insert(format!("no entregó {nombre}"));
+                .get_or_insert(crate::banco::mensajes::no_entrego(nombre));
             semilla.puntuada_con = Some(PuntuadaCon::SinEntrega);
             HechosDeComprobaciones::NoEntregado
         }
@@ -161,10 +161,10 @@ mod pruebas {
 
     #[test]
     fn con_las_pruebas_apagadas_una_entrega_de_oficio_sale_no_evaluada_y_no_con_cero() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio(dir.path())];
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio(carpeta.path())];
         let pasados = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargos,
             vec![vec![
                 pedir(
@@ -179,7 +179,7 @@ mod pruebas {
             &pasados[0],
             2,
             None,
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -195,10 +195,10 @@ mod pruebas {
     fn con_las_pruebas_apagadas_el_motivo_nombra_la_seccion_que_sigue_existiendo() {
         // Desde el 13/11/2026 no hay máquina aparte: la sección que falta es [comprobacion_local], y nombrar la
         // vieja [comprobacion] mandaría a escribir una sección que hace que el banco no arranque.
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio(dir.path())];
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio(carpeta.path())];
         let pasados = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargos,
             vec![vec![
                 pedir(
@@ -213,7 +213,7 @@ mod pruebas {
             &pasados[0],
             2,
             None,
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap()
@@ -225,12 +225,12 @@ mod pruebas {
 
     #[test]
     fn con_pruebas_se_monta_la_carpeta_y_se_suman_los_requisitos_de_texto() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio(dir.path())];
+        let carpeta_temporal = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio(carpeta_temporal.path())];
         std::fs::create_dir_all(encargos[0].carpeta.join("pruebas/tests")).unwrap();
         std::fs::write(encargos[0].carpeta.join("pruebas/tests/t.rs"), "").unwrap();
         let pasados = pasar(
-            dir.path(),
+            carpeta_temporal.path(),
             &encargos,
             vec![vec![
                 pedir(
@@ -256,7 +256,7 @@ mod pruebas {
             &pasados[0],
             2,
             Some(&mut pruebas),
-            dir.path(),
+            carpeta_temporal.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -272,10 +272,10 @@ mod pruebas {
 
     #[test]
     fn sin_entrega_el_oficio_saca_un_cero_sin_lanzar_pruebas() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio(dir.path())];
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio(carpeta.path())];
         let pasados = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargos,
             vec![vec![Respuesta::Texto("No sé hacerlo.".into())]],
         );
@@ -289,7 +289,7 @@ mod pruebas {
             &pasados[0],
             2,
             Some(&mut pruebas),
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -301,8 +301,8 @@ mod pruebas {
     }
 
     /// Un encargo de oficio con rúbrica, para valorarlo leyendo cuando las pruebas no dan nota.
-    fn oficio_con_rubrica(dir: &Path) -> Encargo {
-        let encargo = oficio(dir);
+    fn oficio_con_rubrica(carpeta_temporal: &Path) -> Encargo {
+        let encargo = oficio(carpeta_temporal);
         std::fs::write(
             encargo.carpeta.join(NOMBRE_RUBRICA),
             "- **5**: cubre los casos\n",
@@ -314,9 +314,9 @@ mod pruebas {
     }
 
     /// Pasa un encargo de oficio que entrega `rangos.rs` con `pub fn r() {}`.
-    fn pasar_entregando<'a>(dir: &Path, encargos: &'a [Encargo]) -> Vec<Pasado<'a>> {
+    fn pasar_entregando<'a>(carpeta: &Path, encargos: &'a [Encargo]) -> Vec<Pasado<'a>> {
         pasar(
-            dir,
+            carpeta,
             encargos,
             vec![vec![
                 pedir(
@@ -332,15 +332,15 @@ mod pruebas {
     fn con_las_pruebas_apagadas_y_rubrica_el_codigo_se_deja_para_valorarlo_leyendo() {
         // Sin pruebas ocultas, el código lo valora quien dirige
         // con la rúbrica, como los encargos de criterio, y no se queda en «no evaluado».
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio_con_rubrica(dir.path())];
-        let pasados = pasar_entregando(dir.path(), &encargos);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio_con_rubrica(carpeta.path())];
+        let pasados = pasar_entregando(carpeta.path(), &encargos);
 
         let semilla = puntuar(
             &pasados[0],
             2,
             None,
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -348,7 +348,7 @@ mod pruebas {
         assert_eq!(semilla.estado, EstadoDeNota::Pendiente);
         assert_eq!(semilla.nota, None);
         assert_eq!(semilla.puntuada_con, Some(PuntuadaCon::Rubrica));
-        let ruta = dir.path().join(nombre_del_fichero("E03", 42));
+        let ruta = carpeta.path().join(nombre_del_fichero("E03", 42));
         assert_eq!(
             semilla.rubrica.as_deref(),
             Some(format!("{CARPETA_DE_RUBRICAS}/{}", nombre_del_fichero("E03", 42)).as_str())
@@ -365,11 +365,11 @@ mod pruebas {
 
     #[test]
     fn una_rubrica_de_codigo_ya_puntuada_da_su_nota_y_dice_que_es_de_rubrica() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio_con_rubrica(dir.path())];
-        let pasados = pasar_entregando(dir.path(), &encargos);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio_con_rubrica(carpeta.path())];
+        let pasados = pasar_entregando(carpeta.path(), &encargos);
         std::fs::write(
-            dir.path().join(nombre_del_fichero("E03", 42)),
+            carpeta.path().join(nombre_del_fichero("E03", 42)),
             "# E03\n\nNota: 4\n",
         )
         .unwrap();
@@ -378,7 +378,7 @@ mod pruebas {
             &pasados[0],
             2,
             None,
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -390,9 +390,9 @@ mod pruebas {
 
     #[test]
     fn si_las_pruebas_no_se_pueden_ejecutar_tambien_se_valora_con_la_rubrica() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio_con_rubrica(dir.path())];
-        let pasados = pasar_entregando(dir.path(), &encargos);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio_con_rubrica(carpeta.path())];
+        let pasados = pasar_entregando(carpeta.path(), &encargos);
         let mut pruebas = |_: &Encargo, _: &Path| {
             ResultadoDePruebas::NoEvaluado("rust no está instalado en este equipo".into()).into()
         };
@@ -401,7 +401,7 @@ mod pruebas {
             &pasados[0],
             2,
             Some(&mut pruebas),
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -409,7 +409,7 @@ mod pruebas {
         assert_eq!(semilla.estado, EstadoDeNota::Pendiente);
         assert_eq!(semilla.puntuada_con, Some(PuntuadaCon::Rubrica));
         let fichero =
-            std::fs::read_to_string(dir.path().join(nombre_del_fichero("E03", 42))).unwrap();
+            std::fs::read_to_string(carpeta.path().join(nombre_del_fichero("E03", 42))).unwrap();
         assert!(
             fichero.contains("rust no está instalado en este equipo"),
             "{fichero}"
@@ -418,9 +418,9 @@ mod pruebas {
 
     #[test]
     fn si_las_pruebas_dan_nota_manda_esa_y_no_se_deja_rubrica() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio_con_rubrica(dir.path())];
-        let pasados = pasar_entregando(dir.path(), &encargos);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio_con_rubrica(carpeta.path())];
+        let pasados = pasar_entregando(carpeta.path(), &encargos);
         let mut pruebas = |_: &Encargo, _: &Path| {
             ResultadoDePruebas::Compila {
                 superadas: vec!["basico".into()],
@@ -433,7 +433,7 @@ mod pruebas {
             &pasados[0],
             2,
             Some(&mut pruebas),
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -441,14 +441,14 @@ mod pruebas {
         assert_eq!(semilla.estado, EstadoDeNota::Evaluada);
         assert_eq!(semilla.puntuada_con, Some(PuntuadaCon::PruebasOcultas));
         assert_eq!(semilla.rubrica, None);
-        assert!(!dir.path().join(nombre_del_fichero("E03", 42)).exists());
+        assert!(!carpeta.path().join(nombre_del_fichero("E03", 42)).exists());
     }
 
     #[test]
     fn lo_que_no_compila_es_nota_de_las_pruebas_y_no_va_a_la_rubrica() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio_con_rubrica(dir.path())];
-        let pasados = pasar_entregando(dir.path(), &encargos);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio_con_rubrica(carpeta.path())];
+        let pasados = pasar_entregando(carpeta.path(), &encargos);
         let mut pruebas =
             |_: &Encargo, _: &Path| ResultadoDePruebas::NoCompila("error[E0425]".into()).into();
 
@@ -456,27 +456,27 @@ mod pruebas {
             &pasados[0],
             2,
             Some(&mut pruebas),
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
 
         assert_eq!(semilla.nota, Some(0.0));
         assert_eq!(semilla.puntuada_con, Some(PuntuadaCon::PruebasOcultas));
-        assert!(!dir.path().join(nombre_del_fichero("E03", 42)).exists());
+        assert!(!carpeta.path().join(nombre_del_fichero("E03", 42)).exists());
     }
 
     #[test]
     fn sin_rubrica_el_motivo_dice_que_falta_para_valorarlo_leyendo() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio(dir.path())];
-        let pasados = pasar_entregando(dir.path(), &encargos);
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio(carpeta.path())];
+        let pasados = pasar_entregando(carpeta.path(), &encargos);
 
         let semilla = puntuar(
             &pasados[0],
             2,
             None,
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
@@ -490,10 +490,10 @@ mod pruebas {
 
     #[test]
     fn sin_entrega_no_se_deja_rubrica_y_se_dice_que_no_entrego() {
-        let dir = tempfile::tempdir().unwrap();
-        let encargos = vec![oficio_con_rubrica(dir.path())];
+        let carpeta = tempfile::tempdir().unwrap();
+        let encargos = vec![oficio_con_rubrica(carpeta.path())];
         let pasados = pasar(
-            dir.path(),
+            carpeta.path(),
             &encargos,
             vec![vec![Respuesta::Texto("No sé hacerlo.".into())]],
         );
@@ -502,13 +502,13 @@ mod pruebas {
             &pasados[0],
             2,
             None,
-            dir.path(),
+            carpeta.path(),
             &TerminalDeMentira::default(),
         )
         .unwrap();
 
         assert_eq!(semilla.nota, Some(0.0));
         assert_eq!(semilla.puntuada_con, Some(PuntuadaCon::SinEntrega));
-        assert!(!dir.path().join(nombre_del_fichero("E03", 42)).exists());
+        assert!(!carpeta.path().join(nombre_del_fichero("E03", 42)).exists());
     }
 }

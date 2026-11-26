@@ -124,6 +124,7 @@ mod pruebas {
     /// puedan hacer de cabeza al leer la prueba.
     fn pesos_de_juguete() -> PesoDelModelo {
         PesoDelModelo {
+            tensores: Vec::new(),
             por_capa: vec![100, 100, 100, 100],
             fuera_de_capa: 50,
             inicio_datos: 0,
@@ -259,6 +260,7 @@ mod pruebas {
         // Capas de peso desigual: las últimas son las caras. Si el cálculo sumara las primeras,
         // creería que caben tres.
         let pesos = PesoDelModelo {
+            tensores: Vec::new(),
             por_capa: vec![10, 10, 1_000, 1_000],
             fuera_de_capa: 0,
             inicio_datos: 0,
@@ -280,6 +282,7 @@ mod pruebas {
         // presupuesto menos 1 GiB de margen. Comprueba que la decisión es parcial y razonable, no un
         // número exacto: los pesos reales los dará el GGUF cuando se descargue.
         let pesos = PesoDelModelo {
+            tensores: Vec::new(),
             por_capa: vec![350 * 1024 * 1024; 40],
             fuera_de_capa: 1_200 * 1024 * 1024,
             inicio_datos: 0,

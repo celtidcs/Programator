@@ -212,8 +212,8 @@ mod pruebas {
 
     #[test]
     fn el_motor_registrado_deja_una_linea_por_mensaje_y_respuesta() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = dir.path().join("sub").join("conversacion.jsonl");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = carpeta.path().join("sub").join("conversacion.jsonl");
         let mut doble = MotorDoble::con_guion(vec![
             Respuesta::Texto("primera".into()),
             Respuesta::Texto("segunda".into()),
@@ -240,9 +240,9 @@ mod pruebas {
 
     #[test]
     fn si_no_se_puede_escribir_el_motor_sigue_respondiendo() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         // Un fichero donde debería ir la carpeta: create_dir_all falla.
-        let estorbo = dir.path().join("estorbo");
+        let estorbo = carpeta_temporal.path().join("estorbo");
         std::fs::write(&estorbo, "").unwrap();
         let mut doble = MotorDoble::con_guion(vec![Respuesta::Texto("hecho".into())]);
         let terminal = TerminalDeMentira::default();

@@ -541,9 +541,7 @@ fn tabla_tcp(familia: u16) -> Resultado<Vec<u32>> {
             }
         }
     }
-    Err(Error::Aislamiento(
-        "la tabla de conexiones no paró de crecer mientras se leía".into(),
-    ))
+    Err(Error::Aislamiento(mensaje_tabla_que_no_para_de_crecer()))
 }
 
 /// Las filas de una tabla TCP: la primera palabra dice cuántas hay, y van detrás.
@@ -561,6 +559,11 @@ fn filas<T: Copy>(tabla: &[u32]) -> Vec<T> {
         // dentro del búfer; por lo dicho arriba, cualquier contenido es un `T` válido.
         .map(|indice| unsafe { primera.add(indice).read_unaligned() })
         .collect()
+}
+
+/// La tabla de conexiones creció en cada intento de leerla entera.
+fn mensaje_tabla_que_no_para_de_crecer() -> String {
+    "la tabla de conexiones no paró de crecer mientras se leía".to_string()
 }
 
 /// El fallo de una llamada a Windows: su nombre y lo que dijo el sistema.

@@ -234,6 +234,7 @@ mod pruebas {
 
     fn encargo(de: &str, texto: &str, forma: Forma) -> Encargo {
         Encargo {
+            latido: None,
             de: de.to_string(),
             texto: texto.to_string(),
             forma,

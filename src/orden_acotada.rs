@@ -308,8 +308,13 @@ fn recoger(lector: Option<Lector>) -> Result<String, String> {
     match lector.join() {
         Ok(Ok(leido)) => Ok(String::from_utf8_lossy(&leido).into_owned()),
         Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err("el hilo que leía la salida terminó con un pánico".to_string()),
+        Err(_) => Err(mensaje_lector_con_panico()),
     }
+}
+
+/// El hilo que leía una salida de la orden terminó con un pánico.
+fn mensaje_lector_con_panico() -> String {
+    "el hilo que leía la salida terminó con un pánico".to_string()
 }
 
 #[cfg(test)]
@@ -342,9 +347,9 @@ mod pruebas {
     /// Un tope enorme no hace entrar en pánico la suma con `Instant::now()`.
     #[test]
     fn con_un_tope_enorme_la_orden_termina_sin_panico() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
-        let desenlace = ejecutar(&eco_y_codigo("hola", 0), dir.path(), Duration::MAX);
+        let desenlace = ejecutar(&eco_y_codigo("hola", 0), carpeta.path(), Duration::MAX);
 
         assert!(
             matches!(desenlace, DesenlaceDeOrden::Terminada { exito: true, .. }),
@@ -354,11 +359,11 @@ mod pruebas {
 
     #[test]
     fn una_orden_que_sale_con_cero_termina_con_exito_y_deja_su_salida() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
         let desenlace = ejecutar(
             &eco_y_codigo("hola", 0),
-            dir.path(),
+            carpeta.path(),
             Duration::from_secs(30),
         );
 
@@ -373,13 +378,13 @@ mod pruebas {
 
     #[test]
     fn la_orden_ve_las_variables_de_entorno_que_se_le_pasan() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let orden = eco_de_variable("PROGRAMATOR_PRUEBA");
 
         let desenlace = ejecutar_con_tope_y_entorno(
             &orden[0],
             &orden[1..],
-            dir.path(),
+            carpeta.path(),
             Duration::from_secs(30),
             &[("PROGRAMATOR_PRUEBA".into(), "valor-de-prueba".into())],
         );
@@ -395,9 +400,13 @@ mod pruebas {
 
     #[test]
     fn una_orden_que_sale_con_uno_termina_sin_exito() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
-        let desenlace = ejecutar(&eco_y_codigo("mal", 1), dir.path(), Duration::from_secs(30));
+        let desenlace = ejecutar(
+            &eco_y_codigo("mal", 1),
+            carpeta.path(),
+            Duration::from_secs(30),
+        );
 
         assert!(matches!(
             desenlace,
@@ -443,14 +452,14 @@ mod pruebas {
 
     #[test]
     fn cuando_el_hijo_termina_se_avisa_a_la_contencion_y_al_cortar_no() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let orden = eco_y_codigo("hola", 0);
         let mut contencion = ContencionDePrueba::default();
 
         let desenlace = ejecutar_con_tope_entorno_y_contencion(
             &orden[0],
             &orden[1..],
-            dir.path(),
+            carpeta.path(),
             Duration::from_secs(30),
             &[],
             &mut contencion,
@@ -462,7 +471,7 @@ mod pruebas {
 
     #[test]
     fn si_la_contencion_falla_la_orden_no_se_lanzo() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let orden = eco_y_codigo("hola", 0);
         let mut contencion = ContencionDePrueba {
             fallar: true,
@@ -472,7 +481,7 @@ mod pruebas {
         let desenlace = ejecutar_con_tope_entorno_y_contencion(
             &orden[0],
             &orden[1..],
-            dir.path(),
+            carpeta.path(),
             Duration::from_secs(30),
             &[],
             &mut contencion,
@@ -483,14 +492,14 @@ mod pruebas {
 
     #[test]
     fn al_vencer_el_plazo_corta_la_contencion() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let orden = crate::plataforma::ordenes_de_prueba::tardar_mucho();
         let mut contencion = ContencionDePrueba::default();
 
         let desenlace = ejecutar_con_tope_entorno_y_contencion(
             &orden[0],
             &orden[1..],
-            dir.path(),
+            carpeta.path(),
             Duration::from_millis(300),
             &[],
             &mut contencion,
@@ -506,11 +515,11 @@ mod pruebas {
     /// recoge.
     #[test]
     fn si_no_se_puede_esperar_al_hijo_se_corta_y_se_recoge() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let orden = crate::plataforma::ordenes_de_prueba::tardar_mucho();
         let mut hijo = Command::new(&orden[0])
             .args(&orden[1..])
-            .current_dir(dir.path())
+            .current_dir(carpeta.path())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -601,12 +610,12 @@ mod pruebas {
 
     #[test]
     fn un_programa_que_no_existe_no_se_lanza() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
 
         let desenlace = ejecutar_con_tope(
             "programa-que-no-existe-en-ninguna-parte",
             &[],
-            dir.path(),
+            carpeta.path(),
             Duration::from_secs(5),
         );
 
@@ -617,8 +626,8 @@ mod pruebas {
     /// tubería se bloquea y acaba cortada por tiempo aunque no tenga nada malo.
     #[test]
     fn una_orden_que_escribe_mucho_no_se_queda_bloqueada() {
-        let dir = tempfile::tempdir().unwrap();
-        let fichero = dir.path().join("grande.txt");
+        let carpeta = tempfile::tempdir().unwrap();
+        let fichero = carpeta.path().join("grande.txt");
         let linea = "0123456789".repeat(10);
         let contenido = format!("{linea}\n").repeat(10_000);
         std::fs::write(&fichero, &contenido).unwrap();
@@ -628,7 +637,7 @@ mod pruebas {
             .map(|a| a.replace("{fichero}", &ruta))
             .collect();
 
-        let desenlace = ejecutar(&orden, dir.path(), Duration::from_secs(20));
+        let desenlace = ejecutar(&orden, carpeta.path(), Duration::from_secs(20));
 
         match desenlace {
             DesenlaceDeOrden::Terminada { exito, salida, .. } => {

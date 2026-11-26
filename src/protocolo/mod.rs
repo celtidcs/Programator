@@ -6,6 +6,7 @@ pub mod carpetas;
 pub mod destinatarios;
 pub mod encargo;
 pub mod estado;
+pub mod identificador;
 pub mod latido;
 pub mod lectura;
 pub mod poda;

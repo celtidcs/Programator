@@ -1,6 +1,7 @@
 //! El motor que Programator arrancó por su cuenta, visto desde el bucle: qué modelo tiene cargado
 //! y cuándo se suelta por llevar tiempo sin encargos (`[motor] soltar_modelo`).
 
+use super::decisiones::Pendiente;
 use programator::config::Config;
 use programator::motor::fichero_de_modelo::nombre_de_modelo;
 use programator::motor::mensajes::mensaje_modelo_soltado;
@@ -23,17 +24,17 @@ pub(super) fn modelo_cargado(servidor: &RefCell<Option<proceso::ServidorLocal>>)
         })
 }
 
-/// Suelta el motor propio si toca (`[motor] soltar_modelo`). `ocupado`: está cargando o quedan
-/// encargos en la cola, y entonces no se suelta.
+/// Suelta el motor propio si toca (`[motor] soltar_modelo`). Con algo `pendiente` (aplazado o en la
+/// cola) no se suelta.
 pub(super) fn soltar_si_toca(
     config: &Config,
     servidor: &RefCell<Option<proceso::ServidorLocal>>,
     ultimo_encargo: std::time::Instant,
-    ocupado: bool,
+    pendiente: Pendiente,
 ) {
     let motor = motor_para_soltar(MotorPropio {
         hay: servidor.borrow().is_some(),
-        ocupado,
+        ocupado: pendiente != Pendiente::Nada,
     });
     let minutos = ultimo_encargo.elapsed().as_secs() / SEGUNDOS_POR_MINUTO;
     if !toca_soltar(config.motor.soltar_modelo, minutos, motor) {

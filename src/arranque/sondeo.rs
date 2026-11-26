@@ -28,9 +28,9 @@ pub enum Sondeo {
 /// última comprobación?
 ///
 /// Por sondeo de ruta relativa, tamaño y **huella del contenido**: los vigilantes de eventos del
-/// sistema operativo pierden avisos sobre unidades virtuales como Google Drive, donde vive este
-/// proyecto, así que la única alternativa fiable es comparar el estado del árbol entero en cada
-/// ciclo.
+/// sistema operativo pierden avisos sobre unidades de red o sincronizadas, como Google Drive, y el
+/// proyecto puede vivir en una, así que la única alternativa fiable es comparar el estado del
+/// árbol entero en cada ciclo.
 ///
 /// **El recorrido baja a las subcarpetas**, aunque un canal real —comprobado sobre uno en
 /// uso— sea plano: cuatro ficheros (`estado.md` y un buzón por agente) y ninguna carpeta. Se hace
@@ -53,18 +53,26 @@ pub enum Sondeo {
 /// grabada la huella recién calculada para la siguiente.
 ///
 /// **Ante la duda, no se inventa una novedad.** Ver `Sondeo::Ignorada`.
-pub fn hay_novedades(canal_dir: &Path, huella_anterior: &mut Option<String>) -> Resultado<Sondeo> {
+pub fn hay_novedades(
+    carpeta_del_canal: &Path,
+    huella_anterior: &mut Option<String>,
+) -> Resultado<Sondeo> {
     // Verificamos la lectura de la raíz explícitamente para devolver un error que nombre la ruta
     // si el directorio no existe. Los fallos de lectura de más abajo son otra cosa: no tumban el
     // sondeo, pero tampoco se ignoran en silencio (ver `Sondeo::Ignorada`).
-    std::fs::read_dir(canal_dir).map_err(|causa| Error::Lectura {
-        ruta: canal_dir.to_path_buf(),
+    std::fs::read_dir(carpeta_del_canal).map_err(|causa| Error::Lectura {
+        ruta: carpeta_del_canal.to_path_buf(),
         causa,
     })?;
 
     let mut partes: Vec<String> = Vec::new();
     let mut ilegibles = 0usize;
-    recolectar_huellas(canal_dir, canal_dir, &mut partes, &mut ilegibles);
+    recolectar_huellas(
+        carpeta_del_canal,
+        carpeta_del_canal,
+        &mut partes,
+        &mut ilegibles,
+    );
 
     // Si algo del canal no se pudo leer, la foto está incompleta y **no se compara**: un fichero
     // ilegible durante un instante saldría de la huella igual que uno borrado, y la diferencia se

@@ -50,7 +50,7 @@ pub(crate) fn ejecutar(orden: Orden) -> Resultado<()> {
 
     let carpeta = carpeta_de_trabajo::resolver_la_carpeta(&orden, &config)?;
     historial_de_encaje::registrar_el_encaje(&carpeta, &config, &encaje);
-    let (canal_dir, instantanea) = preparacion::preparar_la_carpeta(
+    let (carpeta_del_canal, instantanea) = preparacion::preparar_la_carpeta(
         &carpeta,
         &config,
         &guia_del_equipo::LoMedido {
@@ -59,5 +59,11 @@ pub(crate) fn ejecutar(orden: Orden) -> Resultado<()> {
             tarjeta: encaje.nombre_de_la_tarjeta(),
         },
     )?;
-    vigilancia::vigilar_el_canal(ruta_config, config, &carpeta, &canal_dir, instantanea)
+    vigilancia::vigilar_el_canal(
+        ruta_config,
+        config,
+        &carpeta,
+        &carpeta_del_canal,
+        instantanea,
+    )
 }

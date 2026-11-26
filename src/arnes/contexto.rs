@@ -15,6 +15,7 @@ pub fn componer_contexto(
     deltas: &[(String, Delta)],
     encargo: &Encargo,
     recordatorio: &str,
+    catalogo: &str,
 ) -> Vec<Mensaje> {
     let mut mensajes = vec![Mensaje {
         papel: Papel::Sistema,
@@ -27,7 +28,17 @@ pub fn componer_contexto(
     if !estado.trim().is_empty() {
         mensajes.push(Mensaje {
             papel: Papel::Usuario,
-            contenido: format!("Hechos comprobables vigentes:\n\n{estado}"),
+            contenido: hechos_vigentes(estado),
+            llamada: None,
+        });
+    }
+
+    // Lo que ya entregó, tras los hechos: también son datos, y viejos; las novedades van después
+    // porque son lo más reciente.
+    if !catalogo.trim().is_empty() {
+        mensajes.push(Mensaje {
+            papel: Papel::Usuario,
+            contenido: catalogo.to_string(),
             llamada: None,
         });
     }
@@ -40,20 +51,14 @@ pub fn componer_contexto(
                 if texto.trim().is_empty() {
                     None
                 } else {
-                    Some(format!(
-                        "### {nombre} (nuevo desde tu última lectura)\n\n{}",
-                        citar(texto)
-                    ))
+                    Some(buzon_con_novedades(nombre, &citar(texto)))
                 }
             }
             Delta::Completo(texto) => {
                 if texto.trim().is_empty() {
                     None
                 } else {
-                    Some(format!(
-                        "### {nombre} (releído entero: su dueño lo podó)\n\n{}",
-                        citar(texto)
-                    ))
+                    Some(buzon_releido(nombre, &citar(texto)))
                 }
             }
         })
@@ -93,6 +98,47 @@ pub fn componer_contexto(
         ), llamada: None, });
 
     fundir_usuarios_seguidos(mensajes)
+}
+
+/// El apartado de los hechos de `estado.md`.
+fn hechos_vigentes(estado: &str) -> String {
+    format!("Hechos comprobables vigentes:\n\n{estado}")
+}
+
+/// Lo nuevo de un buzón desde la última lectura, ya citado.
+fn buzon_con_novedades(nombre: &str, citado: &str) -> String {
+    format!("### {nombre} (nuevo desde tu última lectura)\n\n{citado}")
+}
+
+/// Un buzón releído entero porque su dueño lo podó, ya citado.
+fn buzon_releido(nombre: &str, citado: &str) -> String {
+    format!("### {nombre} (releído entero: su dueño lo podó)\n\n{citado}")
+}
+
+#[cfg(test)]
+mod pruebas_del_catalogo {
+    use super::*;
+
+    /// E6: el catálogo va tras los hechos y antes del encargo; vacío, no deja rastro.
+    #[test]
+    fn el_catalogo_va_tras_los_hechos_y_antes_del_encargo() {
+        let encargo = Encargo {
+            de: "claude.md".to_string(),
+            texto: "Para Programator: haz x".to_string(),
+            forma: crate::protocolo::encargo::Forma::Linea,
+            latido: None,
+        };
+        let con = componer_contexto("P", "n", "hechos", &[], &encargo, "", "CATALOGO");
+        let texto = &con[1].contenido;
+        let hechos = texto.find("hechos").unwrap();
+        let catalogo = texto.find("CATALOGO").unwrap();
+        let pedido = texto.find("Encargo recibido").unwrap();
+        assert!(hechos < catalogo && catalogo < pedido, "{texto}");
+
+        let sin = componer_contexto("P", "n", "hechos", &[], &encargo, "", "");
+        assert!(!sin[1].contenido.contains("CATALOGO"));
+        assert_eq!(sin.len(), con.len());
+    }
 }
 
 /// Funde en uno solo los mensajes de usuario consecutivos.
@@ -176,7 +222,8 @@ mod pruebas {
 
     #[test]
     fn el_modelo_se_presenta_con_el_nombre_configurado() {
-        let mensajes = componer_contexto("Cobalto", "normas", "", &[], &encargo_de_prueba(), "");
+        let mensajes =
+            componer_contexto("Cobalto", "normas", "", &[], &encargo_de_prueba(), "", "");
         assert!(
             mensajes[0].contenido.starts_with("Eres Cobalto,"),
             "{}",
@@ -187,6 +234,7 @@ mod pruebas {
 
     fn encargo_de_prueba() -> Encargo {
         Encargo {
+            latido: None,
             de: "codex.md".to_string(),
             texto: "Ejecuta las puertas y publica el resultado.".to_string(),
             forma: crate::protocolo::encargo::Forma::Encabezado,
@@ -201,6 +249,7 @@ mod pruebas {
             "# Estado",
             &[],
             &encargo_de_prueba(),
+            "",
             "",
         );
 
@@ -222,6 +271,7 @@ mod pruebas {
             &[],
             &encargo_de_prueba(),
             "LAS CIFRAS VAN EN CONSTANTES CON NOMBRE",
+            "",
         );
 
         let sistema = &mensajes[0];
@@ -255,6 +305,7 @@ mod pruebas {
             &[],
             &encargo_de_prueba(),
             "   \n",
+            "",
         );
 
         let ultimo = mensajes.last().unwrap();
@@ -282,6 +333,7 @@ mod pruebas {
             "# Estado\n- Rama: main",
             &deltas,
             &encargo_de_prueba(),
+            "",
             "",
         );
 
@@ -314,6 +366,7 @@ mod pruebas {
             &deltas,
             &encargo_de_prueba(),
             "",
+            "",
         );
 
         let todo: String = mensajes.iter().map(|m| m.contenido.clone()).collect();
@@ -330,6 +383,7 @@ mod pruebas {
             "# Estado\n- Rama: main",
             &[],
             &encargo_de_prueba(),
+            "",
             "",
         );
 
@@ -356,6 +410,7 @@ mod pruebas {
             &deltas,
             &encargo_de_prueba(),
             "",
+            "",
         );
 
         let todo: String = mensajes.iter().map(|m| m.contenido.clone()).collect();
@@ -373,6 +428,7 @@ mod pruebas {
             "",
             &deltas,
             &encargo_de_prueba(),
+            "",
             "",
         );
 
@@ -394,6 +450,7 @@ mod pruebas {
             "",
             &deltas,
             &encargo_de_prueba(),
+            "",
             "",
         );
 
@@ -440,6 +497,7 @@ mod pruebas {
             &deltas,
             &encargo_de_prueba(),
             "",
+            "",
         );
 
         let todo: String = mensajes.iter().map(|m| m.contenido.clone()).collect();
@@ -459,6 +517,7 @@ mod pruebas {
             "",
             &deltas,
             &encargo_de_prueba(),
+            "",
             "",
         );
 
@@ -495,12 +554,13 @@ mod pruebas {
     #[test]
     fn el_texto_del_encargo_aparece_citado() {
         let encargo = Encargo {
+            latido: None,
             de: "test.md".to_string(),
             texto: "contenido del encargo".to_string(),
             forma: crate::protocolo::encargo::Forma::Encabezado,
         };
 
-        let mensajes = componer_contexto("Programator", "normas", "", &[], &encargo, "");
+        let mensajes = componer_contexto("Programator", "normas", "", &[], &encargo, "", "");
 
         let mensaje_encargo = mensajes
             .iter()
@@ -525,6 +585,7 @@ mod pruebas {
             "",
             &deltas,
             &encargo_de_prueba(),
+            "",
             "",
         );
 

@@ -3,15 +3,25 @@
 //! depende de desde dónde la lanzas no es portable.
 
 use crate::error::{Error, Resultado};
+use claves_retiradas::interpretar_sin_claves_retiradas;
+use mensajes::{aviso_de_envoltorio_vacio, aviso_de_techo, falta_el_modelo, toml_ininteligible};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 pub mod atencion_rapida;
 mod auto_o_numero;
+pub mod clave_del_motor;
+mod claves_retiradas;
+mod mensajes;
 pub mod modelo_por_defecto;
+pub mod preparacion;
+pub mod reparto;
 pub mod soltar_modelo;
 
 pub use atencion_rapida::AtencionRapida;
+pub use clave_del_motor::ClaveConfigurada;
+pub use preparacion::Preparacion;
+pub use reparto::{CapasEnCpu, ModoDeCarga, RepartoDeMemoria};
 pub use soltar_modelo::SoltarModelo;
 
 /// Cuántas capas del modelo se piden a la GPU.
@@ -51,6 +61,12 @@ pub struct Config {
     pub muestreo: Muestreo,
     #[serde(default)]
     pub actualizaciones: Actualizaciones,
+    /// El registro de lo que Programator propone y en qué queda.
+    #[serde(default)]
+    pub entregas: Entregas,
+    /// Cómo se prepara una propuesta en una copia del proyecto (`preparar:`).
+    #[serde(default)]
+    pub preparacion: Preparacion,
     /// La revisión mensual de modelos.
     #[serde(default)]
     pub revision: crate::revision::config::ConfigRevision,
@@ -342,6 +358,13 @@ pub struct MotorConfig {
     /// [`ESPERA_DE_CARGA_POR_DEFECTO_SEGUNDOS`].
     #[serde(default = "espera_de_carga_por_defecto")]
     pub espera_de_carga_segundos: u64,
+    /// La clave con que se protege el motor. Por defecto, `"auto"`: una nueva en cada arranque.
+    #[serde(default)]
+    pub clave: ClaveConfigurada,
+    /// Qué parte del modelo y de la caché va a la memoria del equipo. Sus claves se escriben
+    /// sueltas en `[motor]`, como las demás.
+    #[serde(flatten)]
+    pub reparto: RepartoDeMemoria,
 }
 
 /// Espera por defecto a que cargue un modelo pedido a mitad de una pasada: 300 segundos. Holgado
@@ -359,6 +382,17 @@ impl MotorConfig {
         self.modelo
             .as_deref()
             .and_then(|ruta| crate::motor::fichero_de_modelo::nombre_de_modelo(Path::new(ruta)))
+    }
+
+    /// El tipo de la caché de claves: `cache_k` si se escribió, y si no, `cache_kv`, que es la
+    /// clave de la 1.1.0 y sigue dando los dos.
+    pub fn cache_k(&self) -> &str {
+        self.reparto.cache_k.as_deref().unwrap_or(&self.cache_kv)
+    }
+
+    /// El tipo de la caché de valores, con la misma regla que [`MotorConfig::cache_k`].
+    pub fn cache_v(&self) -> &str {
+        self.reparto.cache_v.as_deref().unwrap_or(&self.cache_kv)
     }
 }
 
@@ -460,6 +494,45 @@ pub struct Ciclo {
     /// responde a quien lo pidió con el motivo. Por defecto, [`INTENTOS_POR_ENCARGO_POR_DEFECTO`].
     #[serde(default = "intentos_por_encargo_por_defecto")]
     pub intentos_por_encargo: u32,
+    /// Cuántas propuestas anteriores se le cuentan al modelo en cada encargo, en el apartado «Lo
+    /// que ya entregaste en este proyecto». Con 0 no sale. Por defecto,
+    /// [`ENTREGAS_EN_CONTEXTO_POR_DEFECTO`].
+    #[serde(default = "entregas_en_contexto_por_defecto")]
+    pub entregas_en_contexto: usize,
+    /// Cuántos minutos tiene que faltar de su buzón un encargo ya atendido para que Programator lo
+    /// olvide. Por defecto, [`OLVIDAR_LO_CERRADO_POR_DEFECTO_MINUTOS`].
+    #[serde(default = "olvidar_lo_cerrado_por_defecto")]
+    pub olvidar_lo_cerrado_tras_minutos: u64,
+    /// Cuántos milisegundos tiene que llevar quieto un buzón con novedades para leerlas. Por
+    /// defecto, [`BUZON_ESTABLE_POR_DEFECTO_MS`].
+    #[serde(default = "buzon_estable_por_defecto")]
+    pub buzon_estable_tras_ms: u64,
+}
+
+/// Un segundo y medio: quien escribe su buzón por trozos (un editor que guarda, una
+/// sincronización) termina en mucho menos, y es poco al lado del intervalo entre vueltas. Sin
+/// esta espera, un buzón leído a medio escribir daba un encargo cortado que se atendía como
+/// nuevo.
+pub const BUZON_ESTABLE_POR_DEFECTO_MS: u64 = 1500;
+
+pub(crate) const fn buzon_estable_por_defecto() -> u64 {
+    BUZON_ESTABLE_POR_DEFECTO_MS
+}
+
+/// Una hora: de sobra para que un buzón leído vacío o a medias mientras su dueño lo reescribe se
+/// lea entero otra vez, y poco para lo que pesa una ficha.
+pub const OLVIDAR_LO_CERRADO_POR_DEFECTO_MINUTOS: u64 = 60;
+
+pub(crate) const fn olvidar_lo_cerrado_por_defecto() -> u64 {
+    OLVIDAR_LO_CERRADO_POR_DEFECTO_MINUTOS
+}
+
+/// Veinte líneas cortas: unos dos mil bytes, poco frente a la ventana, y bastan para lo de las
+/// últimas semanas de un proyecto.
+pub const ENTREGAS_EN_CONTEXTO_POR_DEFECTO: usize = 20;
+
+pub(crate) const fn entregas_en_contexto_por_defecto() -> usize {
+    ENTREGAS_EN_CONTEXTO_POR_DEFECTO
 }
 
 /// Intentos fallidos tras los que se cierra un encargo: 2. Uno puede ser mala suerte; el segundo
@@ -547,6 +620,9 @@ impl Default for Ciclo {
             espera_reintento_motor_segundos: espera_reintento_motor_segundos_por_defecto(),
             max_denegaciones_seguidas: max_denegaciones_seguidas_por_defecto(),
             intentos_por_encargo: intentos_por_encargo_por_defecto(),
+            entregas_en_contexto: entregas_en_contexto_por_defecto(),
+            olvidar_lo_cerrado_tras_minutos: olvidar_lo_cerrado_por_defecto(),
+            buzon_estable_tras_ms: buzon_estable_por_defecto(),
         }
     }
 }
@@ -673,131 +749,48 @@ impl Default for Actualizaciones {
     }
 }
 
-/// Una clave que `programator.toml` admitía y ya no vale. Si el fichero la trae, no se lee: se
-/// quita antes de interpretarlo y se avisa al arrancar. Un TOML con una clave que nadie lee se
-/// cargaría sin decir nada, y quien la puso creería que vale; y en una sección que rechaza las
-/// claves desconocidas, el programa no arrancaría por una línea que ya no significa nada.
-struct ClaveRetirada {
-    seccion: &'static str,
-    clave: &'static str,
-    /// Por qué ya no vale y qué pasa ahora en su lugar.
-    porque: &'static str,
-    que_hacer: &'static str,
+/// `[entregas]`: cada cuánto se deduce en qué quedó cada propuesta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Entregas {
+    /// Cada cuántos minutos, como mucho, se busca en el proyecto si una propuesta se copió tal
+    /// cual. Por defecto: 60. Con 0, en cada pasada.
+    #[serde(default = "deducir_cada_minutos_por_defecto")]
+    pub deducir_cada_minutos: u64,
+    /// Cuánto se espera a git al listar los ficheros del proyecto, en segundos. Por defecto: 30.
+    #[serde(default = "tiempo_de_busqueda_por_defecto")]
+    pub tiempo_de_busqueda_segundos: u64,
+    /// Tras cuántos días sin que nadie diga ni se deduzca nada, una propuesta queda «sin
+    /// confirmar» y sale al archivo. Por defecto: 30.
+    #[serde(default = "dias_sin_confirmar_por_defecto")]
+    pub dias_sin_confirmar: u64,
 }
 
-/// Las claves retiradas, cada una con la orden que la quitó.
-const CLAVES_RETIRADAS: [ClaveRetirada; 7] = [
-    // Retiradas el 22/11/2026: no se leían en ningún sitio.
-    ClaveRetirada {
-        seccion: "agente",
-        clave: "buzon",
-        porque: "Programator escribe siempre en el buzón que sale de su nombre, «[agente] nombre» \
-                 en minúsculas y con «.md»; esta clave no cambiaba nada.",
-        que_hacer: "bórrala; para cambiar de buzón, cambia el nombre.",
-    },
-    ClaveRetirada {
-        seccion: "poda",
-        clave: "umbral_lineas",
-        porque: "La poda se propone al cerrar cada encargo, sin contar líneas; esta clave no \
-                 cambiaba nada.",
-        que_hacer: "bórrala, y la sección [poda] si se queda vacía.",
-    },
-    // Retirada el 22/11/2026: la identidad sale solo de la cabecera del buzón y la lista era de
-    // nombres de fichero.
-    ClaveRetirada {
-        seccion: "revision",
-        clave: "buzones_que_ordenan",
-        porque: "Quien puede pedir una revisión se reconoce por la identidad que declara en la \
-                 primera línea de su buzón («# Bandeja de Claude 1»), no por el nombre del \
-                 fichero. Hasta que la cambies, nadie puede pedir una revisión por el canal.",
-        que_hacer: "cámbiala por «identidades_que_ordenan = [\"Claude 1\"]», con las identidades \
-                    de quienes pueden pedirla.",
-    },
-    // Retirada el 13/11/2026: los históricos del canal son dos prefijos fijos.
-    ClaveRetirada {
-        seccion: "agente",
-        clave: "prefijos_ignorados",
-        porque: "Los históricos del canal son los ficheros que empiezan por «historico-» o \
-                 «histórico-», y ningún otro.",
-        que_hacer: "quita esa línea; si tu proyecto archiva con otro prefijo, renómbralo a uno de \
-                    esos dos.",
-    },
-    // Retirada el 13/11/2026: Programator nunca usa otra máquina, solo la GPU del
-    // equipo donde corre, y ejecutar ahí no necesita autorización.
-    ClaveRetirada {
-        seccion: "revision",
-        clave: "maquina_autorizada",
-        porque: "Programator ya no usa otra máquina: las tandas de la revisión se comprueban en \
-                 este equipo, sin autorización, salvo que el banco.toml de la carpeta del banco \
-                 apague las pruebas ocultas con «activa = false» en [comprobacion_local].",
-        que_hacer: "quita esa línea; las tandas se comprueban solas en este equipo.",
-    },
-    ClaveRetirada {
-        seccion: "revision",
-        clave: "reintentar_maquina_cada_segundos",
-        porque: "Ya no hay una máquina de comprobación a la que esperar: se comprueba en este \
-                 equipo.",
-        que_hacer: "quita esa línea.",
-    },
-    ClaveRetirada {
-        seccion: "revision",
-        clave: "esperar_maquina_como_mucho_minutos",
-        porque: "Ya no hay una máquina de comprobación a la que esperar: se comprueba en este \
-                 equipo.",
-        que_hacer: "quita esa línea.",
-    },
-];
-
-/// Quita de `tabla` las claves retiradas que traiga y devuelve un aviso por cada una.
-fn quitar_claves_retiradas(tabla: &mut toml::Table) -> Vec<String> {
-    CLAVES_RETIRADAS
-        .iter()
-        .filter(|retirada| {
-            tabla
-                .get_mut(retirada.seccion)
-                .and_then(toml::Value::as_table_mut)
-                .and_then(|seccion| seccion.remove(retirada.clave))
-                .is_some()
-        })
-        .map(aviso_de_clave_retirada)
-        .collect()
+/// Recorrer el proyecto cuesta en uno grande; una vez por hora basta para lo que se mide con
+/// ello.
+pub const DEDUCIR_CADA_MINUTOS_POR_DEFECTO: u64 = 60;
+fn deducir_cada_minutos_por_defecto() -> u64 {
+    DEDUCIR_CADA_MINUTOS_POR_DEFECTO
+}
+/// `git ls-files` contesta en milisegundos; medio minuto solo corta un git colgado.
+pub const TIEMPO_DE_BUSQUEDA_POR_DEFECTO_SEGUNDOS: u64 = 30;
+fn tiempo_de_busqueda_por_defecto() -> u64 {
+    TIEMPO_DE_BUSQUEDA_POR_DEFECTO_SEGUNDOS
 }
 
-/// El aviso de un tiempo del TOML que pasaba del techo.
-fn aviso_de_techo(clave: &str, valor: u64) -> String {
-    format!(
-        "⚠️ «{clave} = {valor}» es más de un día: se usa un día ({TECHO_DE_SEGUNDOS} segundos)."
-    )
+/// Un mes: lo que no se aplicó ni se descartó en ese tiempo ya no espera revisión.
+pub const DIAS_SIN_CONFIRMAR_POR_DEFECTO: u64 = 30;
+fn dias_sin_confirmar_por_defecto() -> u64 {
+    DIAS_SIN_CONFIRMAR_POR_DEFECTO
 }
 
-fn aviso_de_clave_retirada(retirada: &ClaveRetirada) -> String {
-    format!(
-        "⚠️ {NOMBRE_DEL_FICHERO_DE_CONFIGURACION} trae «[{}] {}», que ya no vale.\n\
-         Consecuencia: no se tiene en cuenta. {}\n\
-         Qué hacer: {}",
-        retirada.seccion, retirada.clave, retirada.porque, retirada.que_hacer
-    )
-}
-
-/// Interpreta el texto de `programator.toml` sin las claves retiradas, con sus avisos.
-///
-/// Sin claves retiradas se interpreta el texto tal cual, que es lo que da los errores con su línea;
-/// solo si hay alguna se interpreta la tabla ya sin ella.
-fn interpretar_sin_claves_retiradas(texto: &str) -> Result<(Config, Vec<String>), toml::de::Error> {
-    let mut tabla: toml::Table = texto.parse()?;
-    let avisos = quitar_claves_retiradas(&mut tabla);
-    let config = if avisos.is_empty() {
-        toml::from_str(texto)?
-    } else {
-        toml::Value::Table(tabla).try_into()?
-    };
-    Ok((config, avisos))
-}
-
-/// El error de un `programator.toml` que no se deja interpretar, con la ruta como la escribe el
-/// sistema: con `{:?}` saldría entre comillas y, en Windows, con las barras dobladas.
-fn toml_ininteligible(ruta: &Path, causa: &dyn std::fmt::Display) -> String {
-    format!("«{}» no se pudo interpretar: {causa}", ruta.display())
+impl Default for Entregas {
+    fn default() -> Self {
+        Self {
+            deducir_cada_minutos: deducir_cada_minutos_por_defecto(),
+            tiempo_de_busqueda_segundos: tiempo_de_busqueda_por_defecto(),
+            dias_sin_confirmar: dias_sin_confirmar_por_defecto(),
+        }
+    }
 }
 
 impl Config {
@@ -812,15 +805,12 @@ impl Config {
             .map_err(|e| Error::Configuracion(toml_ininteligible(ruta, &e)))?;
 
         if config.motor.modelo.is_none() {
-            return Err(Error::ConfiguracionDelMotor(
-                "falta «modelo» en la sección [motor]: sin fichero GGUF no hay nada que arrancar"
-                    .to_string(),
-            ));
+            return Err(Error::ConfiguracionDelMotor(falta_el_modelo()));
         }
 
         // Suelo del intervalo de sondeo. Un `0` explícito en el TOML pasaría la carga sin quejarse
         // y el bucle de `main` giraría a máxima velocidad: un núcleo al 100% releyendo el canal
-        // entero sin pausa, sobre una unidad de Google Drive. El fichero lo edita el usuario a
+        // entero sin pausa, quizá sobre una unidad de red o sincronizada. El fichero lo edita el usuario a
         // mano, así que el error es plausible y el arnés no puede permitirse confiar en que no
         // ocurra. Un segundo es tan absurdamente corto como se quiera, pero no quema la máquina.
         if config.ciclo.intervalo_segundos < INTERVALO_MINIMO_SEGUNDOS {
@@ -836,6 +826,14 @@ impl Config {
                 "[verificacion] tiempo_maximo_segundos",
                 &mut config.verificacion.tiempo_maximo_segundos,
             ),
+            (
+                "[entregas] tiempo_de_busqueda_segundos",
+                &mut config.entregas.tiempo_de_busqueda_segundos,
+            ),
+            (
+                "[preparacion] tiempo_maximo_segundos",
+                &mut config.preparacion.tiempo_maximo_segundos,
+            ),
         ] {
             if *valor > TECHO_DE_SEGUNDOS {
                 avisos.push(aviso_de_techo(clave, *valor));
@@ -848,6 +846,17 @@ impl Config {
         // dónde viene. Se corrige aquí, donde sí se sabe.
         if config.motor.paralelo == 0 {
             config.motor.paralelo = 1;
+        }
+
+        // Un envoltorio vacío lanzaría las órdenes aisladas sin aislar: se vuelve al de fábrica.
+        if config
+            .preparacion
+            .envoltorio
+            .as_ref()
+            .is_some_and(Vec::is_empty)
+        {
+            config.preparacion.envoltorio = None;
+            avisos.push(aviso_de_envoltorio_vacio());
         }
 
         // Un `0` dejaría al modelo sin saber por qué se rechazó su propuesta: se vuelve al de
@@ -919,8 +928,8 @@ mod pruebas {
         assert!(!texto.contains('"'), "{texto}");
     }
 
-    fn escribir(dir: &std::path::Path, contenido: &str) -> std::path::PathBuf {
-        let ruta = dir.join("programator.toml");
+    fn escribir(carpeta: &std::path::Path, contenido: &str) -> std::path::PathBuf {
+        let ruta = carpeta.join("programator.toml");
         let mut f = std::fs::File::create(&ruta).unwrap();
         f.write_all(contenido.as_bytes()).unwrap();
         ruta
@@ -928,9 +937,9 @@ mod pruebas {
 
     #[test]
     fn carga_una_configuracion_completa() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta_temporal.path(),
             r#"
 [carpeta]
 ruta = "C:/proyectos/mi-proyecto"
@@ -973,6 +982,82 @@ modelo = "modelos/devstral.gguf"
     }
 
     #[test]
+    fn la_preparacion_del_ejemplo_es_la_de_por_defecto() {
+        let ejemplo: Config = toml::from_str(include_str!("../programator.ejemplo.toml")).unwrap();
+        assert_eq!(ejemplo.preparacion, Preparacion::default());
+    }
+
+    /// Los ejemplos comentados de `[preparacion.ordenes.rs]`, sin el comentario, se leen.
+    #[test]
+    fn las_ordenes_comentadas_del_ejemplo_se_leen() {
+        let ejemplo = include_str!("../programator.ejemplo.toml");
+        let inicio = ejemplo.find("# [preparacion.ordenes.rs]").unwrap();
+        let tabla: String = ejemplo[inicio..]
+            .lines()
+            .take_while(|l| l.starts_with("# "))
+            .map(|l| format!("{}\n", &l[2..]))
+            .collect();
+        let leida: Preparacion =
+            toml::from_str(&tabla.replace("[preparacion.ordenes.rs]", "[ordenes.rs]")).unwrap();
+        let rs = leida.ordenes_de("rs").unwrap();
+        assert_eq!(rs.previas, [["cargo", "fetch"]]);
+        assert_eq!(rs.formatear, ["cargo", "fmt"]);
+        assert_eq!(rs.aisladas.len(), 2);
+    }
+
+    #[test]
+    fn un_tiempo_de_preparacion_de_mas_de_un_dia_se_acota() {
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("programator.toml");
+        std::fs::write(
+            &ruta,
+            "[motor]\nmodelo = \"m.gguf\"\n[preparacion]\ntiempo_maximo_segundos = 999999\n\
+             [entregas]\ntiempo_de_busqueda_segundos = 999999\n",
+        )
+        .unwrap();
+        let config = Config::cargar(&ruta).unwrap();
+        assert_eq!(config.preparacion.tiempo_maximo_segundos, TECHO_DE_SEGUNDOS);
+        assert_eq!(
+            config.entregas.tiempo_de_busqueda_segundos,
+            TECHO_DE_SEGUNDOS
+        );
+        assert_eq!(config.avisos().len(), 2, "{:?}", config.avisos());
+    }
+
+    #[test]
+    fn el_envoltorio_de_preparar_se_lee_y_vacio_no_vale() {
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("programator.toml");
+        let cargar = |envoltorio: &str| {
+            std::fs::write(
+                &ruta,
+                format!("[motor]\nmodelo = \"m.gguf\"\n[preparacion]\nenvoltorio = {envoltorio}\n"),
+            )
+            .unwrap();
+            Config::cargar(&ruta).unwrap()
+        };
+
+        let propio = cargar("[\"bwrap\", \"--unshare-net\"]");
+        assert_eq!(
+            propio.preparacion.envoltorio,
+            Some(vec!["bwrap".to_string(), "--unshare-net".to_string()])
+        );
+        assert!(propio.avisos().is_empty());
+
+        let vacio = cargar("[]");
+        assert_eq!(vacio.preparacion.envoltorio, None);
+        assert_eq!(vacio.avisos(), [aviso_de_envoltorio_vacio()]);
+    }
+
+    #[test]
+    fn las_entregas_del_ejemplo_son_las_de_por_defecto() {
+        let ejemplo: Config = toml::from_str(include_str!("../programator.ejemplo.toml")).unwrap();
+        assert_eq!(ejemplo.entregas, Entregas::default());
+        assert_eq!(ejemplo.entregas.deducir_cada_minutos, 60);
+        assert_eq!(ejemplo.entregas.dias_sin_confirmar, 30);
+    }
+
+    #[test]
     fn la_revision_del_ejemplo_es_la_de_por_defecto() {
         let ejemplo: Config = toml::from_str(include_str!("../programator.ejemplo.toml")).unwrap();
         assert_eq!(
@@ -983,8 +1068,8 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn sin_seccion_de_revision_valen_los_valores_por_defecto() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"m.gguf\"\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), "[motor]\nmodelo = \"m.gguf\"\n");
         let config = Config::cargar(&ruta).unwrap();
         assert_eq!(
             config.revision,
@@ -994,8 +1079,8 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn el_modelo_pedido_sustituye_al_del_toml_y_se_resuelve_igual() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"m.gguf\"\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), "[motor]\nmodelo = \"m.gguf\"\n");
         let config = Config::cargar(&ruta).unwrap();
 
         let igual = config.clone().con_modelo(None);
@@ -1005,15 +1090,15 @@ modelo = "modelos/devstral.gguf"
         assert_eq!(otra.motor.modelo.as_deref(), Some("otros/n.gguf"));
         assert_eq!(
             otra.resolver("otros/n.gguf"),
-            dir.path().join("otros/n.gguf")
+            carpeta.path().join("otros/n.gguf")
         );
     }
 
     #[test]
     fn el_nombre_del_modelo_es_el_del_fichero_sin_carpeta_ni_extension() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\nmodelo = \"modelos/devstral-Q4_K_M.gguf\"\n",
         );
         let config = Config::cargar(&ruta).unwrap();
@@ -1047,6 +1132,7 @@ modelo = "modelos/devstral.gguf"
             motor.capas_gpu,
             motor.margen_vram_mib,
             motor.cache_kv,
+            motor.reparto,
             motor.atencion_rapida,
             motor.paralelo,
             motor.empezar_en_frio,
@@ -1056,6 +1142,7 @@ modelo = "modelos/devstral.gguf"
             motor.tiempo_escritura_segundos,
             motor.soltar_modelo,
             motor.espera_de_carga_segundos,
+            motor.clave,
             ciclo.intervalo_segundos,
             ciclo.max_herramientas_por_encargo,
             ciclo.tope_lectura_bytes,
@@ -1071,6 +1158,9 @@ modelo = "modelos/devstral.gguf"
             muestreo.min_p,
             muestreo.penalizacion_repeticion,
             muestreo.semilla,
+            ciclo.entregas_en_contexto,
+            ciclo.olvidar_lo_cerrado_tras_minutos,
+            ciclo.buzon_estable_tras_ms,
             actualizaciones.comprobar,
             actualizaciones.repositorio,
             actualizaciones.tiempo_espera_segundos,
@@ -1121,10 +1211,59 @@ modelo = "modelos/devstral.gguf"
     }
 
     #[test]
+    fn la_cache_se_lee_con_cache_kv_con_cache_k_y_cache_v_o_mezcladas() {
+        // G3.
+        let motor = |texto: &str| -> MotorConfig {
+            toml::from_str::<Config>(&format!("[motor]\nmodelo = \"m.gguf\"\n{texto}"))
+                .unwrap()
+                .motor
+        };
+        let caches = |m: &MotorConfig| (m.cache_k().to_string(), m.cache_v().to_string());
+
+        assert_eq!(caches(&motor("")), ("q8_0".into(), "q8_0".into()));
+        assert_eq!(
+            caches(&motor("cache_kv = \"f16\"")),
+            ("f16".into(), "f16".into()),
+            "cache_kv solo, como en la 1.1.0, da las dos"
+        );
+        assert_eq!(
+            caches(&motor("cache_k = \"f16\"\ncache_v = \"q4_0\"")),
+            ("f16".into(), "q4_0".into())
+        );
+        assert_eq!(
+            caches(&motor("cache_kv = \"q4_0\"\ncache_k = \"f16\"")),
+            ("f16".into(), "q4_0".into()),
+            "la que falta sale de cache_kv"
+        );
+        assert_eq!(
+            caches(&motor("cache_v = \"f16\"")),
+            ("q8_0".into(), "f16".into()),
+            "sin cache_kv, la que falta es la de fábrica"
+        );
+    }
+
+    #[test]
+    fn las_claves_del_reparto_se_leen_sueltas_en_la_seccion_del_motor() {
+        let motor = toml::from_str::<Config>(
+            "[motor]\nmodelo = \"m.gguf\"\ncache_en_cpu = true\nffn_en_cpu = \"auto\"\n\
+             tensores_en_cpu = [\"output\"]\n",
+        )
+        .unwrap()
+        .motor;
+        assert!(motor.reparto.cache_en_cpu);
+        assert_eq!(motor.reparto.ffn_en_cpu, CapasEnCpu::Auto);
+        assert_eq!(motor.reparto.tensores_en_cpu, vec!["output".to_string()]);
+        let fallo = toml::from_str::<Config>("[motor]\nmodelo = \"m.gguf\"\nffn_en_cpu = 1.5\n")
+            .unwrap_err()
+            .to_string();
+        assert!(fallo.contains("ffn_en_cpu solo admite"), "{fallo}");
+    }
+
+    #[test]
     fn reintentos_motor_se_leen_del_toml() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "m.gguf"
@@ -1143,9 +1282,9 @@ espera_reintento_motor_segundos = 10
 
     #[test]
     fn max_denegaciones_seguidas_se_lee_del_toml() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "m.gguf"
@@ -1162,8 +1301,8 @@ max_denegaciones_seguidas = 5
 
     #[test]
     fn python_se_busca_por_defecto_y_se_puede_apagar_o_fijar() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = dir.path().join("programator.toml");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = carpeta.path().join("programator.toml");
         std::fs::write(&ruta, "[motor]\nmodelo = \"x.gguf\"\n").unwrap();
         let por_defecto = Config::cargar(&ruta).unwrap().verificacion;
         std::fs::write(
@@ -1183,8 +1322,8 @@ max_denegaciones_seguidas = 5
 
     #[test]
     fn sin_seccion_de_verificacion_no_hay_comprobadores_pero_si_tiempo_maximo() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"m.gguf\"\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), "[motor]\nmodelo = \"m.gguf\"\n");
 
         let config = Config::cargar(&ruta).unwrap();
 
@@ -1197,9 +1336,9 @@ max_denegaciones_seguidas = 5
 
     #[test]
     fn los_comprobadores_se_leen_del_toml_con_sus_argumentos() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "m.gguf"
@@ -1232,9 +1371,9 @@ lua = ["luac", "-p", "{fichero}"]
 
     #[test]
     fn el_paralelismo_se_puede_subir_desde_el_toml() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1251,9 +1390,9 @@ paralelo = 4
     fn un_paralelismo_de_cero_se_eleva_a_uno() {
         // Cero secuencias no es una configuración: es un motor que no atiende a nadie. Se corrige
         // en vez de rechazar el arranque, igual que se hace con el intervalo del ciclo.
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1268,9 +1407,9 @@ paralelo = 0
 
     #[test]
     fn una_salida_al_modelo_de_cero_vuelve_a_la_de_fabrica() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1291,9 +1430,9 @@ maximo_salida_al_modelo = 0
     /// Sin techo, un valor enorme llegaría a sumas de tiempo que entran en pánico.
     #[test]
     fn los_tiempos_de_mas_de_un_dia_se_bajan_a_un_dia_y_se_avisa() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\nmodelo = \"x.gguf\"\n\n[ciclo]\nintervalo_segundos = 9223372036854775807\n\n\
              [verificacion]\ntiempo_maximo_segundos = 99999999999\n",
         );
@@ -1313,9 +1452,9 @@ maximo_salida_al_modelo = 0
     /// Un `[agente]` con una sola clave carga y toma el resto por defecto.
     #[test]
     fn un_agente_con_una_sola_clave_toma_el_resto_por_defecto() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\nmodelo = \"x.gguf\"\n\n[agente]\nregistro_de_conversacion = true\n",
         );
 
@@ -1332,9 +1471,9 @@ maximo_salida_al_modelo = 0
     /// Dos claves que no se leían en ningún sitio.
     #[test]
     fn el_buzon_y_el_umbral_de_poda_ya_no_valen_y_lo_avisan() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\nmodelo = \"x.gguf\"\n\n[agente]\nbuzon = \"otro.md\"\n\n\
              [poda]\numbral_lineas = 80\n",
         );
@@ -1348,9 +1487,9 @@ maximo_salida_al_modelo = 0
 
     #[test]
     fn un_intervalo_de_cero_se_eleva_al_suelo_para_no_quemar_un_nucleo() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\nmodelo = \"x.gguf\"\n\n[ciclo]\nintervalo_segundos = 0\n",
         );
 
@@ -1364,9 +1503,9 @@ maximo_salida_al_modelo = 0
 
     #[test]
     fn un_intervalo_por_encima_del_suelo_se_respeta_tal_cual() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\nmodelo = \"x.gguf\"\n\n[ciclo]\nintervalo_segundos = 5\n",
         );
 
@@ -1380,8 +1519,8 @@ maximo_salida_al_modelo = 0
 
     #[test]
     fn rechaza_una_configuracion_sin_modelo() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), "[motor]\nbinario = \"x.exe\"\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), "[motor]\nbinario = \"x.exe\"\n");
 
         let fallo = Config::cargar(&ruta).unwrap_err();
 
@@ -1403,19 +1542,19 @@ maximo_salida_al_modelo = 0
 
     #[test]
     fn resuelve_las_rutas_relativas_contra_la_base_y_no_contra_el_directorio_actual() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"modelos/x.gguf\"\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), "[motor]\nmodelo = \"modelos/x.gguf\"\n");
         let config = Config::cargar(&ruta).unwrap();
 
         let resuelta = config.resolver("modelos/x.gguf");
 
-        assert_eq!(resuelta, dir.path().join("modelos/x.gguf"));
+        assert_eq!(resuelta, carpeta.path().join("modelos/x.gguf"));
     }
 
     #[test]
     fn el_muestreo_ausente_toma_los_valores_por_defecto() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), "[motor]\nmodelo = \"modelos/x.gguf\"\n");
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), "[motor]\nmodelo = \"modelos/x.gguf\"\n");
 
         let config = Config::cargar(&ruta).unwrap();
 
@@ -1428,9 +1567,9 @@ maximo_salida_al_modelo = 0
 
     #[test]
     fn el_muestreo_se_lee_del_fichero() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/x.gguf"
@@ -1456,9 +1595,9 @@ semilla = 7
     // 12/11/2026: sin semilla en el TOML ya no decide el servidor, se usa la fija.
     #[test]
     fn sin_semilla_en_el_toml_se_usa_la_semilla_por_defecto() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\n\
              modelo = \"modelos/x.gguf\"\n\
              [muestreo]\n",
@@ -1471,9 +1610,9 @@ semilla = 7
 
     #[test]
     fn sin_ruta_del_registro_se_usa_la_de_junto_al_toml() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\n\
              modelo = \"modelos/x.gguf\"\n",
         );
@@ -1488,9 +1627,9 @@ semilla = 7
 
     #[test]
     fn una_semilla_que_no_es_entera_no_se_acepta() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             "[motor]\n\
              modelo = \"modelos/x.gguf\"\n\
              [muestreo]\n\
@@ -1502,9 +1641,9 @@ semilla = 7
 
     #[test]
     fn las_claves_de_la_1_0_0_tienen_su_valor_por_defecto() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1522,9 +1661,9 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn las_claves_de_la_1_0_0_se_leen_del_toml() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1547,9 +1686,9 @@ intentos_por_encargo = 5
 
     #[test]
     fn soltar_modelo_invalido_no_carga() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1562,9 +1701,9 @@ soltar_modelo = "nunca"
 
     #[test]
     fn capas_gpu_acepta_la_palabra_auto() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1583,9 +1722,9 @@ capas_gpu = "auto"
 
     #[test]
     fn capas_gpu_acepta_un_numero_y_lo_respeta() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1602,9 +1741,9 @@ margen_vram_mib = 2048
 
     #[test]
     fn sin_la_clave_el_defecto_es_auto() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1619,14 +1758,14 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn una_palabra_que_no_es_auto_se_rechaza_diciendo_cual_es_la_buena() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         // «maximas» no puede contener la subcadena «auto»: si la palabra rechazada la llevara
         // (como pasaba con «automatico»), la aserción de más abajo se cumpliría sola —el mensaje
         // haría eco de la entrada— aunque alguien borrara la sugerencia final y el error dejara de
         // decir cuál es la única palabra válida. Con «maximas», el «auto» del mensaje solo puede
         // venir de la sugerencia.
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1652,9 +1791,9 @@ capas_gpu = "maximas"
         // agota las variantes de Crudo antes de llegar a nuestro match, así que sin intercepción
         // el mensaje sería el genérico de serde con el nombre del enum interno («Crudo») en
         // inglés, en un fichero que el usuario edita a mano.
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "modelos/devstral.gguf"
@@ -1677,9 +1816,9 @@ capas_gpu = 99.0
     #[test]
     fn un_programator_toml_de_la_version_anterior_sigue_cargando_igual() {
         // La 0.3.0 escribía `capas_gpu = 99`. No puede romperse al actualizar.
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 binario = "herramientas/llama-server.exe"
@@ -1698,9 +1837,9 @@ cache_kv = "q8_0"
     /// verde.
     #[test]
     fn flash_attn_del_toml_llega_a_la_configuracion_del_motor() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             r#"
 [motor]
 modelo = "m.gguf"
@@ -1715,9 +1854,9 @@ flash_attn = "off"
 
     #[test]
     fn fichero_latido_toma_valor_por_defecto_o_configurado() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta_temporal = tempfile::tempdir().unwrap();
         let ruta_defecto = escribir(
-            dir.path(),
+            carpeta_temporal.path(),
             r#"
 [motor]
 modelo = "m.gguf"
@@ -1727,7 +1866,7 @@ modelo = "m.gguf"
         assert_eq!(config_defecto.ciclo.fichero_latido, "latido.json");
 
         let ruta_personalizada = escribir(
-            dir.path(),
+            carpeta_temporal.path(),
             r#"
 [motor]
 modelo = "m.gguf"
@@ -1758,12 +1897,12 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn la_clave_de_los_prefijos_ya_no_vale_y_lo_avisa() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let con_la_clave = MINIMA.replace(
             "nombre = \"Programator\"",
             "nombre = \"Programator\"\nprefijos_ignorados = [\"archivado-\"]",
         );
-        let ruta = escribir(dir.path(), &con_la_clave);
+        let ruta = escribir(carpeta.path(), &con_la_clave);
 
         let config = Config::cargar(&ruta).unwrap();
 
@@ -1776,9 +1915,9 @@ modelo = "modelos/devstral.gguf"
     /// deja de valer. Una configuración anterior puede traerla todavía.
     #[test]
     fn la_lista_de_buzones_que_ordenan_ya_no_vale_y_dice_la_nueva() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             &format!("{MINIMA}\n[revision]\nbuzones_que_ordenan = [\"claude\"]\n"),
         );
 
@@ -1794,13 +1933,13 @@ modelo = "modelos/devstral.gguf"
     fn las_claves_de_la_maquina_de_la_revision_ya_no_valen_y_no_impiden_arrancar() {
         // [revision] rechaza las claves desconocidas: sin quitarlas antes, un programator.toml
         // de antes del 13/11/2026 no arrancaría.
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let con_las_claves = format!(
             "{MINIMA}\n[revision]\nmaquina_autorizada = \"maquina-linux\"\n\
              reintentar_maquina_cada_segundos = 300\n\
              esperar_maquina_como_mucho_minutos = 480\ncandidatos_por_revision = 2\n"
         );
-        let ruta = escribir(dir.path(), &con_las_claves);
+        let ruta = escribir(carpeta.path(), &con_las_claves);
 
         let config = Config::cargar(&ruta).unwrap();
 
@@ -1819,9 +1958,9 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn una_clave_desconocida_de_la_revision_sigue_siendo_un_error() {
-        let dir = tempfile::tempdir().unwrap();
+        let carpeta = tempfile::tempdir().unwrap();
         let ruta = escribir(
-            dir.path(),
+            carpeta.path(),
             &format!("{MINIMA}\n[revision]\nmaquina = \"x\"\n"),
         );
 
@@ -1830,8 +1969,8 @@ modelo = "modelos/devstral.gguf"
 
     #[test]
     fn sin_claves_retiradas_no_hay_avisos() {
-        let dir = tempfile::tempdir().unwrap();
-        let ruta = escribir(dir.path(), MINIMA);
+        let carpeta = tempfile::tempdir().unwrap();
+        let ruta = escribir(carpeta.path(), MINIMA);
 
         assert!(Config::cargar(&ruta).unwrap().avisos().is_empty());
     }

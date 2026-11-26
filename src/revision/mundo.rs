@@ -55,7 +55,6 @@ pub struct Mundo<'a> {
 /// El latido del ciclo, que la revisión va poniendo al día.
 pub struct AvisoEnElLatido {
     pub ruta: PathBuf,
-    pub intervalo_segundos: u64,
     /// El buzón que pidió la revisión.
     pub buzon: String,
 }
@@ -94,12 +93,8 @@ impl Taller for Mundo<'_> {
         // Al soltarlo se para el proceso y se espera a que salga: así queda libre la tarjeta.
         drop(self.servidor.borrow_mut().take());
         let puerto = self.config.motor.puerto;
-        match proceso::hay_servidor(puerto) {
-            EstadoServidor::NoDisponible => Ok(()),
-            EstadoServidor::Listo | EstadoServidor::Cargando => {
-                Err(Error::Revision(mensajes::motor_ajeno(puerto)))
-            }
-        }
+        let clave = crate::motor::clave::vigente(&self.config);
+        puerto_tras_soltar(proceso::hay_servidor(puerto, clave.as_ref()), puerto)
     }
 
     fn pasar_tanda(&mut self, modelo: &Path) -> Resultado<PathBuf> {
@@ -127,7 +122,6 @@ impl Taller for Mundo<'_> {
         self.terminal.decir(linea);
         Latido::en_atencion(
             chrono::Local::now(),
-            self.latido.intervalo_segundos,
             DetalleEncargo::nuevo(&self.latido.buzon, linea),
         )
         .guardar_con_aviso(&self.latido.ruta, self.terminal);
@@ -239,10 +233,38 @@ fn ruta_del_sustituto(actual: Option<&str>, carpeta_de_modelos: &str, nombre: &s
     }
 }
 
+/// Tras soltar el motor propio, si el puerto quedó libre para el banco. Cualquiera que siga
+/// contestando es ajeno, también uno que rechace la clave: el banco no puede arrancar encima.
+fn puerto_tras_soltar(estado: EstadoServidor, puerto: u16) -> Resultado<()> {
+    match estado {
+        EstadoServidor::NoDisponible => Ok(()),
+        EstadoServidor::Listo | EstadoServidor::Cargando | EstadoServidor::RechazaLaClave => {
+            Err(Error::Revision(mensajes::motor_ajeno(puerto)))
+        }
+    }
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
     use crate::banco::resultados::pruebas::tanda_de_ejemplo;
+
+    /// Tras soltar el motor, el banco solo arranca con el puerto libre: uno que sigue
+    /// contestando, aunque rechace la clave, es ajeno.
+    #[test]
+    fn tras_soltar_solo_vale_el_puerto_libre() {
+        assert!(puerto_tras_soltar(EstadoServidor::NoDisponible, 8080).is_ok());
+        for ocupado in [
+            EstadoServidor::Listo,
+            EstadoServidor::Cargando,
+            EstadoServidor::RechazaLaClave,
+        ] {
+            assert!(
+                matches!(puerto_tras_soltar(ocupado, 8080), Err(Error::Revision(_))),
+                "{ocupado:?}"
+            );
+        }
+    }
 
     #[test]
     fn el_sustituto_va_a_la_carpeta_del_modelo_actual_escrita_igual() {

@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use super::continuidad::{Cache, Continuidad};
+use super::continuidad::{Cache, Continuidad, Inicio};
 use super::declaracion::{Declaracion, Parametro};
 use super::{Mensaje, Motor, Papel, Respuesta, SolicitudHerramienta};
 use crate::error::{Error, Resultado};
@@ -36,6 +36,7 @@ pub struct MotorLlama {
     agente: ureq::Agent,
     ultimo_consumo: Option<super::Consumo>,
     continuidad: Continuidad,
+    clave: Option<super::clave::ClaveDelMotor>,
 }
 
 impl MotorLlama {
@@ -74,8 +75,15 @@ impl MotorLlama {
 
     /// `[motor] empezar_en_frio`: si cada conversación nueva se calcula sin la caché de prefijos
     /// del servidor (`motor::continuidad`).
-    pub fn con_empezar_en_frio(mut self, empezar_en_frio: bool) -> Self {
-        self.continuidad = Continuidad::nueva(empezar_en_frio);
+    pub fn con_inicio(mut self, inicio: Inicio) -> Self {
+        self.continuidad = Continuidad::nueva(inicio);
+        self
+    }
+
+    /// La clave que exige el motor (`motor::clave`). Sin ella, las peticiones van sin cabecera,
+    /// que es lo que espera un `llama-server` arrancado sin clave.
+    pub fn con_clave(mut self, clave: Option<super::clave::ClaveDelMotor>) -> Self {
+        self.clave = clave;
         self
     }
 
@@ -87,7 +95,10 @@ impl MotorLlama {
             muestreo: crate::config::Muestreo::default(),
             agente,
             ultimo_consumo: None,
-            continuidad: Continuidad::nueva(crate::config::empezar_en_frio_por_defecto()),
+            continuidad: Continuidad::nueva(Inicio::segun(
+                crate::config::empezar_en_frio_por_defecto(),
+            )),
+            clave: None,
         }
     }
 
@@ -241,7 +252,7 @@ pub fn interpretar_respuesta(json: &serde_json::Value) -> Resultado<Respuesta> {
         let nombre = llamada
             .get("name")
             .and_then(|n| n.as_str())
-            .ok_or_else(|| Error::MotorSinRespuesta("llamada sin nombre".to_string()))?;
+            .ok_or_else(|| Error::MotorSinRespuesta(super::mensajes::llamada_sin_nombre()))?;
 
         // Distingue los tres casos que puede mandar el servidor en vez de colapsarlos todos en
         // «argumentos vacíos»: un objeto JSON ya listo, una cadena que hay que interpretar (y que
@@ -273,7 +284,7 @@ pub fn interpretar_respuesta(json: &serde_json::Value) -> Resultado<Respuesta> {
         return Ok(Respuesta::Cortada(texto.unwrap_or_default().to_string()));
     }
     let texto = texto
-        .ok_or_else(|| Error::MotorSinRespuesta("la respuesta no trae contenido".to_string()))?;
+        .ok_or_else(|| Error::MotorSinRespuesta(super::mensajes::respuesta_sin_contenido()))?;
     Ok(Respuesta::Texto(texto.to_string()))
 }
 
@@ -301,14 +312,9 @@ fn motivo_del_rechazo(estado: u16, cuerpo: &str) -> String {
     if estado == HTTP_PETICION_INCORRECTA
         && SENALES_DE_CONTEXTO.iter().any(|s| minusculas.contains(s))
     {
-        return format!(
-            "el motor rechazó la petición porque NO CABE EN SU VENTANA DE CONTEXTO (HTTP {estado}). \
-             No es una caída: es que la conversación es más larga que la ventana configurada. \
-             Acorta el encargo, o pídele que lea los ficheros con «leer_fichero» en vez de \
-             pegárselos. Respuesta del motor: {cuerpo}"
-        );
+        return super::mensajes::rechazo_por_contexto(estado, cuerpo);
     }
-    format!("el motor respondió HTTP {estado}: {cuerpo}")
+    super::mensajes::rechazo_del_motor(estado, cuerpo)
 }
 
 impl MotorLlama {
@@ -322,9 +328,13 @@ impl MotorLlama {
             cache,
         );
 
-        let mut respuesta = self
-            .agente
-            .post(&format!("{}{}", self.url_base, super::RUTA_CONVERSACION))
+        let mut peticion =
+            self.agente
+                .post(&format!("{}{}", self.url_base, super::RUTA_CONVERSACION));
+        if let Some(clave) = &self.clave {
+            peticion = peticion.header(super::proceso::CABECERA_DE_LA_CLAVE, &clave.cabecera());
+        }
+        let mut respuesta = peticion
             .send_json(&cuerpo)
             .map_err(|fallo| Error::MotorSinRespuesta(fallo.to_string()))?;
 
@@ -369,7 +379,7 @@ impl Motor for MotorLlama {
     }
 
     fn comprobar_salud(&mut self) -> super::proceso::EstadoServidor {
-        super::proceso::hay_servidor_url(&self.url_base)
+        super::proceso::hay_servidor_url(&self.url_base, self.clave.as_ref())
     }
 }
 
@@ -648,8 +658,9 @@ mod pruebas {
         assert!(matches!(fallo, crate::error::Error::MotorSinRespuesta(_)));
     }
 
-    #[test]
-    fn habla_con_un_servidor_de_prueba_de_extremo_a_extremo() {
+    /// Un servidor de prueba que contesta «hola» a una sola petición y devuelve la petición entera,
+    /// con sus cabeceras.
+    fn servidor_que_contesta_hola() -> (u16, std::thread::JoinHandle<String>) {
         use std::io::{Read, Write};
 
         let escucha = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -681,6 +692,12 @@ mod pruebas {
             }
             peticion
         });
+        (puerto, hilo)
+    }
+
+    #[test]
+    fn habla_con_un_servidor_de_prueba_de_extremo_a_extremo() {
+        let (puerto, hilo) = servidor_que_contesta_hola();
 
         // El motor se suelta al terminar este bloque, antes de esperar al hilo servidor: su
         // agente mantiene la conexión abierta en su fondo de reutilización (keep-alive de
@@ -704,6 +721,31 @@ mod pruebas {
             "{peticion}"
         );
         assert!(matches!(respuesta, Respuesta::Texto(ref t) if t == "hola"));
+    }
+
+    #[test]
+    fn la_conversacion_manda_la_clave() {
+        let (puerto, hilo) = servidor_que_contesta_hola();
+
+        {
+            let mut motor = MotorLlama::nuevo(&format!("http://127.0.0.1:{puerto}"), "devstral")
+                .con_clave(Some(crate::motor::clave::ClaveDelMotor::de_texto(
+                    "clave-de-prueba",
+                )));
+            motor
+                .responder(&[Mensaje {
+                    papel: Papel::Usuario,
+                    contenido: "hola".into(),
+                    llamada: None,
+                }])
+                .unwrap();
+        }
+
+        let peticion = hilo.join().unwrap().to_lowercase();
+        assert!(
+            peticion.contains("authorization: bearer clave-de-prueba"),
+            "{peticion}"
+        );
     }
 
     #[test]
@@ -1031,7 +1073,7 @@ mod pruebas {
     #[test]
     fn sin_empezar_en_frio_se_reutiliza_siempre_la_cache() {
         let (url, hilo) = servidor_que_anota(vec![(200, RESPUESTA_BUENA), (200, RESPUESTA_BUENA)]);
-        let mut motor = MotorLlama::nuevo(&url, "devstral").con_empezar_en_frio(false);
+        let mut motor = MotorLlama::nuevo(&url, "devstral").con_inicio(Inicio::ConLaCache);
 
         motor
             .responder(&turnos(&["normas", "encargo uno"]))
